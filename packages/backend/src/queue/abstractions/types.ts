@@ -37,6 +37,20 @@ export interface IJobOptions {
 }
 
 /**
+ * Definition of a repeating cron job.
+ * Used by ICronRegistry.registerCronJobs() to register schedules at worker boot time.
+ */
+export interface CronJobDefinition {
+  task: string;
+  cronExpression: string;
+  payload: unknown;
+  identifier: string;
+}
+export interface ICronRegistry {
+  registerCronJobs(items: CronJobDefinition[]): Promise<void>;
+}
+
+/**
  * Queue adapter interface (common operations)
  */
 export interface IQueueAdapter<T = unknown> {
