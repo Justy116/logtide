@@ -165,6 +165,10 @@
     }
 </script>
 
+<svelte:head>
+    <title>Admin Settings - LogTide</title>
+</svelte:head>
+
 <div class="container mx-auto p-6 space-y-8">
     <div class="flex justify-between items-center">
         <div>

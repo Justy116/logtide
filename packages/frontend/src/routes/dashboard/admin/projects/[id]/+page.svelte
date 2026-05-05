@@ -90,6 +90,10 @@
     });
 </script>
 
+<svelte:head>
+    <title>{project?.name ?? 'Project'} - Admin - LogTide</title>
+</svelte:head>
+
 <div class="container mx-auto p-6 space-y-6">
     {#if loading}
         <div class="flex justify-center p-12">

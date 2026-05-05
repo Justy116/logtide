@@ -105,6 +105,10 @@
   }
 </script>
 
+<svelte:head>
+  <title>{monitor?.name ?? 'Monitor'} - LogTide</title>
+</svelte:head>
+
 <div class="flex flex-col gap-6 p-6">
   <!-- Header -->
   <div class="flex items-center justify-between">

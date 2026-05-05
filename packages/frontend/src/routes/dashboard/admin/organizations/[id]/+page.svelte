@@ -108,6 +108,10 @@
     });
 </script>
 
+<svelte:head>
+    <title>{org?.name ?? 'Organization'} - Admin - LogTide</title>
+</svelte:head>
+
 <div class="container mx-auto p-6 space-y-6">
     <div class="flex items-center gap-4">
         <a

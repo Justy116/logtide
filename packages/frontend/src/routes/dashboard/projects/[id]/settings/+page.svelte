@@ -179,6 +179,10 @@
 	);
 </script>
 
+<svelte:head>
+	<title>Project Settings - LogTide</title>
+</svelte:head>
+
 <div class="space-y-6">
 	{#if loading}
 		<div class="flex items-center justify-center py-12">

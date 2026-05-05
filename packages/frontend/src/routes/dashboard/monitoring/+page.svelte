@@ -531,6 +531,10 @@
 
 </script>
 
+<svelte:head>
+  <title>Monitoring - LogTide</title>
+</svelte:head>
+
 <div class="flex flex-col gap-6 p-6">
   <div class="flex items-center justify-between gap-4">
     <div class="flex items-center gap-3 min-w-0">

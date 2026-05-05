@@ -256,6 +256,10 @@
   });
 </script>
 
+<svelte:head>
+  <title>{$activeDashboard?.name ?? 'Dashboard'} - LogTide</title>
+</svelte:head>
+
 <div class="container mx-auto space-y-6 {containerPadding} {maxWidthClass}">
   <!-- Header -->
   <div class="flex flex-wrap items-start justify-between gap-4">

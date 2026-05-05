@@ -265,6 +265,10 @@
 	}
 </script>
 
+<svelte:head>
+	<title>Project Alerts - LogTide</title>
+</svelte:head>
+
 <div class="space-y-6">
 	<!-- Header -->
 	<div class="flex items-start justify-between">
