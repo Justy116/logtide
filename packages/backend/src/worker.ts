@@ -11,12 +11,15 @@ import { processExceptionParsing, type ExceptionParsingJobData } from './queue/j
 import { processErrorNotification, type ErrorNotificationJobData } from './queue/jobs/error-notification.js';
 import { processMonitorNotification, type MonitorNotificationJob } from './queue/jobs/monitor-notification.js';
 import { processLogPipeline, type LogPipelineJobData } from './queue/jobs/log-pipeline.js';
+import { processDigestGeneration } from './queue/jobs/digest-generation.js';
+import type { DigestJobPayload } from './modules/digests/scheduler.js';
 import { alertsService } from './modules/alerts/index.js';
 import { monitorService } from './modules/monitoring/index.js';
 import { maintenanceService } from './modules/maintenances/service.js';
 import { enrichmentService } from './modules/siem/enrichment-service.js';
 import { retentionService } from './modules/retention/index.js';
 import { sigmaSyncService } from './modules/sigma/sync-service.js';
+import { digestScheduler } from './modules/digests/scheduler.js';
 import { initializeWorkerLogging, shutdownInternalLogging, isInternalLoggingEnabled } from './utils/internal-logger.js';
 import { hub } from '@logtide/core';
 import { reservoirReady } from './database/reservoir.js';
@@ -75,6 +78,12 @@ const monitorNotificationWorker = createWorker<MonitorNotificationJob>('monitor-
 const pipelineWorker = createWorker<LogPipelineJobData>('log-pipeline', async (job) => {
   await processLogPipeline(job);
 });
+
+// Create worker for digest generation
+const digestWorker = createWorker<DigestJobPayload>('digest-generation', async (job) => {
+  await processDigestGeneration(job);
+});
+await digestScheduler.registerAllDigests();
 
 // Start workers (required for graphile-worker backend, no-op for BullMQ)
 console.log(`[Worker] Using queue backend: ${getQueueBackend()}`);
@@ -277,6 +286,27 @@ pipelineWorker.on('failed', (job, err) => {
       error: { name: err.name, message: err.message, stack: err.stack },
       jobId: job?.id,
       logCount: job?.data?.logs?.length,
+    });
+  }
+});
+
+digestWorker.on('completed', (job) => {
+  if (isInternalLoggingEnabled()) {
+    hub.captureLog('info', `Digest generation job completed`, {
+      jobId: job.id,
+      organizationId: job.data?.organizationId,
+      frequency: job.data?.frequency,
+    });
+  }
+});
+
+digestWorker.on('failed', (job, err) => {
+  if (isInternalLoggingEnabled()) {
+    hub.captureLog('error', `Digest generation job failed: ${err.message}`, {
+      error: { name: err.name, message: err.message, stack: err.stack },
+      jobId: job?.id,
+      organizationId: job?.data?.organizationId,
+      frequency: job?.data?.frequency,
     });
   }
 });
@@ -670,6 +700,7 @@ async function gracefulShutdown(signal: string) {
     await errorNotificationWorker.close();
     await monitorNotificationWorker.close();
     await pipelineWorker.close();
+    await digestWorker.close();
     console.log('[Worker] Workers closed');
 
     // Close queue system (Redis/PostgreSQL connections)

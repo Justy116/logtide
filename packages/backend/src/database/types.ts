@@ -1018,6 +1018,35 @@ export interface LogPipelinesTable {
   updated_at: Generated<Timestamp>;
 }
 
+// ============================================================================
+// DIGEST EMAIL REPORTS TABLES
+// ============================================================================
+
+export type DigestFrequency = 'daily' | 'weekly';
+
+export interface DigestConfigsTable {
+  id: Generated<string>;
+  organization_id: string;
+  frequency: DigestFrequency;
+  delivery_hour: number;           
+  delivery_day_of_week: number | null; 
+  enabled: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface DigestRecipientsTable {
+  id: Generated<string>;
+  organization_id: string;
+  digest_config_id: string;
+  user_id: string | null;       
+  email: string;
+  subscribed: Generated<boolean>;
+  unsubscribe_token: string;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface Database {
   logs: LogsTable;
   users: UsersTable;
@@ -1096,4 +1125,7 @@ export interface Database {
   status_incidents: StatusIncidentsTable;
   status_incident_updates: StatusIncidentUpdatesTable;
   scheduled_maintenances: ScheduledMaintenancesTable;
+  // Digest email reports
+  digest_configs: DigestConfigsTable;
+  digest_recipients: DigestRecipientsTable;
 }

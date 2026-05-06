@@ -10,6 +10,8 @@ import pg from 'pg';
 import type {
   IQueueAdapter,
   IWorkerAdapter,
+  ICronRegistry,
+  CronJobDefinition,
   JobProcessor,
   QueueBackend,
   QueueSystemStatus,
@@ -239,6 +241,14 @@ class QueueSystemManager {
   }
 
   /**
+   * Get the cron registry for the active backend.
+   */
+  getCronRegistry(queueName: string): ICronRegistry {
+    const queue = this.createQueue<unknown>(queueName);
+    return queue as unknown as ICronRegistry;
+  }
+
+  /**
    * Get queue system status
    */
   getStatus(): QueueSystemStatus {
@@ -388,3 +398,12 @@ export function getRedisConnection(): Redis | null {
     return null;
   }
 }
+
+/**
+ * Get the cron registry for the active backend.
+ */
+export function getCronRegistry(queueName: string): ICronRegistry {
+  return queueSystem.getCronRegistry(queueName);
+}
+
+export type { CronJobDefinition, ICronRegistry };

@@ -9,6 +9,8 @@ import type Redis from 'ioredis';
 import type {
   IQueueAdapter,
   IWorkerAdapter,
+  ICronRegistry,
+  CronJobDefinition,
   IJob,
   IJobOptions,
   JobProcessor,
@@ -44,7 +46,7 @@ function adaptBullJob<T>(bullJob: BullJob<T>): IJob<T> {
 /**
  * BullMQ Queue Adapter
  */
-export class BullMQQueueAdapter<T = unknown> implements IQueueAdapter<T> {
+export class BullMQQueueAdapter<T = unknown> implements IQueueAdapter<T>, ICronRegistry {
   private queue: Queue<T>;
 
   constructor(
@@ -65,11 +67,14 @@ export class BullMQQueueAdapter<T = unknown> implements IQueueAdapter<T> {
       attempts: options?.maxAttempts,
       priority: options?.priority,
       jobId: options?.jobKey,
+      repeat: options?.repeat,
+      removeOnComplete: options?.removeOnComplete,
+      removeOnFail: options?.removeOnFail,
     });
 
     return {
       id: bullJob.id || '',
-      data: data, // Use the original data since bullJob.data has complex type
+      data: data, 
       name: bullJob.name,
       attemptsMade: bullJob.attemptsMade,
       timestamp: bullJob.timestamp ? new Date(bullJob.timestamp) : undefined,
@@ -78,6 +83,24 @@ export class BullMQQueueAdapter<T = unknown> implements IQueueAdapter<T> {
 
   async close(): Promise<void> {
     await this.queue.close();
+  }
+
+  /**
+   * Called once at worker startup with all active digest configs.
+   */
+  async registerCronJobs(items: CronJobDefinition[]): Promise<void> {
+    for (const item of items) {
+      await this.add(
+        item.task, 
+        item.payload as unknown as T, 
+        {
+          repeat: { pattern: item.cronExpression },
+          jobKey: item.identifier,
+          removeOnComplete: true,
+          removeOnFail: false,
+        }
+      );
+    }
   }
 
   async getJobCounts(): Promise<{
