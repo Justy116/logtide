@@ -6,7 +6,7 @@ const ActorSchema = z.object({
   type: z.enum(['user', 'apiKey', 'system']),
   id: z.string().nullable(),
   email: z.string().optional(),
-  apiKeyType: z.enum(['ingest', 'query', 'admin']).optional(),
+  apiKeyType: z.enum(['write', 'full']).optional(),
 });
 
 const SerializedContextSchema = z.object({

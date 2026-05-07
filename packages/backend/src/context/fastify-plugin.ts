@@ -11,12 +11,6 @@ type AuthDecoratedRequest = FastifyRequest & {
   user?: { id: string; email: string };
 };
 
-function mapApiKeyType(t: ApiKeyType | undefined): Actor['apiKeyType'] {
-  if (t === 'write') return 'ingest';
-  if (t === 'full') return 'admin';
-  return undefined;
-}
-
 const plugin: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('onRequest', async (request) => {
     const r = request as AuthDecoratedRequest;
@@ -24,7 +18,7 @@ const plugin: FastifyPluginAsync = async (fastify) => {
     const actor: Actor = r.user
       ? { type: 'user', id: r.user.id, email: r.user.email }
       : r.apiKeyId
-      ? { type: 'apiKey', id: r.apiKeyId, apiKeyType: mapApiKeyType(r.apiKeyType) }
+      ? { type: 'apiKey', id: r.apiKeyId, apiKeyType: r.apiKeyType }
       : { type: 'system', id: null };
 
     const userAgentHeader = r.headers['user-agent'];

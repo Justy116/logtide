@@ -1,10 +1,12 @@
+import type { ApiKeyType } from '../constants/log-constants.js';
+
 export type ActorType = 'user' | 'apiKey' | 'system';
 
 export interface Actor {
   readonly type: ActorType;
   readonly id: string | null;
   readonly email?: string;
-  readonly apiKeyType?: 'ingest' | 'query' | 'admin';
+  readonly apiKeyType?: ApiKeyType;
 }
 
 export type Origin = 'http' | 'job' | 'system';
