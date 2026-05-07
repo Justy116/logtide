@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { currentOrNull } from '@logtide/shared';
 import { StorageEngine } from '../../core/storage-engine.js';
 import type {
   LogRecord,
@@ -75,6 +76,21 @@ const METRIC_INTERVAL_MAP: Record<AggregationInterval, string> = {
   '1w': '1 week',
 };
 
+const SAFE_RE = /[^a-zA-Z0-9_:-]/g;
+function safe(v: string | null | undefined): string {
+  if (!v) return '-';
+  const c = v.replace(SAFE_RE, '');
+  return c.length > 0 ? c : '-';
+}
+function ctxComment(): string {
+  if (process.env.LOGTIDE_CONTEXT_SQL_COMMENT === 'false') return '';
+  const ctx = currentOrNull();
+  if (!ctx) return '';
+  return `/* req=${safe(ctx.requestId)} origin=${safe(ctx.origin)} org=${safe(
+    ctx.organizationId
+  )} actor=${safe(ctx.actor.type)}:${safe(ctx.actor.id)} */ `;
+}
+
 export interface TimescaleEngineOptions {
   /** Use an existing pg.Pool instead of creating a new one */
   pool?: pg.Pool;
@@ -141,7 +157,7 @@ export class TimescaleEngine extends StorageEngine {
   async healthCheck(): Promise<HealthStatus> {
     const start = Date.now();
     try {
-      await this.getPool().query('SELECT 1');
+      await this.runQuery('SELECT 1');
       const responseTimeMs = Date.now() - start;
       let status: HealthStatus['status'] = 'healthy';
       if (responseTimeMs >= 200) status = 'unhealthy';
@@ -223,11 +239,10 @@ export class TimescaleEngine extends StorageEngine {
     }
 
     const start = Date.now();
-    const pool = this.getPool();
     const { query, values } = this.buildInsertQuery(logs);
 
     try {
-      await pool.query(query, values);
+      await this.runQuery(query, values);
       return { ingested: logs.length, failed: 0, durationMs: Date.now() - start };
     } catch (err) {
       return {
@@ -245,11 +260,10 @@ export class TimescaleEngine extends StorageEngine {
     }
 
     const start = Date.now();
-    const pool = this.getPool();
     const { query, values } = this.buildInsertQuery(logs, true);
 
     try {
-      const result = await pool.query(query, values);
+      const result = await this.runQuery(query, values);
       const rows = result.rows.map(mapRowToStoredLogRecord);
       return { ingested: logs.length, failed: 0, durationMs: Date.now() - start, rows };
     } catch (err) {
@@ -265,12 +279,11 @@ export class TimescaleEngine extends StorageEngine {
 
   async query(params: QueryParams): Promise<QueryResult<StoredLogRecord>> {
     const start = Date.now();
-    const pool = this.getPool();
     const native = this.translator.translateQuery(params);
     const limit = (native.metadata?.limit as number) ?? 50;
     const offset = params.offset ?? 0;
 
-    const result = await pool.query(native.query as string, native.parameters);
+    const result = await this.runQuery(native.query as string, native.parameters);
     const hasMore = result.rows.length > limit;
     const rows = hasMore ? result.rows.slice(0, limit) : result.rows;
 
@@ -296,10 +309,9 @@ export class TimescaleEngine extends StorageEngine {
 
   async aggregate(params: AggregateParams): Promise<AggregateResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const native = this.translator.translateAggregate(params);
 
-    const result = await pool.query(native.query as string, native.parameters);
+    const result = await this.runQuery(native.query as string, native.parameters);
 
     const bucketMap = new Map<string, TimeBucket>();
 
@@ -328,8 +340,7 @@ export class TimescaleEngine extends StorageEngine {
   }
 
   async getById(params: GetByIdParams): Promise<StoredLogRecord | null> {
-    const pool = this.getPool();
-    const result = await pool.query(
+    const result = await this.runQuery(
       `SELECT * FROM ${this.schema}.${this.tableName} WHERE id = $1 AND project_id = $2 LIMIT 1`,
       [params.id, params.projectId],
     );
@@ -338,8 +349,7 @@ export class TimescaleEngine extends StorageEngine {
 
   async getByIds(params: GetByIdsParams): Promise<StoredLogRecord[]> {
     if (params.ids.length === 0) return [];
-    const pool = this.getPool();
-    const result = await pool.query(
+    const result = await this.runQuery(
       `SELECT * FROM ${this.schema}.${this.tableName} WHERE id = ANY($1::uuid[]) AND project_id = $2 ORDER BY time DESC`,
       [params.ids, params.projectId],
     );
@@ -348,9 +358,8 @@ export class TimescaleEngine extends StorageEngine {
 
   async count(params: CountParams): Promise<CountResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const native = this.translator.translateCount(params);
-    const result = await pool.query(native.query as string, native.parameters);
+    const result = await this.runQuery(native.query as string, native.parameters);
     return {
       count: Number(result.rows[0]?.count ?? 0),
       executionTimeMs: Date.now() - start,
@@ -359,9 +368,8 @@ export class TimescaleEngine extends StorageEngine {
 
   async countEstimate(params: CountParams): Promise<CountResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const native = this.translator.translateCountEstimate(params);
-    const result = await pool.query(
+    const result = await this.runQuery(
       `EXPLAIN (FORMAT JSON) ${native.query}`,
       native.parameters,
     );
@@ -375,10 +383,9 @@ export class TimescaleEngine extends StorageEngine {
 
   async distinct(params: DistinctParams): Promise<DistinctResult> {
     const start = Date.now();
-    const pool = this.getPool();
 
     // Skip-Scan Optimization for indexed fields (service, level)
-    // This provides massive performance gains (100x+) on large datasets by jumping 
+    // This provides massive performance gains (100x+) on large datasets by jumping
     // through the index instead of scanning all matching rows.
     // Skip-scan only when no extra filters are present (service/level/filters would require CTE changes)
     if (
@@ -412,7 +419,7 @@ export class TimescaleEngine extends StorageEngine {
         `;
 
         const limit = params.limit ?? 1000;
-        const result = await pool.query(query, [projectIds, params.from, params.to, limit]);
+        const result = await this.runQuery(query, [projectIds, params.from, params.to, limit]);
 
         return {
           values: result.rows.map((row) => row.value as string).filter((v) => v != null && v !== ''),
@@ -425,7 +432,7 @@ export class TimescaleEngine extends StorageEngine {
     }
 
     const native = this.translator.translateDistinct(params);
-    const result = await pool.query(native.query as string, native.parameters);
+    const result = await this.runQuery(native.query as string, native.parameters);
     return {
       values: result.rows.map((row: Record<string, unknown>) => row.value as string).filter((v) => v != null && v !== ''),
       executionTimeMs: Date.now() - start,
@@ -434,9 +441,8 @@ export class TimescaleEngine extends StorageEngine {
 
   async topValues(params: TopValuesParams): Promise<TopValuesResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const native = this.translator.translateTopValues(params);
-    const result = await pool.query(native.query as string, native.parameters);
+    const result = await this.runQuery(native.query as string, native.parameters);
     return {
       values: result.rows.map((row: Record<string, unknown>) => ({
         value: row.value as string,
@@ -448,9 +454,8 @@ export class TimescaleEngine extends StorageEngine {
 
   async deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const native = this.translator.translateDelete(params);
-    const result = await pool.query(native.query as string, native.parameters);
+    const result = await this.runQuery(native.query as string, native.parameters);
     return {
       deleted: Number(result.rowCount ?? 0),
       executionTimeMs: Date.now() - start,
@@ -481,6 +486,12 @@ export class TimescaleEngine extends StorageEngine {
       throw new Error('Not connected. Call connect() first.');
     }
     return this.pool;
+  }
+
+  private async runQuery(sql: string, params?: unknown[]): Promise<pg.QueryResult> {
+    const pool = this.getPool();
+    const final = ctxComment() + sql;
+    return params ? pool.query(final, params as any[]) : pool.query(final);
   }
 
   private buildInsertQuery(logs: LogRecord[], returning = false): { query: string; values: unknown[] } {
@@ -539,7 +550,6 @@ export class TimescaleEngine extends StorageEngine {
     if (spans.length === 0) return { ingested: 0, failed: 0, durationMs: 0 };
 
     const start = Date.now();
-    const pool = this.getPool();
     const s = this.schema;
 
     const times: Date[] = [];
@@ -583,7 +593,7 @@ export class TimescaleEngine extends StorageEngine {
     }
 
     try {
-      await pool.query(
+      await this.runQuery(
         `INSERT INTO ${s}.spans (
           time, span_id, trace_id, parent_span_id, organization_id, project_id,
           service_name, operation_name, start_time, end_time, duration_ms,
@@ -610,17 +620,16 @@ export class TimescaleEngine extends StorageEngine {
   }
 
   async upsertTrace(trace: TraceRecord): Promise<void> {
-    const pool = this.getPool();
     const s = this.schema;
 
-    const existing = await pool.query(
+    const existing = await this.runQuery(
       `SELECT trace_id, start_time, end_time, span_count, error FROM ${s}.traces
        WHERE trace_id = $1 AND project_id = $2`,
       [trace.traceId, trace.projectId],
     );
 
     if (existing.rows.length === 0) {
-      await pool.query(
+      await this.runQuery(
         `INSERT INTO ${s}.traces (
           trace_id, organization_id, project_id, service_name, root_service_name, root_operation_name,
           start_time, end_time, duration_ms, span_count, error
@@ -637,7 +646,7 @@ export class TimescaleEngine extends StorageEngine {
       const newEnd = trace.endTime > existingEnd ? trace.endTime : existingEnd;
       const newDuration = newEnd.getTime() - newStart.getTime();
 
-      await pool.query(
+      await this.runQuery(
         `UPDATE ${s}.traces SET
           start_time = $1, end_time = $2, duration_ms = $3,
           span_count = span_count + $4, error = error OR $5,
@@ -653,7 +662,6 @@ export class TimescaleEngine extends StorageEngine {
 
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const s = this.schema;
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
@@ -703,13 +711,13 @@ export class TimescaleEngine extends StorageEngine {
     const sortBy = ALLOWED_SORT_COLUMNS.has(params.sortBy ?? '') ? params.sortBy! : 'start_time';
     const sortOrder = ALLOWED_SORT_ORDERS.has((params.sortOrder ?? '').toLowerCase()) ? params.sortOrder!.toUpperCase() : 'ASC';
 
-    const countResult = await pool.query(
+    const countResult = await this.runQuery(
       `SELECT COUNT(*)::int AS count FROM ${s}.spans ${where}`,
       values,
     );
     const total = countResult.rows[0]?.count ?? 0;
 
-    const result = await pool.query(
+    const result = await this.runQuery(
       `SELECT * FROM ${s}.spans ${where}
        ORDER BY ${sortBy} ${sortOrder}
        LIMIT $${idx++} OFFSET $${idx++}`,
@@ -727,9 +735,8 @@ export class TimescaleEngine extends StorageEngine {
   }
 
   async getSpansByTraceId(traceId: string, projectId: string): Promise<SpanRecord[]> {
-    const pool = this.getPool();
     const s = this.schema;
-    const result = await pool.query(
+    const result = await this.runQuery(
       `SELECT * FROM ${s}.spans WHERE trace_id = $1 AND project_id = $2 ORDER BY start_time ASC`,
       [traceId, projectId],
     );
@@ -738,7 +745,6 @@ export class TimescaleEngine extends StorageEngine {
 
   async queryTraces(params: TraceQueryParams): Promise<TraceQueryResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const s = this.schema;
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
@@ -777,13 +783,13 @@ export class TimescaleEngine extends StorageEngine {
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const countResult = await pool.query(
+    const countResult = await this.runQuery(
       `SELECT COUNT(*)::int AS count FROM ${s}.traces ${where}`,
       values,
     );
     const total = countResult.rows[0]?.count ?? 0;
 
-    const result = await pool.query(
+    const result = await this.runQuery(
       `SELECT * FROM ${s}.traces ${where}
        ORDER BY start_time DESC
        LIMIT $${idx++} OFFSET $${idx++}`,
@@ -801,9 +807,8 @@ export class TimescaleEngine extends StorageEngine {
   }
 
   async getTraceById(traceId: string, projectId: string): Promise<TraceRecord | null> {
-    const pool = this.getPool();
     const s = this.schema;
-    const result = await pool.query(
+    const result = await this.runQuery(
       `SELECT * FROM ${s}.traces WHERE trace_id = $1 AND project_id = $2`,
       [traceId, projectId],
     );
@@ -815,7 +820,6 @@ export class TimescaleEngine extends StorageEngine {
     from?: Date,
     to?: Date,
   ): Promise<ServiceDependencyResult> {
-    const pool = this.getPool();
     const s = this.schema;
     const values: unknown[] = [projectId];
     let idx = 2;
@@ -830,7 +834,7 @@ export class TimescaleEngine extends StorageEngine {
       values.push(to);
     }
 
-    const result = await pool.query(
+    const result = await this.runQuery(
       `SELECT
         parent.service_name AS source_service,
         child.service_name AS target_service,
@@ -870,7 +874,6 @@ export class TimescaleEngine extends StorageEngine {
 
   async deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const s = this.schema;
     const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
 
@@ -884,13 +887,13 @@ export class TimescaleEngine extends StorageEngine {
       values.push(svc);
     }
 
-    const result = await pool.query(
+    const result = await this.runQuery(
       `DELETE FROM ${s}.spans WHERE ${conditions.join(' AND ')}`,
       values,
     );
 
     // Also clean up orphaned traces
-    await pool.query(
+    await this.runQuery(
       `DELETE FROM ${s}.traces WHERE project_id = ANY($1)
        AND NOT EXISTS (SELECT 1 FROM ${s}.spans WHERE spans.trace_id = traces.trace_id AND spans.project_id = traces.project_id)`,
       [pids],
@@ -912,7 +915,6 @@ export class TimescaleEngine extends StorageEngine {
     }
 
     const start = Date.now();
-    const pool = this.getPool();
     const s = this.schema;
 
     const times: Date[] = [];
@@ -945,7 +947,7 @@ export class TimescaleEngine extends StorageEngine {
     const hasExemplarsFlags: boolean[] = metrics.map(m => (m.exemplars?.length ?? 0) > 0);
 
     try {
-      const insertResult = await pool.query(
+      const insertResult = await this.runQuery(
         `INSERT INTO ${s}.metrics (
           time, organization_id, project_id, metric_name, metric_type,
           value, is_monotonic, service_name, attributes, resource_attributes, histogram_data, has_exemplars
@@ -992,7 +994,7 @@ export class TimescaleEngine extends StorageEngine {
       }
 
       if (exemplarTimes.length > 0) {
-        await pool.query(
+        await this.runQuery(
           `INSERT INTO ${s}.metric_exemplars (
             time, metric_id, organization_id, project_id,
             exemplar_value, exemplar_time, trace_id, span_id, attributes
@@ -1019,7 +1021,6 @@ export class TimescaleEngine extends StorageEngine {
 
   async queryMetrics(params: MetricQueryParams): Promise<MetricQueryResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const s = this.schema;
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
@@ -1069,14 +1070,14 @@ export class TimescaleEngine extends StorageEngine {
     const sortOrder = params.sortOrder ?? 'desc';
 
     // Count total
-    const countResult = await pool.query(
+    const countResult = await this.runQuery(
       `SELECT COUNT(*)::int AS count FROM ${s}.metrics m ${where}`,
       values,
     );
     const total = countResult.rows[0]?.count ?? 0;
 
     // Fetch rows
-    const dataResult = await pool.query(
+    const dataResult = await this.runQuery(
       `SELECT m.* FROM ${s}.metrics m ${where}
        ORDER BY m.time ${sortOrder}
        LIMIT $${idx++} OFFSET $${idx++}`,
@@ -1088,7 +1089,7 @@ export class TimescaleEngine extends StorageEngine {
     // Optionally load exemplars
     if (params.includeExemplars && metricsResult.length > 0) {
       const metricIds = metricsResult.map((m) => m.id);
-      const exResult = await pool.query(
+      const exResult = await this.runQuery(
         `SELECT * FROM ${s}.metric_exemplars WHERE metric_id = ANY($1::uuid[])`,
         [metricIds],
       );
@@ -1133,7 +1134,6 @@ export class TimescaleEngine extends StorageEngine {
       return this.aggregateMetricsFromRollup(params, start);
     }
 
-    const pool = this.getPool();
     const s = this.schema;
 
     const intervalSql = METRIC_INTERVAL_MAP[params.interval];
@@ -1232,7 +1232,7 @@ export class TimescaleEngine extends StorageEngine {
 
     const groupByCols = ['bucket', ...groupByColumns].join(', ');
 
-    const result = await pool.query(
+    const result = await this.runQuery(
       `SELECT ${selectCols}
        FROM ${s}.metrics
        ${where}
@@ -1276,7 +1276,6 @@ export class TimescaleEngine extends StorageEngine {
     params: MetricAggregateParams,
     start: number,
   ): Promise<MetricAggregateResult> {
-    const pool = this.getPool();
     const s = this.schema;
 
     const rollupTable = params.interval === '1d'
@@ -1312,12 +1311,12 @@ export class TimescaleEngine extends StorageEngine {
       ORDER BY bucket ASC
     `;
 
-    const { rows } = await pool.query(sql, placeholders);
+    const { rows } = await this.runQuery(sql, placeholders);
 
     // Resolve metric type
     let metricType = params.metricType;
     if (!metricType && rows.length > 0) {
-      const typeRes = await pool.query(
+      const typeRes = await this.runQuery(
         `SELECT metric_type FROM ${s}.${rollupTable} WHERE metric_name = $1 LIMIT 1`,
         [params.metricName],
       );
@@ -1337,7 +1336,6 @@ export class TimescaleEngine extends StorageEngine {
 
   async getMetricNames(params: MetricNamesParams): Promise<MetricNamesResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const s = this.schema;
 
     const conditions: string[] = [];
@@ -1373,7 +1371,7 @@ export class TimescaleEngine extends StorageEngine {
     const limitClause = params.limit ? `LIMIT $${idx++}` : '';
     const limitValues = params.limit ? [params.limit] : [];
 
-    const result = await pool.query(
+    const result = await this.runQuery(
       `SELECT DISTINCT metric_name, metric_type
        FROM ${s}.metrics
        ${where}
@@ -1393,7 +1391,6 @@ export class TimescaleEngine extends StorageEngine {
 
   async getMetricLabelKeys(params: MetricLabelParams): Promise<MetricLabelResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const s = this.schema;
 
     const conditions: string[] = [];
@@ -1428,7 +1425,7 @@ export class TimescaleEngine extends StorageEngine {
     const limitClause = params.limit ? `LIMIT $${idx++}` : '';
     const limitValues = params.limit ? [params.limit] : [];
 
-    const result = await pool.query(
+    const result = await this.runQuery(
       `SELECT DISTINCT jsonb_object_keys(attributes) AS key
        FROM ${s}.metrics
        ${where} AND attributes IS NOT NULL
@@ -1445,7 +1442,6 @@ export class TimescaleEngine extends StorageEngine {
 
   async getMetricLabelValues(params: MetricLabelParams, labelKey: string): Promise<MetricLabelResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const s = this.schema;
 
     const conditions: string[] = [];
@@ -1484,7 +1480,7 @@ export class TimescaleEngine extends StorageEngine {
     const limitClause = params.limit ? `LIMIT $${idx++}` : '';
     const limitValues = params.limit ? [params.limit] : [];
 
-    const result = await pool.query(
+    const result = await this.runQuery(
       `SELECT DISTINCT attributes->>$${idx++} AS value
        FROM ${s}.metrics
        ${where}
@@ -1503,7 +1499,6 @@ export class TimescaleEngine extends StorageEngine {
 
   async deleteMetricsByTimeRange(params: DeleteMetricsByTimeRangeParams): Promise<DeleteResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const s = this.schema;
     const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
 
@@ -1525,7 +1520,7 @@ export class TimescaleEngine extends StorageEngine {
     const where = conditions.join(' AND ');
 
     // Delete exemplars first (they reference metrics)
-    await pool.query(
+    await this.runQuery(
       `DELETE FROM ${s}.metric_exemplars WHERE metric_id IN (
         SELECT id FROM ${s}.metrics WHERE ${where}
       )`,
@@ -1533,7 +1528,7 @@ export class TimescaleEngine extends StorageEngine {
     );
 
     // Delete metrics
-    const result = await pool.query(
+    const result = await this.runQuery(
       `DELETE FROM ${s}.metrics WHERE ${where}`,
       values,
     );
@@ -1546,7 +1541,6 @@ export class TimescaleEngine extends StorageEngine {
 
   async getMetricsOverview(params: MetricsOverviewParams): Promise<MetricsOverviewResult> {
     const start = Date.now();
-    const pool = this.getPool();
     const s = this.schema;
     const projectIds = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
     const placeholders: unknown[] = [params.from, params.to, projectIds];
@@ -1577,7 +1571,7 @@ export class TimescaleEngine extends StorageEngine {
         GROUP BY metric_name, metric_type, service_name
         ORDER BY service_name, metric_name
       `;
-      const result = await pool.query(sql, placeholders);
+      const result = await this.runQuery(sql, placeholders);
       rows = result.rows;
     } catch {
       // Fallback to raw metrics table
@@ -1595,7 +1589,7 @@ export class TimescaleEngine extends StorageEngine {
         GROUP BY metric_name, metric_type, service_name
         ORDER BY service_name, metric_name
       `;
-      const result = await pool.query(sql, placeholders);
+      const result = await this.runQuery(sql, placeholders);
       rows = result.rows;
     }
 
@@ -1617,7 +1611,7 @@ export class TimescaleEngine extends StorageEngine {
           ${latestServiceFilter}
         ORDER BY metric_name, service_name, time DESC
       `;
-      const { rows: latestRows } = await pool.query(latestSql, latestPlaceholders);
+      const { rows: latestRows } = await this.runQuery(latestSql, latestPlaceholders);
       latestMap = new Map(
         latestRows.map((r: Record<string, unknown>) => [
           `${r.metric_name}:${r.service_name}`,
