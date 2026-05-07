@@ -93,6 +93,8 @@ const originalConnect = pool.connect.bind(pool);
   ...args: any[]
 ): Promise<any> {
   const client = await (originalConnect as any)(...args);
+  // pool.connect(callback) returns void; bail if no client materialized.
+  if (!client || typeof client !== 'object') return client;
   // Patch the client's query method (only once per client)
   if (!(client as any).__logtideContextPatched) {
     const clientOriginalQuery = client.query.bind(client);
