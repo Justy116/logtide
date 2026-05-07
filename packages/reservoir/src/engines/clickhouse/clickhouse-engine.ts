@@ -167,7 +167,7 @@ export class ClickHouseEngine extends StorageEngine {
       password: this.config.password,
     });
     try {
-      await bootstrapthis.runCommand({
+      await bootstrapClient.command({
         query: `CREATE DATABASE IF NOT EXISTS ${this.config.database}`,
       });
     } finally {
@@ -478,7 +478,7 @@ export class ClickHouseEngine extends StorageEngine {
 
     try {
       const values = logs.map((log) => this.toClickHouseRow(log));
-      await client.insert({ table: this.tableName, values, format: 'JSONEachRow' });
+      await this.runInsert({ table: this.tableName, values, format: 'JSONEachRow' }, 'ingest-logs');
       return { ingested: logs.length, failed: 0, durationMs: Date.now() - start };
     } catch (err) {
       return {
@@ -505,7 +505,7 @@ export class ClickHouseEngine extends StorageEngine {
     }));
 
     try {
-      await client.insert({ table: this.tableName, values: logsWithIds, format: 'JSONEachRow' });
+      await this.runInsert({ table: this.tableName, values: logsWithIds, format: 'JSONEachRow' }, 'ingest-logs-returning');
 
       const rows: StoredLogRecord[] = logsWithIds.map((row, i) => ({
         id: row.id,
@@ -747,6 +747,23 @@ export class ClickHouseEngine extends StorageEngine {
     return client.query(final as any);
   }
 
+  private async runInsert(args: { table: string; values: unknown; format?: string; [k: string]: unknown }, op = 'insert') {
+    const client = this.getClient();
+    const queryId = chQueryId(op);
+    const final: any = { ...args };
+    if (queryId) {
+      final.query_id = queryId;
+    }
+    const comment = chCtxComment().trim();
+    if (comment) {
+      final.clickhouse_settings = {
+        ...(final.clickhouse_settings as object | undefined),
+        log_comment: comment,
+      };
+    }
+    return client.insert(final);
+  }
+
   private toClickHouseRow(log: LogRecord): Record<string, unknown> {
     const row: Record<string, unknown> = {
       time: log.time.getTime(),
@@ -797,7 +814,7 @@ export class ClickHouseEngine extends StorageEngine {
         resource_attributes: span.resourceAttributes ? JSON.stringify(span.resourceAttributes) : '{}',
       }));
 
-      await client.insert({ table: 'spans', values, format: 'JSONEachRow' });
+      await this.runInsert({ table: 'spans', values, format: 'JSONEachRow' }, 'ingest-spans');
       return { ingested: spans.length, failed: 0, durationMs: Date.now() - start };
     } catch (err) {
       return {
@@ -845,7 +862,7 @@ export class ClickHouseEngine extends StorageEngine {
 
     const durationMs = endTime.getTime() - startTime.getTime();
 
-    await client.insert({
+    await this.runInsert({
       table: 'traces',
       values: [{
         trace_id: trace.traceId,
@@ -861,7 +878,7 @@ export class ClickHouseEngine extends StorageEngine {
         error: error ? 1 : 0,
       }],
       format: 'JSONEachRow',
-    });
+    }, 'upsert-trace');
   }
 
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {
@@ -1166,10 +1183,10 @@ export class ClickHouseEngine extends StorageEngine {
         }
       }
 
-      await client.insert({ table: 'metrics', values: metricRows, format: 'JSONEachRow' });
+      await this.runInsert({ table: 'metrics', values: metricRows, format: 'JSONEachRow' }, 'ingest-metrics');
 
       if (exemplarRows.length > 0) {
-        await client.insert({ table: 'metric_exemplars', values: exemplarRows, format: 'JSONEachRow' });
+        await this.runInsert({ table: 'metric_exemplars', values: exemplarRows, format: 'JSONEachRow' }, 'ingest-metric-exemplars');
       }
 
       return { ingested: metrics.length, failed: 0, durationMs: Date.now() - start };
