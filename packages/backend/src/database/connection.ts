@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Database } from './types.js';
+import { currentOrNull } from '@logtide/shared';
+import { formatContextComment } from '../context/kysely-plugin.js';
 
 const { Pool } = pg;
 
@@ -58,6 +60,30 @@ const poolConfig = {
 };
 
 export const pool = new Pool(poolConfig);
+
+// Context SQL comment injection: prepend /* req=... */ to every query string,
+// transparently, so slow-query logs and pg_stat_activity carry the request id.
+// Disabled when LOGTIDE_CONTEXT_SQL_COMMENT=false.
+const originalQuery = pool.query.bind(pool);
+(pool as unknown as { query: typeof pool.query }).query = function patchedQuery(
+  this: typeof pool,
+  ...args: any[]
+): any {
+  if (process.env.LOGTIDE_CONTEXT_SQL_COMMENT === 'false') {
+    return (originalQuery as any)(...args);
+  }
+  const ctx = currentOrNull();
+  if (!ctx) return (originalQuery as any)(...args);
+
+  const comment = formatContextComment(ctx);
+  const first = args[0];
+  if (typeof first === 'string') {
+    args[0] = comment + first;
+  } else if (first && typeof first === 'object' && typeof first.text === 'string') {
+    args[0] = { ...first, text: comment + first.text };
+  }
+  return (originalQuery as any)(...args);
+} as typeof pool.query;
 
 // Pool event handlers for monitoring
 pool.on('connect', () => {
