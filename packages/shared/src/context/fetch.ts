@@ -1,7 +1,7 @@
 import { currentOrNull } from './storage.js';
 
 export async function fetchWithContext(
-  input: RequestInfo | URL,
+  input: string | URL,
   init?: RequestInit
 ): Promise<Response> {
   const ctx = currentOrNull();

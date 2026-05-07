@@ -9,3 +9,6 @@ export * from './schemas/index.js';
 
 // Export utilities
 export * from './utils/index.js';
+
+// Export context module
+export * from './context/index.js';
