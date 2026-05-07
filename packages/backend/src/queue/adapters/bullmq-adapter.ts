@@ -13,6 +13,7 @@ import type {
   IJobOptions,
   JobProcessor,
 } from '../abstractions/types.js';
+import { attachContextToPayload } from '../../context/bullmq-context.js';
 
 /**
  * Default job options for cleanup (prevents Redis memory bloat)
@@ -58,9 +59,8 @@ export class BullMQQueueAdapter<T = unknown> implements IQueueAdapter<T> {
   }
 
   async add(jobName: string, data: T, options?: IJobOptions): Promise<IJob<T>> {
-    // BullMQ has complex generic types, so we use `any` for the queue.add call
-    // and return our properly typed IJob
-    const bullJob = await (this.queue as any).add(jobName, data, {
+    const payload = attachContextToPayload(data);
+    const bullJob = await (this.queue as any).add(jobName, payload, {
       delay: options?.delay,
       attempts: options?.maxAttempts,
       priority: options?.priority,
@@ -69,7 +69,7 @@ export class BullMQQueueAdapter<T = unknown> implements IQueueAdapter<T> {
 
     return {
       id: bullJob.id || '',
-      data: data, // Use the original data since bullJob.data has complex type
+      data,                                  // return original (un-wrapped) to caller
       name: bullJob.name,
       attemptsMade: bullJob.attemptsMade,
       timestamp: bullJob.timestamp ? new Date(bullJob.timestamp) : undefined,
