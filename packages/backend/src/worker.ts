@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { context } from '@logtide/shared';
 import { createWorker, startQueueWorkers, shutdownQueueSystem, getQueueBackend } from './queue/connection.js';
 import { processAlertNotification, type AlertNotificationData } from './queue/jobs/alert-notification.js';
 import { processSigmaDetection, type SigmaDetectionData } from './queue/jobs/sigma-detection.js';
@@ -286,64 +287,66 @@ let isCheckingAlerts = false;
 
 // Schedule alert checking every minute
 async function checkAlerts() {
-  // CRITICAL: Skip if already checking (prevent race condition)
-  if (isCheckingAlerts) {
-    console.warn('Alert check already in progress, skipping...');
-    return;
-  }
+  await context.runAsSystem('cron:check-alerts', async () => {
+    // CRITICAL: Skip if already checking (prevent race condition)
+    if (isCheckingAlerts) {
+      console.warn('Alert check already in progress, skipping...');
+      return;
+    }
 
-  isCheckingAlerts = true;
-  const checkStartTime = Date.now();
+    isCheckingAlerts = true;
+    const checkStartTime = Date.now();
 
-  try {
+    try {
 
-    const triggeredAlerts = await alertsService.checkAlertRules();
-    const checkDuration = Date.now() - checkStartTime;
+      const triggeredAlerts = await alertsService.checkAlertRules();
+      const checkDuration = Date.now() - checkStartTime;
 
-    if (triggeredAlerts.length > 0) {
-
-      if (isInternalLoggingEnabled()) {
-        hub.captureLog('warn', `${triggeredAlerts.length} alert(s) triggered`, {
-          alertCount: triggeredAlerts.length,
-          alertRuleIds: triggeredAlerts.map((a) => a.rule_id),
-          checkDuration_ms: checkDuration,
-        });
-      }
-
-      // Add notification jobs to queue
-      const { createQueue } = await import('./queue/connection.js');
-      const notificationQueue = createQueue('alert-notifications');
-
-      for (const alert of triggeredAlerts) {
-        await notificationQueue.add('send-notification', alert);
+      if (triggeredAlerts.length > 0) {
 
         if (isInternalLoggingEnabled()) {
-          hub.captureLog('info', `Alert notification queued`, {
-            alertRuleId: alert.rule_id,
-            ruleName: alert.rule_name,
-            logCount: alert.log_count,
+          hub.captureLog('warn', `${triggeredAlerts.length} alert(s) triggered`, {
+            alertCount: triggeredAlerts.length,
+            alertRuleIds: triggeredAlerts.map((a) => a.rule_id),
+            checkDuration_ms: checkDuration,
+          });
+        }
+
+        // Add notification jobs to queue
+        const { createQueue } = await import('./queue/connection.js');
+        const notificationQueue = createQueue('alert-notifications');
+
+        for (const alert of triggeredAlerts) {
+          await notificationQueue.add('send-notification', alert);
+
+          if (isInternalLoggingEnabled()) {
+            hub.captureLog('info', `Alert notification queued`, {
+              alertRuleId: alert.rule_id,
+              ruleName: alert.rule_name,
+              logCount: alert.log_count,
+            });
+          }
+        }
+      } else {
+        if (isInternalLoggingEnabled()) {
+          hub.captureLog('debug', `Alert check completed, no alerts triggered`, {
+            checkDuration_ms: checkDuration,
           });
         }
       }
-    } else {
+    } catch (error) {
+      console.error('Error checking alerts:', error);
+
       if (isInternalLoggingEnabled()) {
-        hub.captureLog('debug', `Alert check completed, no alerts triggered`, {
-          checkDuration_ms: checkDuration,
+        hub.captureLog('error', `Failed to check alert rules: ${(error as Error).message}`, {
+          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
         });
       }
+    } finally {
+      // CRITICAL: Always release lock
+      isCheckingAlerts = false;
     }
-  } catch (error) {
-    console.error('Error checking alerts:', error);
-
-    if (isInternalLoggingEnabled()) {
-      hub.captureLog('error', `Failed to check alert rules: ${(error as Error).message}`, {
-        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
-      });
-    }
-  } finally {
-    // CRITICAL: Always release lock
-    isCheckingAlerts = false;
-  }
+  });
 }
 
 // Run alert check every minute
@@ -357,34 +360,36 @@ let isAutoGrouping = false;
 
 // Schedule incident auto-grouping every 5 minutes
 async function runAutoGrouping() {
-  // Skip if already running
-  if (isAutoGrouping) {
-    console.warn('Auto-grouping already in progress, skipping...');
-    return;
-  }
-
-  isAutoGrouping = true;
-
-  try {
-    const { createQueue } = await import('./queue/connection.js');
-    const autoGroupQueue = createQueue('incident-autogrouping');
-
-    await autoGroupQueue.add('group-incidents', {});
-
-    if (isInternalLoggingEnabled()) {
-      hub.captureLog('info', `Incident auto-grouping job scheduled`);
+  await context.runAsSystem('cron:auto-grouping', async () => {
+    // Skip if already running
+    if (isAutoGrouping) {
+      console.warn('Auto-grouping already in progress, skipping...');
+      return;
     }
-  } catch (error) {
-    console.error('Error scheduling auto-grouping:', error);
 
-    if (isInternalLoggingEnabled()) {
-      hub.captureLog('error', `Failed to schedule auto-grouping: ${(error as Error).message}`, {
-        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
-      });
+    isAutoGrouping = true;
+
+    try {
+      const { createQueue } = await import('./queue/connection.js');
+      const autoGroupQueue = createQueue('incident-autogrouping');
+
+      await autoGroupQueue.add('group-incidents', {});
+
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('info', `Incident auto-grouping job scheduled`);
+      }
+    } catch (error) {
+      console.error('Error scheduling auto-grouping:', error);
+
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('error', `Failed to schedule auto-grouping: ${(error as Error).message}`, {
+          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
+        });
+      }
+    } finally {
+      isAutoGrouping = false;
     }
-  } finally {
-    isAutoGrouping = false;
-  }
+  });
 }
 
 // Run auto-grouping every 5 minutes
@@ -398,30 +403,32 @@ setTimeout(runAutoGrouping, 10000);
 // ============================================================================
 
 async function updateEnrichmentDatabases() {
-  try {
-    const results = await enrichmentService.updateDatabasesIfNeeded();
+  await context.runAsSystem('cron:enrichment-update', async () => {
+    try {
+      const results = await enrichmentService.updateDatabasesIfNeeded();
 
-    if (results.geoLite2) {
-      console.log('[Worker] GeoLite2 database updated');
+      if (results.geoLite2) {
+        console.log('[Worker] GeoLite2 database updated');
+        if (isInternalLoggingEnabled()) {
+          hub.captureLog('info', 'GeoLite2 database updated successfully');
+        }
+      }
+
+      if (results.ipsum) {
+        console.log('[Worker] IPsum database updated');
+        if (isInternalLoggingEnabled()) {
+          hub.captureLog('info', 'IPsum database updated successfully');
+        }
+      }
+    } catch (error) {
+      console.error('Error updating enrichment databases:', error);
       if (isInternalLoggingEnabled()) {
-        hub.captureLog('info', 'GeoLite2 database updated successfully');
+        hub.captureLog('error', `Failed to update databases: ${(error as Error).message}`, {
+          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
+        });
       }
     }
-
-    if (results.ipsum) {
-      console.log('[Worker] IPsum database updated');
-      if (isInternalLoggingEnabled()) {
-        hub.captureLog('info', 'IPsum database updated successfully');
-      }
-    }
-  } catch (error) {
-    console.error('Error updating enrichment databases:', error);
-    if (isInternalLoggingEnabled()) {
-      hub.captureLog('error', `Failed to update databases: ${(error as Error).message}`, {
-        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
-      });
-    }
-  }
+  });
 }
 
 // Run database updates every 24 hours
@@ -437,54 +444,56 @@ setTimeout(updateEnrichmentDatabases, 30000);
 let isRunningRetentionCleanup = false;
 
 async function runRetentionCleanup() {
-  // Skip if already running
-  if (isRunningRetentionCleanup) {
-    console.warn('Retention cleanup already in progress, skipping...');
-    return;
-  }
-
-  isRunningRetentionCleanup = true;
-  const startTime = Date.now();
-
-  try {
-    console.log('[Worker] Starting retention cleanup...');
-    const summary = await retentionService.executeRetentionForAllOrganizations();
-    const duration = Date.now() - startTime;
-
-    console.log(`[Worker] Retention cleanup completed: ${summary.totalLogsDeleted} logs deleted from ${summary.successfulOrganizations}/${summary.totalOrganizations} orgs in ${duration}ms`);
-
-    if (isInternalLoggingEnabled()) {
-      hub.captureLog('info', 'Retention cleanup completed', {
-        totalOrganizations: summary.totalOrganizations,
-        successfulOrganizations: summary.successfulOrganizations,
-        failedOrganizations: summary.failedOrganizations,
-        totalLogsDeleted: summary.totalLogsDeleted,
-        duration_ms: duration,
-      });
+  await context.runAsSystem('cron:retention-cleanup', async () => {
+    // Skip if already running
+    if (isRunningRetentionCleanup) {
+      console.warn('Retention cleanup already in progress, skipping...');
+      return;
     }
 
-    // Log any failures
-    for (const result of summary.results.filter(r => r.error)) {
-      console.error(`Retention failed for org ${result.organizationName}: ${result.error}`);
+    isRunningRetentionCleanup = true;
+    const startTime = Date.now();
+
+    try {
+      console.log('[Worker] Starting retention cleanup...');
+      const summary = await retentionService.executeRetentionForAllOrganizations();
+      const duration = Date.now() - startTime;
+
+      console.log(`[Worker] Retention cleanup completed: ${summary.totalLogsDeleted} logs deleted from ${summary.successfulOrganizations}/${summary.totalOrganizations} orgs in ${duration}ms`);
+
       if (isInternalLoggingEnabled()) {
-        hub.captureLog('error', `Retention failed for org ${result.organizationName}`, {
-          organizationId: result.organizationId,
-          organizationName: result.organizationName,
-          error: result.error,
+        hub.captureLog('info', 'Retention cleanup completed', {
+          totalOrganizations: summary.totalOrganizations,
+          successfulOrganizations: summary.successfulOrganizations,
+          failedOrganizations: summary.failedOrganizations,
+          totalLogsDeleted: summary.totalLogsDeleted,
+          duration_ms: duration,
         });
       }
-    }
-  } catch (error) {
-    console.error('Retention cleanup failed:', error);
 
-    if (isInternalLoggingEnabled()) {
-      hub.captureLog('error', `Retention cleanup failed: ${(error as Error).message}`, {
-        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
-      });
+      // Log any failures
+      for (const result of summary.results.filter(r => r.error)) {
+        console.error(`Retention failed for org ${result.organizationName}: ${result.error}`);
+        if (isInternalLoggingEnabled()) {
+          hub.captureLog('error', `Retention failed for org ${result.organizationName}`, {
+            organizationId: result.organizationId,
+            organizationName: result.organizationName,
+            error: result.error,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Retention cleanup failed:', error);
+
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('error', `Retention cleanup failed: ${(error as Error).message}`, {
+          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
+        });
+      }
+    } finally {
+      isRunningRetentionCleanup = false;
     }
-  } finally {
-    isRunningRetentionCleanup = false;
-  }
+  });
 }
 
 // Calculate milliseconds until next 2 AM
@@ -528,67 +537,69 @@ setTimeout(runRetentionCleanup, 2 * 60 * 1000);
 let isSyncingSigmaRules = false;
 
 async function syncSigmaRules() {
-  if (isSyncingSigmaRules) {
-    console.warn('[Worker] SigmaHQ sync already in progress, skipping...');
-    return;
-  }
-
-  isSyncingSigmaRules = true;
-
-  try {
-    const orgs = await db
-      .selectFrom('sigma_rules')
-      .select('organization_id')
-      .distinct()
-      .where('sigmahq_path', 'is not', null)
-      .execute();
-
-    if (orgs.length === 0) {
-      console.log('[Worker] No organizations with SigmaHQ rules, skipping sync');
+  await context.runAsSystem('cron:sigma-sync', async () => {
+    if (isSyncingSigmaRules) {
+      console.warn('[Worker] SigmaHQ sync already in progress, skipping...');
       return;
     }
 
-    console.log(`[Worker] Starting SigmaHQ sync for ${orgs.length} organization(s)`);
+    isSyncingSigmaRules = true;
 
-    for (const org of orgs) {
-      try {
-        const result = await sigmaSyncService.syncFromSigmaHQ({
-          organizationId: org.organization_id,
-          autoCreateAlerts: true,
-        });
+    try {
+      const orgs = await db
+        .selectFrom('sigma_rules')
+        .select('organization_id')
+        .distinct()
+        .where('sigmahq_path', 'is not', null)
+        .execute();
 
-        console.log(`[Worker] SigmaHQ sync for org ${org.organization_id}: ${result.imported} imported, ${result.skipped} skipped, ${result.failed} failed`);
+      if (orgs.length === 0) {
+        console.log('[Worker] No organizations with SigmaHQ rules, skipping sync');
+        return;
+      }
 
-        if (isInternalLoggingEnabled()) {
-          hub.captureLog('info', `SigmaHQ sync completed for org ${org.organization_id}`, {
+      console.log(`[Worker] Starting SigmaHQ sync for ${orgs.length} organization(s)`);
+
+      for (const org of orgs) {
+        try {
+          const result = await sigmaSyncService.syncFromSigmaHQ({
             organizationId: org.organization_id,
-            imported: result.imported,
-            skipped: result.skipped,
-            failed: result.failed,
+            autoCreateAlerts: true,
           });
-        }
-      } catch (orgError) {
-        console.error(`[Worker] SigmaHQ sync failed for org ${org.organization_id}:`, orgError);
 
-        if (isInternalLoggingEnabled()) {
-          hub.captureLog('error', `SigmaHQ sync failed for org ${org.organization_id}: ${(orgError as Error).message}`, {
-            organizationId: org.organization_id,
-            error: orgError instanceof Error ? { name: orgError.name, message: orgError.message, stack: orgError.stack } : { message: String(orgError) },
-          });
+          console.log(`[Worker] SigmaHQ sync for org ${org.organization_id}: ${result.imported} imported, ${result.skipped} skipped, ${result.failed} failed`);
+
+          if (isInternalLoggingEnabled()) {
+            hub.captureLog('info', `SigmaHQ sync completed for org ${org.organization_id}`, {
+              organizationId: org.organization_id,
+              imported: result.imported,
+              skipped: result.skipped,
+              failed: result.failed,
+            });
+          }
+        } catch (orgError) {
+          console.error(`[Worker] SigmaHQ sync failed for org ${org.organization_id}:`, orgError);
+
+          if (isInternalLoggingEnabled()) {
+            hub.captureLog('error', `SigmaHQ sync failed for org ${org.organization_id}: ${(orgError as Error).message}`, {
+              organizationId: org.organization_id,
+              error: orgError instanceof Error ? { name: orgError.name, message: orgError.message, stack: orgError.stack } : { message: String(orgError) },
+            });
+          }
         }
       }
-    }
-  } catch (error) {
-    console.error('[Worker] SigmaHQ sync aborted:', error);
+    } catch (error) {
+      console.error('[Worker] SigmaHQ sync aborted:', error);
 
-    if (isInternalLoggingEnabled()) {
-      hub.captureLog('error', `SigmaHQ sync aborted: ${(error as Error).message}`, {
-        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
-      });
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('error', `SigmaHQ sync aborted: ${(error as Error).message}`, {
+          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
+        });
+      }
+    } finally {
+      isSyncingSigmaRules = false;
     }
-  } finally {
-    isSyncingSigmaRules = false;
-  }
+  });
 }
 
 function scheduleNextSigmaSync() {
@@ -613,20 +624,22 @@ scheduleNextSigmaSync();
 let isRunningMonitorChecks = false;
 
 async function runMonitorChecks() {
-  if (isRunningMonitorChecks) return;
-  isRunningMonitorChecks = true;
-  try {
-    await monitorService.runAllDueChecks();
-  } catch (error) {
-    console.error('[Worker] Monitor check error:', error);
-    if (isInternalLoggingEnabled()) {
-      hub.captureLog('error', `Monitor check failed: ${(error as Error).message}`, {
-        error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
-      });
+  await context.runAsSystem('cron:monitor-checks', async () => {
+    if (isRunningMonitorChecks) return;
+    isRunningMonitorChecks = true;
+    try {
+      await monitorService.runAllDueChecks();
+    } catch (error) {
+      console.error('[Worker] Monitor check error:', error);
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('error', `Monitor check failed: ${(error as Error).message}`, {
+          error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
+        });
+      }
+    } finally {
+      isRunningMonitorChecks = false;
     }
-  } finally {
-    isRunningMonitorChecks = false;
-  }
+  });
 }
 
 // Run checks every 30 seconds
@@ -641,15 +654,17 @@ runMonitorChecks();
 let isRunningMaintenanceCheck = false;
 
 async function runMaintenanceTransitions() {
-  if (isRunningMaintenanceCheck) return;
-  isRunningMaintenanceCheck = true;
-  try {
-    await maintenanceService.processMaintenanceTransitions();
-  } catch (error) {
-    console.error('[Worker] Maintenance transition error:', error);
-  } finally {
-    isRunningMaintenanceCheck = false;
-  }
+  await context.runAsSystem('cron:maintenance-transitions', async () => {
+    if (isRunningMaintenanceCheck) return;
+    isRunningMaintenanceCheck = true;
+    try {
+      await maintenanceService.processMaintenanceTransitions();
+    } catch (error) {
+      console.error('[Worker] Maintenance transition error:', error);
+    } finally {
+      isRunningMaintenanceCheck = false;
+    }
+  });
 }
 
 setInterval(runMaintenanceTransitions, 60000);
