@@ -34,6 +34,7 @@ import {
   getQueueSystemStatus,
 } from './queue-factory.js';
 import type { IQueueAdapter, IWorkerAdapter, QueueBackend, JobProcessor } from './abstractions/types.js';
+import { wrapProcessorWithContext } from '../context/bullmq-context.js';
 
 // Determine backend based on environment
 const hasRedis = !!config.REDIS_URL;
@@ -127,7 +128,8 @@ export function createWorker<T = unknown>(
   name: string,
   processor: JobProcessor<T>
 ): IWorkerAdapter<T> {
-  return createWorkerImpl<T>(name, processor);
+  const wrapped = wrapProcessorWithContext<T>(name, processor);
+  return createWorkerImpl<T>(name, wrapped);
 }
 
 /**
