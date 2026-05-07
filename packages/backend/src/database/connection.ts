@@ -85,6 +85,38 @@ const originalQuery = pool.query.bind(pool);
   return (originalQuery as any)(...args);
 } as typeof pool.query;
 
+// Kysely uses pool.connect() to acquire a client and calls client.query() on it.
+// Wrap connect() to install the same comment-injection on each connected client.
+const originalConnect = pool.connect.bind(pool);
+(pool as unknown as { connect: typeof pool.connect }).connect = (async function patchedConnect(
+  this: typeof pool,
+  ...args: any[]
+): Promise<any> {
+  const client = await (originalConnect as any)(...args);
+  // Patch the client's query method (only once per client)
+  if (!(client as any).__logtideContextPatched) {
+    const clientOriginalQuery = client.query.bind(client);
+    (client as any).query = function patchedClientQuery(this: any, ...qArgs: any[]): any {
+      if (process.env.LOGTIDE_CONTEXT_SQL_COMMENT === 'false') {
+        return clientOriginalQuery(...qArgs);
+      }
+      const ctx = currentOrNull();
+      if (!ctx) return clientOriginalQuery(...qArgs);
+
+      const comment = formatContextComment(ctx);
+      const first = qArgs[0];
+      if (typeof first === 'string') {
+        qArgs[0] = comment + first;
+      } else if (first && typeof first === 'object' && typeof first.text === 'string') {
+        qArgs[0] = { ...first, text: comment + first.text };
+      }
+      return clientOriginalQuery(...qArgs);
+    };
+    (client as any).__logtideContextPatched = true;
+  }
+  return client;
+}) as any;
+
 // Pool event handlers for monitoring
 pool.on('connect', () => {
   // Set statement timeout on each new connection
