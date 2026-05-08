@@ -6,16 +6,21 @@
 
 import {
   quickAddJob,
+  parseCronItems,
   run,
   type TaskList,
   type Runner,
   type Job as GraphileJob,
   type JobHelpers,
+  type ParsedCronItem,
 } from 'graphile-worker';
 import type { Pool } from 'pg';
+import { hub } from '@logtide/core';
 import type {
   IQueueAdapter,
   IWorkerAdapter,
+  ICronRegistry,
+  CronJobDefinition,
   IJob,
   IJobOptions,
   JobProcessor,
@@ -44,7 +49,7 @@ function adaptGraphileJob<T>(
  *
  * Uses quickAddJob to add jobs to the PostgreSQL-backed queue.
  */
-export class GraphileQueueAdapter<T = unknown> implements IQueueAdapter<T> {
+export class GraphileQueueAdapter<T = unknown> implements IQueueAdapter<T>, ICronRegistry {
   constructor(
     public readonly name: string,
     private pool: Pool
@@ -74,6 +79,24 @@ export class GraphileQueueAdapter<T = unknown> implements IQueueAdapter<T> {
 
   async close(): Promise<void> {
     // Graphile queues don't need explicit closing (pool handles it)
+  }
+
+  /**
+   * Register repeating cron jobs using graphile-worker's native parsedCronItems.
+   * Must be called before GraphileWorkerManager.start().
+   */
+  async registerCronJobs(items: CronJobDefinition[]): Promise<void> {
+    const parsed: ParsedCronItem[] = parseCronItems(
+      items.map(item => ({
+        task: item.task,
+        match: item.cronExpression,
+        payload: item.payload as Record<string, unknown>,
+        identifier: item.identifier,
+      }))
+    );
+    const manager = GraphileWorkerManager.getInstance();
+    manager.setCronItems(parsed);
+    hub.captureLog('info', `[Graphile] Registered ${items.length} cron job(s)`);
   }
 
   async getJobCounts(): Promise<{
@@ -117,6 +140,7 @@ export class GraphileWorkerManager {
   private pool: Pool | null = null;
   private workers: Map<string, GraphileWorkerAdapter<unknown>> = new Map();
   private isRunning = false;
+  private cronItems: ParsedCronItem[] = [];
 
   private constructor() {}
 
@@ -132,6 +156,13 @@ export class GraphileWorkerManager {
    */
   initialize(pool: Pool): void {
     this.pool = pool;
+  }
+
+  /**
+   * Store parsed cron items to be passed to run() at startup.
+   */
+  setCronItems(items: ParsedCronItem[]): void {
+    this.cronItems = items;
   }
 
   /**
@@ -172,10 +203,15 @@ export class GraphileWorkerManager {
       return;
     }
 
+    if (this.cronItems.length === 0) {
+      hub.captureLog('info', '[Graphile] No cron items registered — digest schedules will not run');
+    }
+
     try {
       this.runner = await run({
         pgPool: this.pool,
         taskList: this.taskList,
+        parsedCronItems: this.cronItems,
         concurrency: 5,
         pollInterval: 1000, // 1 second
         noHandleSignals: true, // We handle signals ourselves

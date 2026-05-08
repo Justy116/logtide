@@ -2,8 +2,10 @@ import { beforeAll, afterAll, beforeEach } from 'vitest';
 import dotenv from 'dotenv';
 import path from 'path';
 import { db } from '../database/index.js';
+import { migrateToLatest } from '../database/migrator.js';
 import { getConnection } from '../queue/connection.js';
 import { CacheManager } from '../utils/cache.js';
+import { Reservoir } from '@logtide/reservoir';
 
 // Load test environment variables
 dotenv.config({ path: path.resolve(__dirname, '../../.env.test') });
@@ -18,6 +20,30 @@ beforeAll(async () => {
         // Verify database connection
         await db.selectFrom('users').selectAll().execute();
         console.log('Database connection established');
+
+        // Run migrations to ensure schema is up-to-date
+        console.log('Running database migrations...');
+        await migrateToLatest();
+        console.log('Database migrations completed');
+        
+        try {
+            const dbUrl = process.env.DATABASE_URL;
+            if (dbUrl) {
+                // Use URL parser to extract connection parts
+                const normalized = dbUrl.startsWith('postgresql://') ? dbUrl.replace('postgresql://', 'postgres://') : dbUrl;
+                const url = new URL(normalized);
+                const reservoirMigrator = new Reservoir('timescale', {
+                    host: url.hostname,
+                    port: Number(url.port) || 5432,
+                    database: url.pathname.replace(/^\//, ''),
+                    username: url.username,
+                    password: url.password,
+                }, { skipInitialize: false });
+                await reservoirMigrator.initialize();
+            }
+        } catch (err) {
+            console.warn('Reservoir initialization for tests failed:', err);
+        }
     } catch (error) {
         const isConnRefused = (function check(err: unknown): boolean {
             if (err instanceof AggregateError) return err.errors.some(check);
@@ -72,6 +98,9 @@ beforeEach(async () => {
     try {
         await db.deleteFrom('logs').execute();
         await db.deleteFrom('alert_history').execute();
+        // Digest tables (must delete recipients before configs)
+        await db.deleteFrom('digest_recipients').execute();
+        await db.deleteFrom('digest_configs').execute();
         // Monitoring tables (must delete before monitors and incidents)
         await db.deleteFrom('monitor_results').execute();
         await db.deleteFrom('monitor_status').execute();
@@ -106,8 +135,12 @@ beforeEach(async () => {
         // (standard vs none) doesn't cause 401 assertions to flip to 503.
         await db.deleteFrom('system_settings').execute();
         await CacheManager.invalidateSettings();
-    } catch {
-        // DB not available - unit-test mode, skip cleanup
+    } catch (err) {
+        // Only skip cleanup if DB is not reachable
+        if (err instanceof Error && err.message.includes('ECONNREFUSED')) {
+            return;
+        }
+        throw err;
     }
 });
 
