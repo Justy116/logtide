@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { context, withContext } from '@logtide/shared';
+import { context, withContext } from '@logtide/shared/context';
 import { attachContextToPayload, wrapProcessorWithContext, CTX_KEY } from './bullmq-context.js';
 
 describe('attachContextToPayload', () => {

@@ -1,4 +1,4 @@
-import { currentOrNull, deserializeContext, run, runAsSystem, serializeContext } from '@logtide/shared';
+import { currentOrNull, deserializeContext, run, runAsSystem, serializeContext } from '@logtide/shared/context';
 import type { JobProcessor } from '../queue/abstractions/types.js';
 
 export const CTX_KEY = '_ctx';

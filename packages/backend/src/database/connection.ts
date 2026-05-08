@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Database } from './types.js';
-import { currentOrNull } from '@logtide/shared';
+import { currentOrNull } from '@logtide/shared/context';
 import { formatContextComment } from '../context/kysely-plugin.js';
 
 const { Pool } = pg;

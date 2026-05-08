@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { context } from '@logtide/shared';
+import { context } from '@logtide/shared/context';
 import { wrapProcessorWithContext, attachContextToPayload } from '../../context/bullmq-context.js';
 
 describe('Request context propagation (integration)', () => {

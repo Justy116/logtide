@@ -1,6 +1,6 @@
 import { MongoClient, type Db, type Collection, type Document, MongoBulkWriteError, type WriteError } from 'mongodb';
 import { randomUUID } from 'crypto';
-import { currentOrNull } from '@logtide/shared';
+import { currentOrNull } from '@logtide/shared/context';
 import { StorageEngine } from '../../core/storage-engine.js';
 import type {
   LogRecord,

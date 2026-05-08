@@ -1,6 +1,6 @@
 ﻿import { createClient, type ClickHouseClient, type DataFormat, type InsertParams } from '@clickhouse/client';
 import { randomUUID } from 'crypto';
-import { currentOrNull } from '@logtide/shared';
+import { currentOrNull } from '@logtide/shared/context';
 import { StorageEngine } from '../../core/storage-engine.js';
 
 const CH_SAFE_RE = /[^a-zA-Z0-9_:-]/g;

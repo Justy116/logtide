@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import Fastify from 'fastify';
-import { context } from '@logtide/shared';
+import { context } from '@logtide/shared/context';
 import { contextPlugin } from './fastify-plugin.js';
 
 describe('contextPlugin', () => {

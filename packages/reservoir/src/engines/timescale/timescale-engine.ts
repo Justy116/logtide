@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { currentOrNull } from '@logtide/shared';
+import { currentOrNull } from '@logtide/shared/context';
 import { StorageEngine } from '../../core/storage-engine.js';
 import type {
   LogRecord,

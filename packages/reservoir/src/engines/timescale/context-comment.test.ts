@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { withContext } from '@logtide/shared';
+import { withContext } from '@logtide/shared/context';
 import { TimescaleEngine } from './timescale-engine.js';
 
 describe('TimescaleEngine context comment', () => {

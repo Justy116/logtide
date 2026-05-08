@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import type { ApiKeyType } from '@logtide/shared';
-import { context, type Actor, type RequestContext } from '@logtide/shared';
+import { context, type Actor, type RequestContext } from '@logtide/shared/context';
 
 type AuthDecoratedRequest = FastifyRequest & {
   organizationId?: string;

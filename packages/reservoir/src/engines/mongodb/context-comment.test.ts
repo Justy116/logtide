@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { withContext } from '@logtide/shared';
+import { withContext } from '@logtide/shared/context';
 import { MongoDBEngine } from './mongodb-engine.js';
 
 describe('MongoDBEngine context propagation', () => {

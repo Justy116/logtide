@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { withContext, currentOrNull } from '@logtide/shared';
+import { withContext, currentOrNull } from '@logtide/shared/context';
 import { formatContextComment } from './kysely-plugin.js';
 
 describe('SQL comment injection helpers', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { withContext } from '@logtide/shared';
+import { withContext } from '@logtide/shared/context';
 import { ClickHouseEngine } from './clickhouse-engine.js';
 
 describe('ClickHouseEngine context propagation', () => {
