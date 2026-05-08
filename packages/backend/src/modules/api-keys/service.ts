@@ -38,6 +38,9 @@ interface CachedApiKey {
 }
 
 export class ApiKeysService {
+  private static readonly LAST_USED_DEBOUNCE_MS = 60_000;
+  private lastUsedWrites = new Map<string, number>();
+
   /**
    * Hash an API key using SHA-256
    */
@@ -145,10 +148,17 @@ export class ApiKeysService {
   }
 
   /**
-   * Update last_used timestamp asynchronously
-   * This is fire-and-forget to not block ingestion
+   * Update last_used timestamp asynchronously.
+   * Debounced per key: at most one DB write per 60s per process.
+   * last_used is only used for UI display, so minute-granularity is fine.
    */
   private async updateLastUsedAsync(keyId: string): Promise<void> {
+    const now = Date.now();
+    const last = this.lastUsedWrites.get(keyId);
+    if (last !== undefined && now - last < ApiKeysService.LAST_USED_DEBOUNCE_MS) {
+      return;
+    }
+    this.lastUsedWrites.set(keyId, now);
     await db
       .updateTable('api_keys')
       .set({ last_used: new Date() })
