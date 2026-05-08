@@ -48,6 +48,7 @@ async function seedLoadTestData() {
                     project_id: project.id,
                     name: `Load Test Key ${Date.now()}`,
                     key_hash: keyHash,
+                    type: 'full',
                     last_used: null,
                 })
                 .execute();
@@ -120,6 +121,7 @@ async function seedLoadTestData() {
             project_id: project.id,
             name: 'Load Test API Key',
             key_hash: keyHash,
+            type: 'full',
             last_used: null,
         })
         .execute();

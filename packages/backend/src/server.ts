@@ -6,6 +6,7 @@ import { config, isRedisConfigured } from './config/index.js';
 import { getConnection } from './queue/connection.js';
 import { notificationManager } from './modules/streaming/index.js';
 import authPlugin from './modules/auth/plugin.js';
+import { contextPlugin } from './context/index.js';
 import { ingestionRoutes } from './modules/ingestion/index.js';
 import { queryRoutes } from './modules/query/index.js';
 import { alertsRoutes } from './modules/alerts/index.js';
@@ -182,6 +183,7 @@ export async function build(opts = {}) {
   await fastify.register(retentionRoutes, { prefix: '/api/v1/admin' });
 
   await fastify.register(authPlugin);
+  await fastify.register(contextPlugin);
   await fastify.register(ingestionRoutes);
   await fastify.register(queryRoutes);
   await fastify.register(correlationRoutes, { prefix: '/api' });

@@ -25,6 +25,7 @@ import type {
   IJobOptions,
   JobProcessor,
 } from '../abstractions/types.js';
+import { attachContextToPayload } from '../../context/bullmq-context.js';
 
 /**
  * Convert Graphile Job + payload to unified IJob interface
@@ -55,10 +56,11 @@ export class GraphileQueueAdapter<T = unknown> implements IQueueAdapter<T>, ICro
   ) {}
 
   async add(_jobName: string, data: T, options?: IJobOptions): Promise<IJob<T>> {
+    const payload = attachContextToPayload(data) as object;
     const job = await quickAddJob(
       { pgPool: this.pool },
-      this.name, // Task identifier (queue name)
-      data as object,
+      this.name,
+      payload,
       {
         runAt: options?.delay ? new Date(Date.now() + options.delay) : undefined,
         maxAttempts: options?.maxAttempts ?? 3,
