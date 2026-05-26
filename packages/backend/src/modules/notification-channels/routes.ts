@@ -57,7 +57,7 @@ const setChannelsSchema = z.object({
   channelIds: z.array(z.string().uuid()),
 });
 
-const eventTypeSchema = z.enum(['alert', 'sigma', 'incident', 'error']);
+const eventTypeSchema = z.enum(['alert', 'sigma', 'incident', 'error', 'monitoring']);
 
 // ============================================================================
 // HELPERS

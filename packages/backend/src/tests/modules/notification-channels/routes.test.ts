@@ -552,6 +552,37 @@ describe('Notification Channels Routes', () => {
         .execute();
       expect(defaults).toHaveLength(1);
     });
+
+    it('should set defaults for monitoring event type', async () => {
+      const [channel] = await db
+        .insertInto('notification_channels')
+        .values({
+          organization_id: testOrganization.id,
+          name: 'Monitoring Channel',
+          type: 'email',
+          config: { recipients: ['ops@example.com'] },
+        })
+        .returningAll()
+        .execute();
+
+      const response = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/notification-channels/defaults/monitoring?organizationId=${testOrganization.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+        payload: {
+          channelIds: [channel.id],
+        },
+      });
+
+      expect(response.statusCode).toBe(204);
+
+      const defaults = await db
+        .selectFrom('organization_default_channels')
+        .where('organization_id', '=', testOrganization.id)
+        .where('event_type', '=', 'monitoring')
+        .execute();
+      expect(defaults).toHaveLength(1);
+    });
   });
 
   describe('GET /api/v1/notification-channels/alert-rules/:alertRuleId', () => {
