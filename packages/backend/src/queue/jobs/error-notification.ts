@@ -105,23 +105,51 @@ export async function processErrorNotification(job: IJob<ErrorNotificationJobDat
   const data = job.data;
   console.log(`[ErrorNotification] Processing notification for exception ${data.exceptionId}`);
 
-  // Check if error group is ignored
-  const errorGroup = await db
-    .selectFrom('error_groups')
-    .select(['id', 'status'])
+  // Atomically claim the notification slot for this error group. Only one
+  // occurrence per cooldown window gets to notify; the rest are throttled.
+  // This is what stops thousands of identical emails when a single error
+  // fires in a tight loop. The conditional UPDATE is race-safe: concurrent
+  // jobs serialize on the row lock and re-check last_notified_at, so only the
+  // first one inside the window matches and updates a row.
+  const cooldownMinutes = config.ERROR_NOTIFICATION_COOLDOWN_MINUTES ?? 15;
+  const cooldownCutoff = new Date(Date.now() - cooldownMinutes * 60_000);
+
+  const claimed = await db
+    .updateTable('error_groups')
+    .set({ last_notified_at: new Date() })
     .where('fingerprint', '=', data.fingerprint)
     .where('organization_id', '=', data.organizationId)
+    .where('status', '!=', 'ignored')
+    .where((eb) =>
+      eb.or([
+        eb('last_notified_at', 'is', null),
+        eb('last_notified_at', '<=', cooldownCutoff),
+      ])
+    )
+    .returning('id')
     .executeTakeFirst();
 
-  if (!errorGroup) {
-    console.log(`[ErrorNotification] Error group not found for fingerprint ${data.fingerprint}, skipping`);
+  if (!claimed) {
+    // Slot not claimed: group is missing, ignored, or already notified within
+    // the cooldown window. Look up why purely for a useful log line, then skip.
+    const existing = await db
+      .selectFrom('error_groups')
+      .select(['id', 'status'])
+      .where('fingerprint', '=', data.fingerprint)
+      .where('organization_id', '=', data.organizationId)
+      .executeTakeFirst();
+
+    if (!existing) {
+      console.log(`[ErrorNotification] Error group not found for fingerprint ${data.fingerprint}, skipping`);
+    } else if (existing.status === 'ignored') {
+      console.log(`[ErrorNotification] Error group ${existing.id} is ignored, skipping notification`);
+    } else {
+      console.log(`[ErrorNotification] Error group ${existing.id} notified within last ${cooldownMinutes}m, throttling`);
+    }
     return;
   }
 
-  if (errorGroup.status === 'ignored') {
-    console.log(`[ErrorNotification] Error group ${errorGroup.id} is ignored, skipping notification`);
-    return;
-  }
+  const errorGroup = { id: claimed.id };
 
   // Get organization details
   const org = await db

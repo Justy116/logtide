@@ -27,6 +27,7 @@ vi.mock('../../../config/index.js', () => ({
     REDIS_URL: 'redis://localhost:6379',
     FRONTEND_URL: 'https://app.logtide.dev',
     NODE_ENV: 'test',
+    ERROR_NOTIFICATION_COOLDOWN_MINUTES: 15,
   },
   isSmtpConfigured: vi.fn(() => false), // Default to no SMTP
 }));
@@ -669,6 +670,120 @@ describe('Error Notification Job', () => {
     });
   });
 });
+
+  describe('Notification throttling', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    function buildJob(
+      org: { id: string },
+      project: { id: string },
+      fingerprint: string,
+      isNewErrorGroup: boolean
+    ): Job<ErrorNotificationJobData> {
+      return {
+        data: {
+          exceptionId: `exc-${Math.random()}`,
+          organizationId: org.id,
+          projectId: project.id,
+          fingerprint,
+          exceptionType: 'Svelte error',
+          exceptionMessage: 'Maximum update depth exceeded',
+          language: 'nodejs',
+          service: 'web',
+          isNewErrorGroup,
+        } as ErrorNotificationJobData,
+      } as Job<ErrorNotificationJobData>;
+    }
+
+    it('should send only one notification for a burst of the same error', async () => {
+      const owner = await createTestUser({ name: 'Owner User' });
+      const org = await createTestOrganization({ ownerId: owner.id, name: 'Test Org' });
+      const project = await createTestProject({ organizationId: org.id, userId: owner.id });
+      const errorGroup = await createTestErrorGroup({
+        organizationId: org.id,
+        projectId: project.id,
+        status: 'open',
+      });
+
+      // First occurrence is new, the rest are repeats firing in a tight loop.
+      await processErrorNotification(buildJob(org, project, errorGroup.fingerprint, true));
+      for (let i = 0; i < 20; i++) {
+        await processErrorNotification(buildJob(org, project, errorGroup.fingerprint, false));
+      }
+
+      expect(notificationsService.createNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throttle a second occurrence within the cooldown window', async () => {
+      const owner = await createTestUser({ name: 'Owner User' });
+      const org = await createTestOrganization({ ownerId: owner.id, name: 'Test Org' });
+      const project = await createTestProject({ organizationId: org.id, userId: owner.id });
+      const errorGroup = await createTestErrorGroup({
+        organizationId: org.id,
+        projectId: project.id,
+        status: 'open',
+      });
+
+      await processErrorNotification(buildJob(org, project, errorGroup.fingerprint, true));
+      expect(notificationsService.createNotification).toHaveBeenCalledTimes(1);
+
+      vi.clearAllMocks();
+
+      await processErrorNotification(buildJob(org, project, errorGroup.fingerprint, false));
+      expect(notificationsService.createNotification).not.toHaveBeenCalled();
+    });
+
+    it('should notify again once the cooldown window has elapsed', async () => {
+      const owner = await createTestUser({ name: 'Owner User' });
+      const org = await createTestOrganization({ ownerId: owner.id, name: 'Test Org' });
+      const project = await createTestProject({ organizationId: org.id, userId: owner.id });
+      const errorGroup = await createTestErrorGroup({
+        organizationId: org.id,
+        projectId: project.id,
+        status: 'open',
+      });
+
+      await processErrorNotification(buildJob(org, project, errorGroup.fingerprint, true));
+      expect(notificationsService.createNotification).toHaveBeenCalledTimes(1);
+
+      vi.clearAllMocks();
+
+      // Backdate the last notification past the cooldown (default 15m).
+      await db
+        .updateTable('error_groups')
+        .set({ last_notified_at: new Date(Date.now() - 60 * 60 * 1000) })
+        .where('id', '=', errorGroup.id)
+        .execute();
+
+      await processErrorNotification(buildJob(org, project, errorGroup.fingerprint, false));
+      expect(notificationsService.createNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throttle each error group independently', async () => {
+      const owner = await createTestUser({ name: 'Owner User' });
+      const org = await createTestOrganization({ ownerId: owner.id, name: 'Test Org' });
+      const project = await createTestProject({ organizationId: org.id, userId: owner.id });
+      const groupA = await createTestErrorGroup({
+        organizationId: org.id,
+        projectId: project.id,
+        status: 'open',
+      });
+      const groupB = await createTestErrorGroup({
+        organizationId: org.id,
+        projectId: project.id,
+        status: 'open',
+      });
+
+      await processErrorNotification(buildJob(org, project, groupA.fingerprint, true));
+      await processErrorNotification(buildJob(org, project, groupA.fingerprint, false));
+      await processErrorNotification(buildJob(org, project, groupB.fingerprint, true));
+
+      // One for A (second is throttled) + one for B = 2 total.
+      expect(notificationsService.createNotification).toHaveBeenCalledTimes(2);
+    });
+  });
 
 describe('Error Notification Language Labels', () => {
   it('should have correct language labels for all supported languages', () => {

@@ -658,6 +658,7 @@ export interface ErrorGroupsTable {
   resolved_by: string | null;
   affected_services: string[] | null;
   sample_log_id: string | null;
+  last_notified_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }

@@ -52,6 +52,11 @@ const configSchema = z.object({
   AUTH_RATE_LIMIT_LOGIN: z.string().default('20').transform(Number), // Login attempts per window
   AUTH_RATE_LIMIT_WINDOW: z.string().default('900000').transform(Number), // 15 minutes in ms
 
+  // Error notifications
+  // Cooldown between alerts for the same error group, so a high-frequency
+  // error doesn't spam one email per occurrence. Set to 0 to notify every time.
+  ERROR_NOTIFICATION_COOLDOWN_MINUTES: z.string().default('15').transform(Number),
+
   // Caching
   CACHE_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   CACHE_TTL: z.string().default('60').transform(Number), // Default TTL in seconds
