@@ -292,7 +292,7 @@ export async function siemRoutes(fastify: FastifyInstance) {
           );
 
           // Enrich incident with IP data after linking events
-          await siemService.enrichIncidentIpData(incident.id, enrichmentService);
+          await siemService.enrichIncidentIpData(incident.id, enrichmentService, body.organizationId);
         }
 
         return reply.status(201).send(incident);
