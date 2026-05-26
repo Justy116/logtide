@@ -1,6 +1,7 @@
 import { db, getPoolStats } from '../../database/index.js';
 import { sql } from 'kysely';
 import { reservoir } from '../../database/reservoir.js';
+import { GLOBAL_SCOPE } from '@logtide/reservoir';
 import { getConnection, isRedisAvailable } from '../../queue/connection.js';
 import { CacheManager, type CacheStats, isCacheEnabled } from '../../utils/cache.js';
 import { settingsService, type UpdateChannel } from '../settings/service.js';
@@ -310,7 +311,7 @@ export class AdminService {
                     );
                     logsCount = r.rows[0]?.count ?? 0;
                 } else {
-                    const r = await reservoir.count({ from: new Date(0), to: new Date() });
+                    const r = await reservoir.count({ projectId: GLOBAL_SCOPE, from: new Date(0), to: new Date() });
                     logsCount = r.count;
                 }
 
@@ -481,10 +482,10 @@ export class AdminService {
                 `.compile(db)
             ),
 
-            reservoir.count({ from: oneHourAgo, to: now })
+            reservoir.count({ projectId: GLOBAL_SCOPE, from: oneHourAgo, to: now })
                 .then((r: { count: number }) => ({ count: r.count })),
 
-            reservoir.count({ from: oneDayAgo, to: now })
+            reservoir.count({ projectId: GLOBAL_SCOPE, from: oneDayAgo, to: now })
                 .then((r: { count: number }) => ({ count: r.count })),
         ]);
 
@@ -537,7 +538,7 @@ export class AdminService {
 
         const [totalResult, logsPerDayResult, logsLastHour, logsLastDay] = await Promise.all([
             // Total logs (count is fast on ClickHouse MergeTree)
-            reservoir.count({ from: new Date(0), to: now }),
+            reservoir.count({ projectId: GLOBAL_SCOPE, from: new Date(0), to: now }),
 
             // Logs per day via reservoir aggregate
             reservoir.aggregate({
@@ -547,8 +548,8 @@ export class AdminService {
                 interval: '1d',
             }),
 
-            reservoir.count({ from: oneHourAgo, to: now }),
-            reservoir.count({ from: oneDayAgo, to: now }),
+            reservoir.count({ projectId: GLOBAL_SCOPE, from: oneHourAgo, to: now }),
+            reservoir.count({ projectId: GLOBAL_SCOPE, from: oneDayAgo, to: now }),
         ]);
 
         // Per-day counts from aggregate
@@ -621,7 +622,7 @@ export class AdminService {
         const now = new Date();
         const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
-        const logsLastHour = await reservoir.count({ from: oneHourAgo, to: now });
+        const logsLastHour = await reservoir.count({ projectId: GLOBAL_SCOPE, from: oneHourAgo, to: now });
         const throughput = logsLastHour.count / 3600;
 
         if (reservoir.getEngineType() === 'timescale') {
