@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { GLOBAL_SCOPE } from '../../core/types.js';
 import type { StorageConfig, LogRecord, SpanRecord, TraceRecord } from '../../core/types.js';
 
 const mockQuery = vi.fn();
@@ -939,25 +940,25 @@ describe('TimescaleQueryTranslator', () => {
       expect(result.parameters![result.parameters!.length - 1]).toBe(21); // limit+1
     });
 
-    it('includes organizationId when provided', () => {
+    it('emits project_id filter when projectId is a string', () => {
       const result = translator.translateQuery({
-        organizationId: 'org-1',
         projectId: 'proj-1',
         from: new Date('2024-01-01'),
         to: new Date('2024-01-02'),
       });
 
-      expect(result.query).toContain('organization_id = $1');
-      expect(result.query).toContain('project_id = $2');
+      expect(result.query).toContain('project_id = $1');
+      expect(result.query).not.toContain('organization_id');
     });
 
-    it('omits organizationId when not provided', () => {
+    it('skips project_id filter for GLOBAL_SCOPE', () => {
       const result = translator.translateQuery({
-        projectId: 'proj-1',
+        projectId: GLOBAL_SCOPE,
         from: new Date('2024-01-01'),
         to: new Date('2024-01-02'),
       });
 
+      expect(result.query).not.toContain('project_id');
       expect(result.query).not.toContain('organization_id');
     });
 

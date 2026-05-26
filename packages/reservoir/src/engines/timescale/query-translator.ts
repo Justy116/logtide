@@ -1,4 +1,5 @@
 import { QueryTranslator, type NativeQuery } from '../../core/query-translator.js';
+import { GLOBAL_SCOPE } from '../../core/types.js';
 import type {
   AggregateParams,
   AggregationInterval,
@@ -45,10 +46,7 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     const values: unknown[] = [];
     let idx = 1;
 
-    if (params.organizationId !== undefined) {
-      idx = this.pushFilter(conditions, values, idx, 'organization_id', params.organizationId);
-    }
-    if (params.projectId !== undefined) {
+    if (params.projectId !== GLOBAL_SCOPE) {
       idx = this.pushFilter(conditions, values, idx, 'project_id', params.projectId);
     }
     if (params.service !== undefined) {
@@ -151,10 +149,7 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     values.push(interval);
     idx++;
 
-    if (params.organizationId !== undefined) {
-      idx = this.pushFilter(conditions, values, idx, 'organization_id', params.organizationId);
-    }
-    if (params.projectId !== undefined) {
+    if (params.projectId !== GLOBAL_SCOPE) {
       idx = this.pushFilter(conditions, values, idx, 'project_id', params.projectId);
     }
     if (params.service !== undefined) {
@@ -180,10 +175,7 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     const values: unknown[] = [];
     let idx = 1;
 
-    if (params.organizationId !== undefined) {
-      idx = this.pushFilter(conditions, values, idx, 'organization_id', params.organizationId);
-    }
-    if (params.projectId !== undefined) {
+    if (params.projectId !== GLOBAL_SCOPE) {
       idx = this.pushFilter(conditions, values, idx, 'project_id', params.projectId);
     }
     if (params.service !== undefined) {
@@ -240,10 +232,7 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     const values: unknown[] = [];
     let idx = 1;
 
-    if (params.organizationId !== undefined) {
-      idx = this.pushFilter(conditions, values, idx, 'organization_id', params.organizationId);
-    }
-    if (params.projectId !== undefined) {
+    if (params.projectId !== GLOBAL_SCOPE) {
       idx = this.pushFilter(conditions, values, idx, 'project_id', params.projectId);
     }
     if (params.service !== undefined) {
@@ -303,10 +292,7 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     const values: unknown[] = [];
     let idx = 1;
 
-    if (params.organizationId !== undefined) {
-      idx = this.pushFilter(conditions, values, idx, 'organization_id', params.organizationId);
-    }
-    if (params.projectId !== undefined) {
+    if (params.projectId !== GLOBAL_SCOPE) {
       idx = this.pushFilter(conditions, values, idx, 'project_id', params.projectId);
     }
     if (params.service !== undefined) {
@@ -367,10 +353,7 @@ export class TimescaleQueryTranslator extends QueryTranslator {
     const values: unknown[] = [];
     let idx = 1;
 
-    if (params.organizationId !== undefined) {
-      idx = this.pushFilter(conditions, values, idx, 'organization_id', params.organizationId);
-    }
-    if (params.projectId !== undefined) {
+    if (params.projectId !== GLOBAL_SCOPE) {
       idx = this.pushFilter(conditions, values, idx, 'project_id', params.projectId);
     }
     if (params.service !== undefined) {
