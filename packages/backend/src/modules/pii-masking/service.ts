@@ -260,6 +260,7 @@ export class PiiMaskingService {
         .selectFrom('pii_masking_rules')
         .select(['pattern_type'])
         .where('id', '=', ruleId)
+        .where('organization_id', '=', organizationId)
         .executeTakeFirst();
 
       if (existing?.pattern_type === 'custom') {
