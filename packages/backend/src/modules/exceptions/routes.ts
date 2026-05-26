@@ -119,18 +119,11 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
           });
         }
 
-        const exception = await exceptionService.getExceptionByLogId(params.logId);
+        const exception = await exceptionService.getExceptionByLogId(params.logId, query.organizationId);
 
         if (!exception) {
           return reply.status(404).send({
             error: 'No exception found for this log',
-          });
-        }
-
-        // Verify exception belongs to organization
-        if (exception.exception.organizationId !== query.organizationId) {
-          return reply.status(403).send({
-            error: 'Access denied',
           });
         }
 
@@ -206,18 +199,11 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
           });
         }
 
-        const exception = await exceptionService.getExceptionById(params.id);
+        const exception = await exceptionService.getExceptionById(params.id, query.organizationId);
 
         if (!exception) {
           return reply.status(404).send({
             error: 'Exception not found',
-          });
-        }
-
-        // Verify exception belongs to organization
-        if (exception.exception.organizationId !== query.organizationId) {
-          return reply.status(403).send({
-            error: 'Access denied',
           });
         }
 
@@ -553,6 +539,7 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
 
         const group = await exceptionService.updateErrorGroupStatus(
           params.id,
+          body.organizationId,
           body.status,
           request.user.id
         );

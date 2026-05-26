@@ -57,7 +57,7 @@ describe('ExceptionService', () => {
       expect(typeof exceptionId).toBe('string');
 
       // Verify exception was created
-      const exception = await service.getExceptionById(exceptionId);
+      const exception = await service.getExceptionById(exceptionId, ctx.organization.id);
       expect(exception).not.toBeNull();
       expect(exception!.exception.exceptionType).toBe('TypeError');
       expect(exception!.exception.fingerprint).toBe('abc123fingerprint');
@@ -88,7 +88,7 @@ describe('ExceptionService', () => {
       const exceptionId = await service.createException(params);
       expect(exceptionId).toBeDefined();
 
-      const exception = await service.getExceptionById(exceptionId);
+      const exception = await service.getExceptionById(exceptionId, ctx.organization.id);
       expect(exception!.frames).toHaveLength(0);
     });
   });
@@ -123,7 +123,7 @@ describe('ExceptionService', () => {
         },
       });
 
-      const result = await service.getExceptionByLogId(log.id);
+      const result = await service.getExceptionByLogId(log.id, ctx.organization.id);
 
       expect(result).not.toBeNull();
       expect(result!.exception.logId).toBe(log.id);
@@ -131,7 +131,8 @@ describe('ExceptionService', () => {
     });
 
     it('should return null for non-existent log', async () => {
-      const result = await service.getExceptionByLogId('00000000-0000-0000-0000-000000000000');
+      const ctx = await createTestContext();
+      const result = await service.getExceptionByLogId('00000000-0000-0000-0000-000000000000', ctx.organization.id);
       expect(result).toBeNull();
     });
   });
@@ -163,7 +164,7 @@ describe('ExceptionService', () => {
         },
       });
 
-      const result = await service.getExceptionById(exceptionId);
+      const result = await service.getExceptionById(exceptionId, ctx.organization.id);
 
       expect(result).not.toBeNull();
       expect(result!.exception.id).toBe(exceptionId);
@@ -171,7 +172,8 @@ describe('ExceptionService', () => {
     });
 
     it('should return null for non-existent exception', async () => {
-      const result = await service.getExceptionById('00000000-0000-0000-0000-000000000000');
+      const ctx = await createTestContext();
+      const result = await service.getExceptionById('00000000-0000-0000-0000-000000000000', ctx.organization.id);
       expect(result).toBeNull();
     });
   });
@@ -507,7 +509,7 @@ describe('ExceptionService', () => {
         .returning('id')
         .executeTakeFirstOrThrow();
 
-      const result = await service.updateErrorGroupStatus(inserted.id, 'resolved', ctx.user.id);
+      const result = await service.updateErrorGroupStatus(inserted.id, ctx.organization.id, 'resolved', ctx.user.id);
 
       expect(result).not.toBeNull();
       expect(result!.status).toBe('resolved');
@@ -536,7 +538,7 @@ describe('ExceptionService', () => {
         .returning('id')
         .executeTakeFirstOrThrow();
 
-      const result = await service.updateErrorGroupStatus(inserted.id, 'ignored');
+      const result = await service.updateErrorGroupStatus(inserted.id, ctx.organization.id, 'ignored');
 
       expect(result).not.toBeNull();
       expect(result!.status).toBe('ignored');
@@ -565,7 +567,7 @@ describe('ExceptionService', () => {
         .returning('id')
         .executeTakeFirstOrThrow();
 
-      const result = await service.updateErrorGroupStatus(inserted.id, 'open');
+      const result = await service.updateErrorGroupStatus(inserted.id, ctx.organization.id, 'open');
 
       expect(result).not.toBeNull();
       expect(result!.status).toBe('open');
@@ -573,8 +575,10 @@ describe('ExceptionService', () => {
     });
 
     it('should return null for non-existent group', async () => {
+      const ctx = await createTestContext();
       const result = await service.updateErrorGroupStatus(
         '00000000-0000-0000-0000-000000000000',
+        ctx.organization.id,
         'resolved'
       );
       expect(result).toBeNull();

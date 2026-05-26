@@ -259,7 +259,7 @@ export default async function correlationRoutes(fastify: FastifyInstance) {
           });
         }
 
-        const identifiers = await correlationService.getLogIdentifiers(logId);
+        const identifiers = await correlationService.getLogIdentifiers(logId, log.projectId || projectId || '');
 
         return reply.send({
           success: true,
