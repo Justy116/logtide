@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import type { Database } from './types.js';
 import { currentOrNull } from '@logtide/shared/context';
 import { formatContextComment } from '../context/kysely-plugin.js';
+import { TenantScopeGuardPlugin } from './tenant-scope-guard.js';
 
 const { Pool } = pg;
 
@@ -23,6 +24,11 @@ console.log('[Database Connection] Using DATABASE_URL:', DATABASE_URL.replace(/:
 
 const isProduction = process.env.NODE_ENV === 'production';
 const isTest = process.env.NODE_ENV === 'test';
+
+// Tenant scope guard: opt-in tripwire that throws on unscoped tenant-table queries.
+// Off by default (keeps the normal suite clean); enable with TENANT_GUARD=1 for the
+// isolation suite or a one-shot audit run. Never enabled in production.
+const tenantGuardEnabled = process.env.TENANT_GUARD === '1' && !isProduction;
 
 // Pool size configuration based on environment
 // Production: larger pool for high concurrency
@@ -144,6 +150,7 @@ const enableQueryLogging = process.env.LOG_QUERIES === 'true' || (!isProduction 
 
 export const db = new Kysely<Database>({
   dialect,
+  plugins: tenantGuardEnabled ? [new TenantScopeGuardPlugin()] : [],
   log(event) {
     if (enableQueryLogging && event.level === 'query') {
       console.log('Query:', event.query.sql);
