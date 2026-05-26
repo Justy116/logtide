@@ -21,17 +21,22 @@ export class TenantScopeError extends Error {
   }
 }
 
+function tableNameFromNode(n: any): string | undefined {
+  if (!n || typeof n !== 'object') return undefined;
+  if (n.kind === 'AliasNode') return tableNameFromNode(n.node);
+  if (n.kind === 'TableNode') return n.table?.identifier?.name;
+  return n.table?.identifier?.name ?? n.identifier?.name;
+}
+
 function targetTables(node: RootOperationNode): string[] {
   const tables: string[] = [];
   const anyNode = node as unknown as Record<string, any>;
   const fromTables = anyNode.from?.froms ?? [];
   for (const f of fromTables) {
-    const name = f?.table?.identifier?.name ?? f?.identifier?.name;
+    const name = tableNameFromNode(f);
     if (typeof name === 'string') tables.push(name);
   }
-  const intoName = anyNode.into?.table?.identifier?.name;
-  if (typeof intoName === 'string') tables.push(intoName);
-  const updateName = anyNode.table?.table?.identifier?.name ?? anyNode.table?.identifier?.name;
+  const updateName = tableNameFromNode(anyNode.table);
   if (typeof updateName === 'string') tables.push(updateName);
   return tables;
 }

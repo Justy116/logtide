@@ -44,4 +44,18 @@ describe('TenantScopeGuardPlugin', () => {
     const db = makeGuardedDb();
     await expect(db.deleteFrom('sigma_rules').execute()).rejects.toBeInstanceOf(TenantScopeError);
   });
+
+  it('throws on an unscoped select of an aliased tenant table', async () => {
+    const db = makeGuardedDb();
+    await expect(
+      db.selectFrom('logs as l').selectAll().execute()
+    ).rejects.toBeInstanceOf(TenantScopeError);
+  });
+
+  it('allows an aliased tenant table filtered by project_id', async () => {
+    const db = makeGuardedDb();
+    await expect(
+      db.selectFrom('logs as l').selectAll().where('l.project_id', '=', 'p1').execute()
+    ).resolves.toBeDefined();
+  });
 });
