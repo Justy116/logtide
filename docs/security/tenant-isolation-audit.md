@@ -1,7 +1,55 @@
 # Tenant Isolation Audit
 
-Living document. Run `npm run report:tenant-scoping` from `packages/backend` to regenerate the inventory.
-Baseline generated 2026-05-27.
+Living document. Last updated 2026-05-27 (post-audit). The codebase is tenant-safe with all critical and application-layer gaps fixed; this document, the allowlist, and the isolation test suite are the ongoing enforcement layer. Run `npm run report:tenant-scoping` from `packages/backend` to regenerate the inventory.
+
+---
+
+## Findings
+
+### Critical Findings (FIXED) -- Cross-Tenant Data Leaks
+
+Two real cross-tenant leaks were found by the isolation test suite and fixed on this branch. Both affected production code on the main line.
+
+**Logs query API** (`packages/backend/src/modules/query/routes.ts`): all 10 query endpoints used the `?projectId=` URL parameter without verifying it belonged to the authenticated API key's project. Any API key could read ANY project's/organization's logs by passing a different `projectId`. Fixed by a shared `resolveQueryProjectId(request, reply, queryProjectId)` helper in `packages/backend/src/modules/auth/guards.ts` that rejects (403) a query whose projectId does not match the API key's bound project; session auth keeps using `verifyProjectAccess`. Locked by `src/tests/isolation/query-isolation.test.ts`.
+
+**Traces query API** (`packages/backend/src/modules/traces/routes.ts`): the same pattern on 8 endpoints (trace/span reads) allowed cross-tenant trace/span reads. Fixed with the same helper. Locked by `src/tests/isolation/traces-isolation.test.ts`.
+
+Note: the metrics query API (`modules/metrics/routes.ts`) already had a safe `resolveProjectId` (uses the key's project for API-key auth) and was NOT vulnerable.
+
+### Application-Layer Gaps (FIXED)
+
+Tenant-table queries that were missing org/project scoping, now fixed:
+
+- `pii-masking/service.ts updateRule` -- pre-read SELECT now org-scoped.
+- `siem/service.ts linkDetectionEventsToIncident` -- `organizationId` now required; detection_events + incidents updates org-scoped.
+- `siem/service.ts getIncidentDetections` / `enrichIncidentIpData` -- `organizationId` now required and applied.
+- `exceptions/service.ts getExceptionByLogId` / `getExceptionById` -- now org-scoped (ids come from URL params); redundant post-read org checks removed from routes.
+- `exceptions/service.ts updateErrorGroupStatus` -- now org-scoped.
+- `correlation/service.ts getLogIdentifiers` -- now project-scoped.
+- `admin/service.ts` -- platform-wide log counts now use the explicit `GLOBAL_SCOPE` sentinel (intentional cross-org).
+- Reservoir log query params (`@logtide/reservoir`): `projectId` is now REQUIRED (was optional) on `QueryParams`/`CountParams`/`AggregateParams`/`DistinctParams`/`TopValuesParams`, with a `GLOBAL_SCOPE` sentinel for intentional all-projects reads. (The `logs` table is project_id-scoped; it has no organization_id column.)
+- Session-auth routes across alerts, detection-packs, notification-channels, projects, correlation, pii-masking now Zod-validate `organizationId` (uuid) instead of a raw cast.
+- `custom-dashboards` personal-dashboard filter moved from in-memory into the SQL WHERE.
+
+### Minor Findings (NOT Fixed -- HTTP Semantics Only, No Data Leak)
+
+These return an imperfect status code for cross-org access but do NOT read or mutate another tenant's data (the scoping correctly prevents the operation). Recommended follow-up: return 404.
+
+- `sigma/service.ts deleteSigmaRule` / `toggleSigmaRule` -- throw leads to 500 instead of 404 for a cross-org id.
+- `custom-dashboards/service.ts` DELETE -- silent 204 (no-op) instead of 404 for a cross-org id.
+- `custom-dashboards/service.ts` PUT (`executeTakeFirstOrThrow`) -- throws `NoResultError` leading to 500 instead of 404 for a cross-org id.
+
+---
+
+## Guards & Tooling
+
+**Static check:** `packages/backend/scripts/check-tenant-scoping.ts` (npm: `check:tenant-scoping`, `report:tenant-scoping`) flags Kysely queries on tenant tables lacking org/project scoping. Known-OK sites are listed in `scripts/tenant-scope-allowlist.json` (content-keyed, with reasons). Wired into CI (typecheck job). New unscoped sites fail CI.
+
+**Runtime guard:** `packages/backend/src/database/tenant-scope-guard.ts`, a Kysely plugin that throws on unscoped tenant-table queries. Off by default; enabled with `TENANT_GUARD=1` for targeted audit runs and isolation work. NOT run against the full app/suite in CI because legitimate bootstrap queries (e.g. the api-key-by-token auth lookup) are intentionally unscoped; the static check is the CI gate.
+
+**Isolation test suite:** `packages/backend/src/tests/isolation/` (fixture `createIsolatedTenants` + per-area tests: query, traces, crud, apikey-auth, audit-log, metering, current-policy). Runs in CI.
+
+**PR template:** `.github/pull_request_template.md` has a tenant-safety checklist.
 
 ---
 
@@ -116,13 +164,13 @@ If per-project RBAC is added in future, the correct place to enforce it is in th
 | modules/auth/service.ts:66 | api_keys | verifyApiKey | INTENTIONAL-GLOBAL | OK | Bootstrap: update last_used after verification by resolved PK |
 | modules/auth/service.ts:79 | api_keys | revokeApiKey | SAFE-BY-PK | OK | Admin revoke by PK id from authenticated session |
 | modules/auth/service.ts:90 | api_keys | listApiKeys | INTENTIONAL-GLOBAL | OK | Appears to be an admin/debug listing of all keys (no org filter) -- needs annotation |
-| modules/correlation/service.ts:291 | log_identifiers | getLogIdentifiers | SCOPED-INDIRECT | OK | Queries by log_id; caller (routes.ts:262) verifies project ownership before calling |
+| modules/correlation/service.ts:291 | log_identifiers | getLogIdentifiers | FIXED | OK | Now project-scoped; was SCOPED-INDIRECT (caller verified project ownership post-fetch) |
 | modules/correlation/service.ts:315 | log_identifiers | getLogIdentifiersBatch | SCOPED-INDIRECT | OK | Queries by log_id IN list; batch route (routes.ts:350) adds project_id IN filter directly |
 | modules/detection-packs/service.ts:162 | detection_pack_activations | activatePack (trx) | SAFE-BY-PK | OK | UPDATE by existing.id where existing was retrieved with org scope earlier in same function |
-| modules/exceptions/service.ts:79 | exceptions | getExceptionByLogId | SCOPED-INDIRECT | OK | Query by log_id; caller (routes.ts:131) verifies exception.organizationId post-fetch |
-| modules/exceptions/service.ts:132 | exceptions | getExceptionById | SCOPED-INDIRECT | OK | Query by PK id; caller (routes.ts:218) verifies exception.organizationId post-fetch |
+| modules/exceptions/service.ts:79 | exceptions | getExceptionByLogId | FIXED | OK | Now org-scoped; was SCOPED-INDIRECT with post-read org check in route |
+| modules/exceptions/service.ts:132 | exceptions | getExceptionById | FIXED | OK | Now org-scoped; was SCOPED-INDIRECT with post-read org check in route |
 | modules/exceptions/service.ts:185 | exceptions | exceptionExists | SCOPED-INDIRECT | OK | Existence check by log_id; called from ingest pipeline that already owns the log |
-| modules/exceptions/service.ts:366 | error_groups | updateErrorGroupStatus | SCOPED-INDIRECT | OK | UPDATE by PK id; caller (routes.ts:548) verifies group.organizationId before call |
+| modules/exceptions/service.ts:366 | error_groups | updateErrorGroupStatus | FIXED | OK | Now org-scoped; was SCOPED-INDIRECT with post-read org check in route |
 | modules/maintenances/service.ts:130 | scheduled_maintenances | processMaintenanceTransitions | INTENTIONAL-GLOBAL | OK | Scheduler/worker: transitions all due maintenances across all orgs by design |
 | modules/maintenances/service.ts:139 | scheduled_maintenances | processMaintenanceTransitions | INTENTIONAL-GLOBAL | OK | Scheduler/worker: second transition (in_progress -> completed) across all orgs |
 | modules/monitoring/checker.ts:134 | monitor_results | isHeartbeatUp | SCOPED-INDIRECT | OK | Query by monitor_id; monitorId comes from runAllDueChecks which loaded the monitor row (org-scoped) |
@@ -137,36 +185,22 @@ If per-project RBAC is added in future, the correct place to enforce it is in th
 | modules/notifications/service.ts:152 | notifications | deleteNotification | SCOPED-INDIRECT | OK | DELETE by id AND user_id; user_id is the isolation key |
 | modules/notifications/service.ts:163 | notifications | deleteAllNotifications | SCOPED-INDIRECT | OK | DELETE WHERE user_id = userId |
 | modules/notifications/service.ts:178 | notifications | cleanupOldNotifications | INTENTIONAL-GLOBAL | OK | Scheduled cleanup of old read notifications across all users by design |
-| modules/pii-masking/service.ts:259 | pii_masking_rules | updateRule | REAL-GAP | RISK | Fetch-before-update reads rule by id only (no org check); update at line 282 does scope by org, but the pre-read at line 259 that validates pattern_type is unscoped -- a ruleId from another org would leak pattern_type |
+| modules/pii-masking/service.ts:259 | pii_masking_rules | updateRule | FIXED | OK | Pre-read SELECT now org-scoped; was REAL-GAP (unscoped pre-read leaked pattern_type) |
 | modules/projects/data-availability-backfill.ts:107 | projects | markHasData (inline) | INTENTIONAL-GLOBAL | OK | One-shot boot backfill; updates all uninitialized projects by PK from a full scan |
 | modules/projects/data-availability-backfill.ts:119 | projects | runDataAvailabilityBackfill | INTENTIONAL-GLOBAL | OK | Boot backfill: scans all projects with null data-availability flags |
 | modules/projects/service.ts:260 | projects | verifyStatusPagePassword | SAFE-BY-PK | OK | Lookup by projectId for public status page password check; project id is from route param |
 | modules/projects/service.ts:287 | projects | markHasData | SAFE-BY-PK | OK | Fire-and-forget UPDATE by projectId; projectId comes from authenticated ingest context |
 | modules/projects/service.ts:351 | projects | deleteProject | SAFE-BY-PK | OK | DELETE by projectId; caller verifies project ownership via getProjectById(projectId, userId) first |
-| modules/siem/service.ts:327 | detection_events | linkDetectionEventsToIncident | REAL-GAP | RISK | UPDATE by id IN list with optional org scope; when called without organizationId (e.g. from auto-grouping job) no org check is applied to detection_events |
-| modules/siem/service.ts:339 | incidents | linkDetectionEventsToIncident | REAL-GAP | RISK | UPDATE incidents.detection_count by incidentId only (no org_id filter); a crafted call with a foreign incidentId could update another org's incident count |
-| modules/siem/service.ts:352 | detection_events | getIncidentDetections | REAL-GAP | RISK | SELECT by incident_id with optional org scope; when organizationId is omitted (enrichment call at line 381) any caller with an incidentId can read cross-org detection events |
-| modules/siem/service.ts:439 | incidents | enrichIncidentIpData | REAL-GAP | RISK | UPDATE incidents by incidentId only (no org_id filter); incidentId comes from external caller without re-validation |
+| modules/siem/service.ts:327 | detection_events | linkDetectionEventsToIncident | FIXED | OK | organizationId now required; org scope always applied; was REAL-GAP (optional guard) |
+| modules/siem/service.ts:339 | incidents | linkDetectionEventsToIncident | FIXED | OK | incidents UPDATE now org-scoped; was REAL-GAP (no org filter on detection_count increment) |
+| modules/siem/service.ts:352 | detection_events | getIncidentDetections | FIXED | OK | organizationId now required and applied; was REAL-GAP (optional omission allowed cross-org read) |
+| modules/siem/service.ts:439 | incidents | enrichIncidentIpData | FIXED | OK | organizationId now required; UPDATE org-scoped; was REAL-GAP (no org filter) |
 | modules/sigma/service.ts:313 | alert_rules | deleteSigmaRule | SAFE-BY-PK | OK | DELETE alert_rules by rule.alertRuleId; alertRuleId came from getSigmaRuleById(id, organizationId) which is org-scoped |
 | modules/sigma/sync-service.ts:240 | sigma_rules | syncRules (update branch) | SAFE-BY-PK | OK | UPDATE by existing.id where existing was fetched with org+sigmahq_path scope at line 156 |
 | modules/status-incidents/service.ts:179 | status_incidents | addUpdate | SCOPED-INDIRECT | OK | UPDATE inside transaction; prior SELECT at line 158-163 verified organization_id before proceeding |
 | queue/jobs/error-notification.ts:167 | projects | processErrorNotification | SAFE-BY-PK | OK | Lookup projects by data.projectId; projectId came from server-enqueued job (exception-parsing) |
 | queue/jobs/incident-autogrouping.ts:77 | detection_events | groupByTraceId | SCOPED-INDIRECT | OK | SELECT by id IN eventIds where eventIds came from prior org-scoped query at line 50-68 |
 | queue/jobs/log-pipeline.ts:50 | logs | processLogPipeline | SAFE-BY-PK | OK | UPDATE by log id from job payload; log IDs were just ingested in the same project/org context |
-
----
-
-## Real Gaps to Fix
-
-Four sites require adding explicit tenant scoping. None involve reads that already return cross-org data in the normal happy path (the optional-scope pattern just means the guard is absent), but they allow escalation if callers are added or existing callers change.
-
-- [ ] **modules/pii-masking/service.ts:259** -- `updateRule`: the pre-read that validates `pattern_type` queries `pii_masking_rules WHERE id = ruleId` without `AND organization_id = organizationId`. Add `.where('organization_id', '=', organizationId)` to the read-before-update SELECT so a ruleId from another org cannot leak `pattern_type`.
-
-- [ ] **modules/siem/service.ts:327** -- `linkDetectionEventsToIncident`: the `updateTable('detection_events') ... WHERE id IN list` is guarded by `if (organizationId)` only. Make `organizationId` required (non-optional) on the function signature, or always include the WHERE clause. The optional parameter means callers from `incident-autogrouping` (which passes `organizationId`) are fine, but future callers that omit it would perform an unscoped cross-org UPDATE.
-
-- [ ] **modules/siem/service.ts:339** -- `linkDetectionEventsToIncident`: the `updateTable('incidents') ... WHERE id = incidentId` that increments `detection_count` has no org filter. Add `.where('organization_id', '=', organizationId)` to prevent a crafted incidentId from incrementing another org's incident counter.
-
-- [ ] **modules/siem/service.ts:352 and :439** -- `getIncidentDetections` / `enrichIncidentIpData`: both accept `organizationId` as optional and omit the WHERE clause when it is absent. `getIncidentDetections` is called without org scope from `enrichIncidentIpData` (line 381). Make `organizationId` required on both functions, or always include the filter. This ensures cross-org detection event reads are impossible even if the enrichment path is extended.
 
 ---
 
