@@ -18,6 +18,7 @@ export default defineConfig({
                 'dist/',
                 'src/tests/',
                 'src/scripts/',
+                'scripts/',
                 'migrations/',
                 'load-tests/',
                 'run-migration.js',

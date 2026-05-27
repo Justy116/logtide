@@ -1,4 +1,5 @@
 import { QueryTranslator, type NativeQuery } from '../../core/query-translator.js';
+import { GLOBAL_SCOPE } from '../../core/types.js';
 import type {
   AggregateParams,
   AggregationInterval,
@@ -46,7 +47,7 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     const queryParams: Record<string, unknown> = {};
 
     // High-selectivity filters go in PREWHERE
-    if (params.projectId !== undefined) {
+    if (params.projectId !== GLOBAL_SCOPE) {
       this.pushClickHouseFilter(prewhere, queryParams, 'project_id', params.projectId);
     }
 
@@ -65,9 +66,6 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     }
 
     // Lower-selectivity filters go in WHERE
-    if (params.organizationId !== undefined) {
-      this.pushClickHouseFilter(conditions, queryParams, 'organization_id', params.organizationId);
-    }
     if (params.service !== undefined) {
       this.pushClickHouseFilter(conditions, queryParams, 'service', params.service);
     }
@@ -143,7 +141,7 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
 
     const interval = INTERVAL_MAP[params.interval];
 
-    if (params.projectId !== undefined) {
+    if (params.projectId !== GLOBAL_SCOPE) {
       this.pushClickHouseFilter(prewhere, queryParams, 'project_id', params.projectId);
     }
 
@@ -152,9 +150,6 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     prewhere.push(`time <= {p_to:DateTime64(3)}`);
     queryParams.p_to = toDateTime64(params.to);
 
-    if (params.organizationId !== undefined) {
-      this.pushClickHouseFilter(conditions, queryParams, 'organization_id', params.organizationId);
-    }
     if (params.service !== undefined) {
       this.pushClickHouseFilter(conditions, queryParams, 'service', params.service);
     }
@@ -172,7 +167,7 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     const conditions: string[] = [];
     const queryParams: Record<string, unknown> = {};
 
-    if (params.projectId !== undefined) {
+    if (params.projectId !== GLOBAL_SCOPE) {
       this.pushClickHouseFilter(prewhere, queryParams, 'project_id', params.projectId);
     }
 
@@ -181,9 +176,6 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     prewhere.push(`time ${params.toExclusive ? '<' : '<='} {p_to:DateTime64(3)}`);
     queryParams.p_to = toDateTime64(params.to);
 
-    if (params.organizationId !== undefined) {
-      this.pushClickHouseFilter(conditions, queryParams, 'organization_id', params.organizationId);
-    }
     if (params.service !== undefined) {
       this.pushClickHouseFilter(conditions, queryParams, 'service', params.service);
     }
@@ -237,7 +229,7 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     const conditions: string[] = [];
     const queryParams: Record<string, unknown> = {};
 
-    if (params.projectId !== undefined) {
+    if (params.projectId !== GLOBAL_SCOPE) {
       this.pushClickHouseFilter(prewhere, queryParams, 'project_id', params.projectId);
     }
 
@@ -246,9 +238,6 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     prewhere.push(`time ${params.toExclusive ? '<' : '<='} {p_to:DateTime64(3)}`);
     queryParams.p_to = toDateTime64(params.to);
 
-    if (params.organizationId !== undefined) {
-      this.pushClickHouseFilter(conditions, queryParams, 'organization_id', params.organizationId);
-    }
     if (params.service !== undefined) {
       this.pushClickHouseFilter(conditions, queryParams, 'service', params.service);
     }
@@ -303,7 +292,7 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     const conditions: string[] = [];
     const queryParams: Record<string, unknown> = {};
 
-    if (params.projectId !== undefined) {
+    if (params.projectId !== GLOBAL_SCOPE) {
       this.pushClickHouseFilter(prewhere, queryParams, 'project_id', params.projectId);
     }
 
@@ -312,9 +301,6 @@ export class ClickHouseQueryTranslator extends QueryTranslator {
     prewhere.push(`time ${params.toExclusive ? '<' : '<='} {p_to:DateTime64(3)}`);
     queryParams.p_to = toDateTime64(params.to);
 
-    if (params.organizationId !== undefined) {
-      this.pushClickHouseFilter(conditions, queryParams, 'organization_id', params.organizationId);
-    }
     if (params.service !== undefined) {
       this.pushClickHouseFilter(conditions, queryParams, 'service', params.service);
     }

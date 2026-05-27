@@ -75,11 +75,12 @@ export class ExceptionService {
   /**
    * Get exception with stack frames by log ID
    */
-  async getExceptionByLogId(logId: string): Promise<ExceptionWithFrames | null> {
+  async getExceptionByLogId(logId: string, organizationId: string): Promise<ExceptionWithFrames | null> {
     const exception = await this.db
       .selectFrom('exceptions')
       .selectAll()
       .where('log_id', '=', logId)
+      .where('organization_id', '=', organizationId)
       .executeTakeFirst();
 
     if (!exception) return null;
@@ -128,11 +129,12 @@ export class ExceptionService {
   /**
    * Get exception by ID
    */
-  async getExceptionById(exceptionId: string): Promise<ExceptionWithFrames | null> {
+  async getExceptionById(exceptionId: string, organizationId: string): Promise<ExceptionWithFrames | null> {
     const exception = await this.db
       .selectFrom('exceptions')
       .selectAll()
       .where('id', '=', exceptionId)
+      .where('organization_id', '=', organizationId)
       .executeTakeFirst();
 
     if (!exception) return null;
@@ -360,6 +362,7 @@ export class ExceptionService {
    */
   async updateErrorGroupStatus(
     groupId: string,
+    organizationId: string,
     status: ErrorGroupStatus,
     resolvedBy?: string
   ): Promise<ErrorGroup | null> {
@@ -371,6 +374,7 @@ export class ExceptionService {
         resolved_by: resolvedBy || null,
       })
       .where('id', '=', groupId)
+      .where('organization_id', '=', organizationId)
       .returningAll()
       .executeTakeFirst();
 

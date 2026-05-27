@@ -1,0 +1,326 @@
+[
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "alert_history",
+    "snippet": ".selectFrom('alert_history')",
+    "reason": "intentional cross-org admin: platform-wide alert history stats (triggered counts, notification success/failure)"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "alert_history",
+    "snippet": ".selectFrom('alert_history')",
+    "reason": "intentional cross-org admin: platform-wide alert history stats (triggered counts, notification success/failure)"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "alert_history",
+    "snippet": ".selectFrom('alert_history')",
+    "reason": "intentional cross-org admin: platform-wide alert history stats (triggered counts, notification success/failure)"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "alert_history",
+    "snippet": ".selectFrom('alert_history')",
+    "reason": "intentional cross-org admin: platform-wide alert history stats (triggered counts, notification success/failure)"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "alert_history",
+    "snippet": ".selectFrom('alert_history')",
+    "reason": "intentional cross-org admin: platform-wide alert history stats (triggered counts, notification success/failure)"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "alert_rules",
+    "snippet": ".selectFrom('alert_rules')",
+    "reason": "intentional cross-org admin: counts all alert rules platform-wide for admin dashboard"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "alert_rules",
+    "snippet": ".selectFrom('alert_rules')",
+    "reason": "intentional cross-org admin: counts all alert rules platform-wide for admin dashboard"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "error_groups",
+    "snippet": ".selectFrom('error_groups')",
+    "reason": "intentional cross-org admin: open error groups count across all orgs for admin active-issues view"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "incidents",
+    "snippet": ".selectFrom('incidents')",
+    "reason": "intentional cross-org admin: open incidents count across all orgs for admin active-issues view"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "projects",
+    "snippet": ".deleteFrom('projects')",
+    "reason": "safe-by-PK: admin-only delete by primary key; projectId comes from admin-authenticated request"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "projects",
+    "snippet": ".selectFrom('projects')",
+    "reason": "intentional cross-org admin: total-count subquery for pagination across all projects"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "projects",
+    "snippet": ".selectFrom('projects')",
+    "reason": "intentional cross-org admin: counts all projects platform-wide for admin stats"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "projects",
+    "snippet": "const allProjects = await db.selectFrom('projects').select('id').execute();",
+    "reason": "intentional cross-org admin: fetches all project IDs to aggregate cross-platform timeline stats"
+  },
+  {
+    "file": "packages/backend/src/modules/admin/service.ts",
+    "table": "projects",
+    "snippet": "const allProjects = await db.selectFrom('projects').select('id').execute();",
+    "reason": "intentional cross-org admin: fetches all project IDs for ClickHouse cross-platform timeline aggregate"
+  },
+  {
+    "file": "packages/backend/src/modules/alerts/service.ts",
+    "table": "alert_history",
+    "snippet": ".selectFrom('alert_history')",
+    "reason": "scoped-indirect: fetches last trigger for rule.id; rule was pre-filtered by org in checkAlertRules"
+  },
+  {
+    "file": "packages/backend/src/modules/alerts/service.ts",
+    "table": "alert_history",
+    "snippet": ".selectFrom('alert_history')",
+    "reason": "scoped-indirect: cooldown check by rule.id; rule already org-scoped from parent fetch"
+  },
+  {
+    "file": "packages/backend/src/modules/alerts/service.ts",
+    "table": "alert_history",
+    "snippet": ".updateTable('alert_history')",
+    "reason": "safe-by-PK: updates single row by historyId from server-enqueued job payload"
+  },
+  {
+    "file": "packages/backend/src/modules/alerts/service.ts",
+    "table": "alert_rules",
+    "snippet": ".selectFrom('alert_rules')",
+    "reason": "intentional cross-org worker: loads all enabled rules to evaluate; next step immediately scopes per-org"
+  },
+  {
+    "file": "packages/backend/src/modules/api-keys/service.ts",
+    "table": "api_keys",
+    "snippet": ".updateTable('api_keys')",
+    "reason": "safe-by-PK: debounced UPDATE by key PK id; id is set after successful verifyApiKey lookup"
+  },
+  {
+    "file": "packages/backend/src/modules/auth/service.ts",
+    "table": "api_keys",
+    "snippet": ".selectFrom('api_keys')",
+    "reason": "tenant bootstrap lookup: resolves tenant from raw key hash; cannot pre-scope what establishes identity"
+  },
+  {
+    "file": "packages/backend/src/modules/auth/service.ts",
+    "table": "api_keys",
+    "snippet": ".selectFrom('api_keys')",
+    "reason": "intentional global: admin/debug listing of all keys (no org filter); annotate or restrict if not needed"
+  },
+  {
+    "file": "packages/backend/src/modules/auth/service.ts",
+    "table": "api_keys",
+    "snippet": ".updateTable('api_keys')",
+    "reason": "tenant bootstrap lookup: update last_used after verification by resolved PK"
+  },
+  {
+    "file": "packages/backend/src/modules/auth/service.ts",
+    "table": "api_keys",
+    "snippet": ".updateTable('api_keys')",
+    "reason": "safe-by-PK: admin revoke by PK id from authenticated session"
+  },
+  {
+    "file": "packages/backend/src/modules/correlation/service.ts",
+    "table": "log_identifiers",
+    "snippet": ".selectFrom('log_identifiers')",
+    "reason": "scoped-indirect: queries by log_id IN list; batch route adds project_id IN filter directly"
+  },
+  {
+    "file": "packages/backend/src/modules/detection-packs/service.ts",
+    "table": "detection_pack_activations",
+    "snippet": ".updateTable('detection_pack_activations')",
+    "reason": "safe-by-PK: UPDATE by existing.id where existing was retrieved with org scope earlier in same function"
+  },
+  {
+    "file": "packages/backend/src/modules/exceptions/service.ts",
+    "table": "exceptions",
+    "snippet": ".selectFrom('exceptions')",
+    "reason": "scoped-indirect: existence check by log_id; called from ingest pipeline that already owns the log"
+  },
+  {
+    "file": "packages/backend/src/modules/maintenances/service.ts",
+    "table": "scheduled_maintenances",
+    "snippet": ".updateTable('scheduled_maintenances')",
+    "reason": "intentional cross-org worker: transitions all due maintenances across all orgs by design (scheduler)"
+  },
+  {
+    "file": "packages/backend/src/modules/maintenances/service.ts",
+    "table": "scheduled_maintenances",
+    "snippet": ".updateTable('scheduled_maintenances')",
+    "reason": "intentional cross-org worker: second transition (in_progress -> completed) across all orgs"
+  },
+  {
+    "file": "packages/backend/src/modules/monitoring/checker.ts",
+    "table": "monitor_results",
+    "snippet": ".selectFrom('monitor_results')",
+    "reason": "scoped-indirect: query by monitor_id; monitorId comes from runAllDueChecks which loaded the monitor row (org-scoped)"
+  },
+  {
+    "file": "packages/backend/src/modules/monitoring/service.ts",
+    "table": "monitor_uptime_daily",
+    "snippet": ".selectFrom('monitor_uptime_daily')",
+    "reason": "scoped-indirect: query by monitor_id IN list; monitorIds derived from org-scoped monitor query earlier"
+  },
+  {
+    "file": "packages/backend/src/modules/monitoring/service.ts",
+    "table": "monitors",
+    "snippet": ".selectFrom('monitors')",
+    "reason": "intentional cross-org worker: loads all enabled due monitors across all orgs to schedule checks"
+  },
+  {
+    "file": "packages/backend/src/modules/monitoring/service.ts",
+    "table": "projects",
+    "snippet": ".selectFrom('projects')",
+    "reason": "scoped-indirect: lookup by slug for public status page; visibility check follows immediately"
+  },
+  {
+    "file": "packages/backend/src/modules/monitoring/service.ts",
+    "table": "projects",
+    "snippet": ".selectFrom('projects')",
+    "reason": "scoped-indirect: lookup by verifiedProjectId (server-trusted) for public status page"
+  },
+  {
+    "file": "packages/backend/src/modules/notifications/service.ts",
+    "table": "notifications",
+    "snippet": ".deleteFrom('notifications')",
+    "reason": "scoped-indirect: DELETE by id AND user_id; user_id is the isolation key for notifications table"
+  },
+  {
+    "file": "packages/backend/src/modules/notifications/service.ts",
+    "table": "notifications",
+    "snippet": ".deleteFrom('notifications')",
+    "reason": "scoped-indirect: bulk DELETE WHERE user_id = userId; user-scoped"
+  },
+  {
+    "file": "packages/backend/src/modules/notifications/service.ts",
+    "table": "notifications",
+    "snippet": ".deleteFrom('notifications')",
+    "reason": "intentional global: scheduled cleanup of old read notifications across all users by design"
+  },
+  {
+    "file": "packages/backend/src/modules/notifications/service.ts",
+    "table": "notifications",
+    "snippet": ".selectFrom('notifications')",
+    "reason": "scoped-indirect: scoped by user_id; notifications is user-scoped (org_id nullable context column)"
+  },
+  {
+    "file": "packages/backend/src/modules/notifications/service.ts",
+    "table": "notifications",
+    "snippet": ".selectFrom('notifications')",
+    "reason": "scoped-indirect: unread count by user_id"
+  },
+  {
+    "file": "packages/backend/src/modules/notifications/service.ts",
+    "table": "notifications",
+    "snippet": ".updateTable('notifications')",
+    "reason": "scoped-indirect: UPDATE by notificationId AND user_id; user_id prevents cross-user access"
+  },
+  {
+    "file": "packages/backend/src/modules/notifications/service.ts",
+    "table": "notifications",
+    "snippet": ".updateTable('notifications')",
+    "reason": "scoped-indirect: bulk UPDATE WHERE user_id = userId; user-scoped"
+  },
+  {
+    "file": "packages/backend/src/modules/projects/data-availability-backfill.ts",
+    "table": "projects",
+    "snippet": ".selectFrom('projects')",
+    "reason": "intentional global: boot backfill scans all projects with null data-availability flags"
+  },
+  {
+    "file": "packages/backend/src/modules/projects/data-availability-backfill.ts",
+    "table": "projects",
+    "snippet": "await db.updateTable('projects').set(updates).where('id', '=', projectId).execute();",
+    "reason": "safe-by-PK: one-shot boot backfill updates all uninitialized projects by PK from a full scan"
+  },
+  {
+    "file": "packages/backend/src/modules/projects/service.ts",
+    "table": "projects",
+    "snippet": ".deleteFrom('projects')",
+    "reason": "safe-by-PK: DELETE by projectId; caller verifies project ownership via getProjectById first"
+  },
+  {
+    "file": "packages/backend/src/modules/projects/service.ts",
+    "table": "projects",
+    "snippet": ".selectFrom('projects')",
+    "reason": "safe-by-PK: lookup by projectId for public status page password check; project id is from route param"
+  },
+  {
+    "file": "packages/backend/src/modules/projects/service.ts",
+    "table": "projects",
+    "snippet": ".updateTable('projects')",
+    "reason": "safe-by-PK: fire-and-forget UPDATE by projectId; projectId comes from authenticated ingest context"
+  },
+  {
+    "file": "packages/backend/src/modules/sigma/service.ts",
+    "table": "alert_rules",
+    "snippet": ".deleteFrom('alert_rules')",
+    "reason": "safe-by-PK: DELETE alert_rules by rule.alertRuleId; alertRuleId came from getSigmaRuleById(id, organizationId) which is org-scoped"
+  },
+  {
+    "file": "packages/backend/src/modules/sigma/sync-service.ts",
+    "table": "sigma_rules",
+    "snippet": ".updateTable('sigma_rules')",
+    "reason": "safe-by-PK: UPDATE by existing.id where existing was fetched with org+sigmahq_path scope"
+  },
+  {
+    "file": "packages/backend/src/modules/status-incidents/service.ts",
+    "table": "status_incidents",
+    "snippet": ".updateTable('status_incidents')",
+    "reason": "scoped-indirect: UPDATE inside transaction; prior SELECT verified organization_id before proceeding"
+  },
+  {
+    "file": "packages/backend/src/queue/jobs/error-notification.ts",
+    "table": "projects",
+    "snippet": ".selectFrom('projects')",
+    "reason": "safe-by-PK: lookup projects by data.projectId; projectId came from server-enqueued job (exception-parsing)"
+  },
+  {
+    "file": "packages/backend/src/queue/jobs/incident-autogrouping.ts",
+    "table": "detection_events",
+    "snippet": ".selectFrom('detection_events')",
+    "reason": "scoped-indirect: SELECT by id IN eventIds where eventIds came from prior org-scoped query"
+  },
+  {
+    "file": "packages/backend/src/queue/jobs/log-pipeline.ts",
+    "table": "logs",
+    "snippet": ".updateTable('logs')",
+    "reason": "safe-by-PK: UPDATE by log id from job payload; log IDs were just ingested in the same project/org context"
+  },
+  {
+    "file": "packages/backend/src/scripts/seed-massive-data.ts",
+    "table": "detection_events",
+    "snippet": ".selectFrom('detection_events')",
+    "reason": "dev seed script: COUNT(*) for display only, no production path"
+  },
+  {
+    "file": "packages/backend/src/scripts/seed-massive-data.ts",
+    "table": "logs",
+    "snippet": ".selectFrom('logs')",
+    "reason": "dev seed script: COUNT(*) for display only, no production path"
+  },
+  {
+    "file": "packages/backend/src/scripts/seed-massive-data.ts",
+    "table": "spans",
+    "snippet": ".selectFrom('spans')",
+    "reason": "dev seed script: COUNT(*) for display only, no production path"
+  }
+]

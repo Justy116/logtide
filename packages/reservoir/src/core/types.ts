@@ -8,6 +8,10 @@
 import type { LogLevel, SpanKind, SpanStatusCode, MetadataFilter } from '@logtide/shared';
 export type { LogLevel, SpanKind, SpanStatusCode, MetadataFilter };
 
+/** Sentinel for log queries that intentionally span all projects (admin / platform). */
+export const GLOBAL_SCOPE = '__ALL_PROJECTS__' as const;
+export type GlobalScope = typeof GLOBAL_SCOPE;
+
 export type EngineType = 'timescale' | 'clickhouse' | 'mongodb';
 
 export type StorageTier = 'hot' | 'warm' | 'cold' | 'archive';
@@ -58,8 +62,7 @@ export interface Filter {
 
 /** Parameters for querying logs */
 export interface QueryParams {
-  organizationId?: string | string[];
-  projectId?: string | string[];
+  projectId: string | string[] | GlobalScope;
   service?: string | string[];
   level?: LogLevel | LogLevel[];
   hostname?: string | string[];
@@ -94,8 +97,7 @@ export interface QueryResult<T = LogRecord> {
 
 /** Parameters for aggregation queries */
 export interface AggregateParams {
-  organizationId?: string | string[];
-  projectId?: string | string[];
+  projectId: string | string[] | GlobalScope;
   service?: string | string[];
   from: Date;
   to: Date;
@@ -190,8 +192,7 @@ export interface GetByIdsParams {
 
 /** Parameters for counting logs */
 export interface CountParams {
-  organizationId?: string | string[];
-  projectId?: string | string[];
+  projectId: string | string[] | GlobalScope;
   service?: string | string[];
   level?: LogLevel | LogLevel[];
   hostname?: string | string[];
@@ -216,8 +217,7 @@ export interface CountResult {
 /** Parameters for distinct value queries */
 export interface DistinctParams {
   field: string;
-  organizationId?: string | string[];
-  projectId?: string | string[];
+  projectId: string | string[] | GlobalScope;
   service?: string | string[];
   level?: LogLevel | LogLevel[];
   hostname?: string | string[];
@@ -238,8 +238,7 @@ export interface DistinctResult {
 /** Parameters for top values (GROUP BY field + COUNT) */
 export interface TopValuesParams {
   field: string;
-  organizationId?: string | string[];
-  projectId?: string | string[];
+  projectId: string | string[] | GlobalScope;
   service?: string | string[];
   level?: LogLevel | LogLevel[];
   hostname?: string | string[];

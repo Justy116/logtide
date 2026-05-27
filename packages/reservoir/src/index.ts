@@ -1,4 +1,6 @@
 // Core types
+export { GLOBAL_SCOPE } from './core/types.js';
+export type { GlobalScope } from './core/types.js';
 export type {
   LogLevel,
   SpanKind,

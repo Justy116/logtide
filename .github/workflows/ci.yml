@@ -230,6 +230,10 @@ jobs:
       - name: Typecheck backend
         run: pnpm --filter '@logtide/backend' typecheck
 
+      - name: Tenant scoping check
+        working-directory: packages/backend
+        run: npm run check:tenant-scoping
+
       - name: Typecheck frontend
         env:
           PUBLIC_API_URL: http://localhost:8080

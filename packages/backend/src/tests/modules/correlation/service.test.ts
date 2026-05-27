@@ -440,7 +440,7 @@ describe('CorrelationService', () => {
                 ])
                 .execute();
 
-            const identifiers = await service.getLogIdentifiers(log.id);
+            const identifiers = await service.getLogIdentifiers(log.id, project.id);
 
             expect(identifiers.length).toBe(2);
             expect(identifiers).toContainEqual({
@@ -455,7 +455,7 @@ describe('CorrelationService', () => {
 
             const log = await createTestLog({ projectId: project.id });
 
-            const identifiers = await service.getLogIdentifiers(log.id);
+            const identifiers = await service.getLogIdentifiers(log.id, project.id);
 
             expect(identifiers.length).toBe(0);
         });

@@ -122,12 +122,15 @@ export class CustomDashboardsService {
       }
     }
 
-    const rows = await query.orderBy('updated_at', 'desc').execute();
+    query = query.where((eb) =>
+      eb.or([
+        eb('is_personal', '=', false),
+        eb('created_by', '=', userId),
+      ])
+    );
 
-    // Hide other users' personal dashboards
-    return rows
-      .filter((r) => !r.is_personal || r.created_by === userId)
-      .map((r) => this.mapRow(r as unknown as DashboardRow));
+    const rows = await query.orderBy('updated_at', 'desc').execute();
+    return rows.map((r) => this.mapRow(r as unknown as DashboardRow));
   }
 
   async getById(id: string, organizationId: string): Promise<CustomDashboard | null> {

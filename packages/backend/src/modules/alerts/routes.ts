@@ -77,6 +77,7 @@ const alertRuleIdSchema = z.object({
 });
 
 const getAlertsQuerySchema = z.object({
+  organizationId: z.string().uuid('organizationId must be a valid uuid'),
   projectId: z.string().uuid().optional(),
   enabledOnly: z
     .string()
@@ -92,6 +93,7 @@ const parsePositiveInt = (val: string | undefined, fallback: number, max: number
 };
 
 const getHistoryQuerySchema = z.object({
+  organizationId: z.string().uuid('organizationId must be a valid uuid'),
   projectId: z.string().uuid().optional(),
   limit: z
     .string()
@@ -101,6 +103,10 @@ const getHistoryQuerySchema = z.object({
     .string()
     .optional()
     .transform((val) => parsePositiveInt(val, 0, 100000)),
+});
+
+const orgQuerySchema = z.object({
+  organizationId: z.string().uuid('organizationId must be a valid uuid'),
 });
 
 const previewAlertRuleSchema = z.object({
@@ -213,13 +219,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
   fastify.get('/', async (request: any, reply) => {
     try {
       const query = getAlertsQuerySchema.parse(request.query);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
+      const { organizationId } = query;
 
       // Check if user is member of organization
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
@@ -252,13 +252,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
   fastify.get('/history', async (request: any, reply) => {
     try {
       const query = getHistoryQuerySchema.parse(request.query);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
+      const { organizationId } = query;
 
       // Check if user is member of organization
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
@@ -319,13 +313,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
   fastify.get('/:id', async (request: any, reply) => {
     try {
       const { id } = alertRuleIdSchema.parse(request.params);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       // Check if user is member of organization
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
@@ -361,13 +349,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
     try {
       const { id } = alertRuleIdSchema.parse(request.params);
       const body = updateAlertRuleSchema.parse(request.body);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       // Check if user is member of organization
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
@@ -435,13 +417,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
   fastify.delete('/:id', async (request: any, reply) => {
     try {
       const { id } = alertRuleIdSchema.parse(request.params);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       // Check if user is member of organization
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);

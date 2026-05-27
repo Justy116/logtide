@@ -287,11 +287,12 @@ export class CorrelationService {
    * Get all identifiers for a specific log
    * For displaying clickable badges in UI
    */
-  async getLogIdentifiers(logId: string): Promise<IdentifierMatch[]> {
+  async getLogIdentifiers(logId: string, projectId: string): Promise<IdentifierMatch[]> {
     const rows = await db
       .selectFrom('log_identifiers')
       .select(['identifier_type', 'identifier_value', 'source_field'])
       .where('log_id', '=', logId)
+      .where('project_id', '=', projectId)
       .execute();
 
     return rows.map((row) => ({

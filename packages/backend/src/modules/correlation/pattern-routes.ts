@@ -115,6 +115,8 @@ function isValidRegex(pattern: string): { valid: boolean; error?: string } {
   return { valid: false, error: result.error };
 }
 
+const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Get organization ID from user's organizations
  */
@@ -122,8 +124,9 @@ async function getUserOrganizationId(userId: string, requestedOrgId?: string): P
   const organizations = await organizationsService.getUserOrganizations(userId);
   if (organizations.length === 0) return null;
 
-  // If a specific org is requested, verify user is a member
+  // If a specific org is requested, verify it's a valid uuid and user is a member
   if (requestedOrgId) {
+    if (!uuidRegex.test(requestedOrgId)) return null;
     const org = organizations.find((o) => o.id === requestedOrgId);
     return org ? org.id : null;
   }

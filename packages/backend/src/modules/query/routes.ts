@@ -3,7 +3,7 @@ import { queryService, type SearchMode } from './service.js';
 import type { LogLevel, MetadataFilter } from '@logtide/shared';
 import { metadataFiltersSchema } from '@logtide/shared';
 import { db } from '../../database/index.js';
-import { requireFullAccess } from '../auth/guards.js';
+import { requireFullAccess, resolveQueryProjectId } from '../auth/guards.js';
 import { auditLogService } from '../audit-log/service.js';
 
 
@@ -104,8 +104,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         metadata_filters = result.data;
       }
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -113,10 +115,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      if (request.user?.id) {
+      if ((request as any).user?.id) {
         const projectIds = Array.isArray(projectId) ? projectId : [projectId];
         for (const pid of projectIds) {
-          const hasAccess = await verifyProjectAccess(pid, request.user.id);
+          const hasAccess = await verifyProjectAccess(pid, (request as any).user.id);
           if (!hasAccess) {
             return reply.code(403).send({
               error: `Access denied - you do not have access to project ${pid}`,
@@ -186,8 +188,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
       const { traceId } = request.params as { traceId: string };
       const { projectId: queryProjectId } = request.query as { projectId?: string };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -252,8 +256,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         projectId?: string;
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -322,8 +328,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
       const { logId } = request.params as { logId: string };
       const { projectId: queryProjectId } = request.query as { projectId?: string };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -396,8 +404,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         interval: '1m' | '5m' | '1h' | '1d';
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -467,8 +477,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         to?: string;
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -540,8 +552,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         to?: string;
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -636,8 +650,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         to?: string;
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -726,8 +742,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         projectId?: string;
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -860,8 +878,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         to?: string;
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({

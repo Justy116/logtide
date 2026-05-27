@@ -50,11 +50,14 @@ interface TestMaskingBody {
   projectId?: string;
 }
 
+const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function getUserOrganizationId(userId: string, requestedOrgId?: string): Promise<string | null> {
   const organizations = await organizationsService.getUserOrganizations(userId);
   if (organizations.length === 0) return null;
 
   if (requestedOrgId) {
+    if (!uuidRegex.test(requestedOrgId)) return null;
     const org = organizations.find((o) => o.id === requestedOrgId);
     return org ? org.id : null;
   }

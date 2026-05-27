@@ -307,7 +307,7 @@ export class SiemService {
   async linkDetectionEventsToIncident(
     incidentId: string,
     detectionEventIds: string[],
-    organizationId?: string
+    organizationId: string
   ): Promise<void> {
     if (detectionEventIds.length === 0) return;
 
@@ -323,42 +323,34 @@ export class SiemService {
       )
       .execute();
 
-    // Update detection_events to set incident_id (scoped to org if provided)
-    let updateQuery = this.db
+    // Update detection_events to set incident_id (always scoped to org)
+    await this.db
       .updateTable('detection_events')
       .set({ incident_id: incidentId })
-      .where('id', 'in', detectionEventIds);
+      .where('id', 'in', detectionEventIds)
+      .where('organization_id', '=', organizationId)
+      .execute();
 
-    if (organizationId) {
-      updateQuery = updateQuery.where('organization_id', '=', organizationId);
-    }
-
-    await updateQuery.execute();
-
-    // Update incident detection_count
+    // Update incident detection_count (scoped to org)
     await this.db
       .updateTable('incidents')
       .set({
         detection_count: sql`detection_count + ${detectionEventIds.length}`,
       })
       .where('id', '=', incidentId)
+      .where('organization_id', '=', organizationId)
       .execute();
   }
 
   /**
    * Get detection events for an incident
    */
-  async getIncidentDetections(incidentId: string, organizationId?: string): Promise<DetectionEvent[]> {
-    let query = this.db
+  async getIncidentDetections(incidentId: string, organizationId: string): Promise<DetectionEvent[]> {
+    const results = await this.db
       .selectFrom('detection_events')
       .selectAll()
-      .where('incident_id', '=', incidentId);
-
-    if (organizationId) {
-      query = query.where('organization_id', '=', organizationId);
-    }
-
-    const results = await query
+      .where('incident_id', '=', incidentId)
+      .where('organization_id', '=', organizationId)
       .orderBy('time', 'desc')
       .execute();
 
@@ -372,13 +364,14 @@ export class SiemService {
    */
   async enrichIncidentIpData(
     incidentId: string,
-    enrichmentService: EnrichmentService
+    enrichmentService: EnrichmentService,
+    organizationId: string
   ): Promise<void> {
     try {
       console.log(`[SiemService] Enriching incident ${incidentId} with IP data`);
 
       // 1. Get all detection events for this incident
-      const detections = await this.getIncidentDetections(incidentId);
+      const detections = await this.getIncidentDetections(incidentId, organizationId);
 
       if (detections.length === 0) {
         console.log(`[SiemService] No detection events found for incident ${incidentId}`);
@@ -443,6 +436,7 @@ export class SiemService {
           ...(hasGeo && { geo_data: geoDataRecord }),
         })
         .where('id', '=', incidentId)
+        .where('organization_id', '=', organizationId)
         .execute();
 
       console.log(
