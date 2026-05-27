@@ -25,15 +25,20 @@ const projectIdSchema = z.object({
   id: z.string().uuid('Invalid project ID format'),
 });
 
+const orgQuerySchema = z.object({
+  organizationId: z.string().uuid('organizationId must be a valid uuid'),
+});
+
 export async function projectsRoutes(fastify: FastifyInstance) {
   // All routes require authentication
   fastify.addHook('onRequest', authenticate);
 
   // Get all projects for an organization
   fastify.get('/', async (request: any, reply) => {
-    const organizationId = request.query.organizationId;
-
-    if (!organizationId) {
+    let organizationId: string;
+    try {
+      ({ organizationId } = orgQuerySchema.parse(request.query));
+    } catch {
       return reply.status(400).send({
         error: 'organizationId query parameter is required',
       });
@@ -54,9 +59,10 @@ export async function projectsRoutes(fastify: FastifyInstance) {
 
   // Get project data availability per category
   fastify.get('/data-availability', async (request: any, reply) => {
-    const organizationId = request.query.organizationId;
-
-    if (!organizationId) {
+    let organizationId: string;
+    try {
+      ({ organizationId } = orgQuerySchema.parse(request.query));
+    } catch {
       return reply.status(400).send({
         error: 'organizationId query parameter is required',
       });
