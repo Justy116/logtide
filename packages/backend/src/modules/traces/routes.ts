@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { tracesService } from './service.js';
-import { requireFullAccess } from '../auth/guards.js';
+import { requireFullAccess, resolveQueryProjectId } from '../auth/guards.js';
 import { verifyProjectAccess } from '../auth/verify-project-access.js';
 
 const tracesRoutes: FastifyPluginAsync = async (fastify) => {
@@ -48,7 +48,11 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
         offset?: number;
       };
 
-      const projectIdsRaw = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectIdRaw = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectIdRaw === null) return; // 403 already sent
+      const projectIdsRaw = resolvedProjectIdRaw;
+
       if (!projectIdsRaw) {
         return reply.code(400).send({
           error: 'Project context missing - provide projectId query parameter',
@@ -113,7 +117,11 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
         error?: boolean;
       };
 
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedStreamProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedStreamProjectId === null) return; // 403 already sent
+      const projectId = resolvedStreamProjectId as string | undefined;
+
       if (!projectId) {
         return reply.code(400).send({
           error: 'Project context missing - provide projectId query parameter',
@@ -209,7 +217,10 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
 
       const { projectId: queryProjectId } = request.query as { projectId?: string };
 
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedServicesProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedServicesProjectId === null) return; // 403 already sent
+      const projectId = resolvedServicesProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -252,7 +263,10 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
         to?: string;
       };
 
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedDepsProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedDepsProjectId === null) return; // 403 already sent
+      const projectId = resolvedDepsProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -299,7 +313,10 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
         to?: string;
       };
 
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedSvcMapProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedSvcMapProjectId === null) return; // 403 already sent
+      const projectId = resolvedSvcMapProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -346,7 +363,10 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
         to?: string;
       };
 
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedStatsProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedStatsProjectId === null) return; // 403 already sent
+      const projectId = resolvedStatsProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -396,7 +416,10 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
       const { traceId } = request.params as { traceId: string };
       const { projectId: queryProjectId } = request.query as { projectId?: string };
 
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedTraceProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedTraceProjectId === null) return; // 403 already sent
+      const projectId = resolvedTraceProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -447,7 +470,10 @@ const tracesRoutes: FastifyPluginAsync = async (fastify) => {
       const { traceId } = request.params as { traceId: string };
       const { projectId: queryProjectId } = request.query as { projectId?: string };
 
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedSpansProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedSpansProjectId === null) return; // 403 already sent
+      const projectId = resolvedSpansProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
