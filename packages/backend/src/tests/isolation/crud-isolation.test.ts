@@ -129,25 +129,37 @@ describe('Tenant isolation - CRUD resources by id', () => {
       expect(row?.enabled).toBe(true);
     });
 
-    it('org B DELETE on org A sigma rule id does NOT delete org A data', async () => {
+    it('org B DELETE on org A sigma rule returns 404 and does not delete org A data', async () => {
       const t = await createIsolatedTenants();
       const ruleA = await createTestSigmaRule({ organizationId: t.orgA.id });
       const headers = await sessionHeader(t.orgB.ownerUserId);
 
-      // Service scopes lookup to organizationId=orgB.id, finds nothing, throws 500.
-      // 404 would be more correct, but either way org A's rule must remain.
-      await request(app.server)
+      const res = await request(app.server)
         .delete(`/api/v1/sigma/rules/${ruleA.id}`)
         .query({ organizationId: t.orgB.id })
         .set(headers);
 
-      // Critical: org A's sigma rule must still exist
+      expect(res.status).toBe(404);
+
       const row = await db
         .selectFrom('sigma_rules')
         .select('id')
         .where('id', '=', ruleA.id)
         .executeTakeFirst();
       expect(row).toBeDefined();
+    });
+
+    it('DELETE on a non-existent sigma rule returns 404', async () => {
+      const t = await createIsolatedTenants();
+      const headers = await sessionHeader(t.orgA.ownerUserId);
+      const missingId = '00000000-0000-0000-0000-000000000000';
+
+      const res = await request(app.server)
+        .delete(`/api/v1/sigma/rules/${missingId}`)
+        .query({ organizationId: t.orgA.id })
+        .set(headers);
+
+      expect(res.status).toBe(404);
     });
   });
 
