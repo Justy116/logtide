@@ -165,18 +165,6 @@ describe('Tenant isolation - CRUD resources by id', () => {
 
   // ---------------------------------------------------------------------------
   // Custom dashboards
-  //
-  // KNOWN BEHAVIOUR (not a data leak):
-  //   PUT  /:id?organizationId=<orgB> - when the row is not found the service
-  //        throws NoResultError which maps to 500. No org A data is modified.
-  //   DELETE /:id?organizationId=<orgB> - the service silently no-ops when the
-  //        row is not found under orgB, and the route returns 204. Org A's
-  //        dashboard is NOT actually deleted (verified in DB below).
-  //   GET  /:id?organizationId=<orgB> - returns 404 (correct: not found in orgB).
-  //
-  // The routes correctly scope writes/reads by organizationId; the concern is
-  // that DELETE returns 204 (opaque success) instead of 404 when nothing
-  // matches. Not a data isolation bug but a noisy HTTP semantics issue.
   // ---------------------------------------------------------------------------
   describe('custom dashboards (/api/v1/custom-dashboards/:id)', () => {
     async function createDashboard(appInst: FastifyInstance, orgId: string, userId: string) {
@@ -203,20 +191,19 @@ describe('Tenant isolation - CRUD resources by id', () => {
       expect([403, 404]).toContain(res.status);
     });
 
-    it('org B PUT on org A dashboard does not mutate org A data', async () => {
+    it('org B PUT on org A dashboard returns 404 and does not mutate org A data', async () => {
       const t = await createIsolatedTenants();
       const dashA = await createDashboard(app, t.orgA.id, t.orgA.ownerUserId);
       const headersB = await sessionHeader(t.orgB.ownerUserId);
 
-      // The route passes orgB.id to the service which fails to find the row
-      // and the NoResultError becomes a 500. In any case org A data is unchanged.
-      await request(app.server)
+      const res = await request(app.server)
         .put(`/api/v1/custom-dashboards/${dashA.id}`)
         .query({ organizationId: t.orgB.id })
         .set(headersB)
         .send({ name: 'hacked' });
 
-      // The original dashboard for org A must still have its original name
+      expect(res.status).toBe(404);
+
       const headersA = await sessionHeader(t.orgA.ownerUserId);
       const check = await request(app.server)
         .get(`/api/v1/custom-dashboards/${dashA.id}`)
@@ -226,19 +213,32 @@ describe('Tenant isolation - CRUD resources by id', () => {
       expect(check.body.dashboard.name).toBe(dashA.name);
     });
 
-    it('org B DELETE on org A dashboard id does NOT actually delete org A data', async () => {
+    it('PUT on a non-existent dashboard returns 404', async () => {
+      const t = await createIsolatedTenants();
+      const headers = await sessionHeader(t.orgA.ownerUserId);
+      const missingId = '00000000-0000-0000-0000-000000000000';
+
+      const res = await request(app.server)
+        .put(`/api/v1/custom-dashboards/${missingId}`)
+        .query({ organizationId: t.orgA.id })
+        .set(headers)
+        .send({ name: 'whatever' });
+
+      expect(res.status).toBe(404);
+    });
+
+    it('org B DELETE on org A dashboard returns 404 and does NOT delete org A data', async () => {
       const t = await createIsolatedTenants();
       const dashA = await createDashboard(app, t.orgA.id, t.orgA.ownerUserId);
       const headersB = await sessionHeader(t.orgB.ownerUserId);
 
-      // DELETE with orgB.id in query param: service scopes by organization_id,
-      // finds no matching row, silently no-ops. HTTP may return 204 or 404.
-      await request(app.server)
+      const res = await request(app.server)
         .delete(`/api/v1/custom-dashboards/${dashA.id}`)
         .query({ organizationId: t.orgB.id })
         .set(headersB);
 
-      // Critical: org A's dashboard must still exist
+      expect(res.status).toBe(404);
+
       const headersA = await sessionHeader(t.orgA.ownerUserId);
       const check = await request(app.server)
         .get(`/api/v1/custom-dashboards/${dashA.id}`)
@@ -246,6 +246,19 @@ describe('Tenant isolation - CRUD resources by id', () => {
         .set(headersA);
       expect(check.status).toBe(200);
       expect(check.body.dashboard.id).toBe(dashA.id);
+    });
+
+    it('DELETE on a non-existent dashboard returns 404', async () => {
+      const t = await createIsolatedTenants();
+      const headers = await sessionHeader(t.orgA.ownerUserId);
+      const missingId = '00000000-0000-0000-0000-000000000000';
+
+      const res = await request(app.server)
+        .delete(`/api/v1/custom-dashboards/${missingId}`)
+        .query({ organizationId: t.orgA.id })
+        .set(headers);
+
+      expect(res.status).toBe(404);
     });
   });
 });
