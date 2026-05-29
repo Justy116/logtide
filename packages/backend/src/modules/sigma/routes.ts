@@ -387,6 +387,12 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
               error: { type: 'string' },
             },
           },
+          404: {
+            type: 'object',
+            properties: {
+              error: { type: 'string' },
+            },
+          },
         },
       },
     },
@@ -415,11 +421,18 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         });
       }
 
-      await sigmaService.deleteSigmaRule(
-        params.id,
-        query.organizationId,
-        query.deleteAlertRule
-      );
+      try {
+        await sigmaService.deleteSigmaRule(
+          params.id,
+          query.organizationId,
+          query.deleteAlertRule
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message === 'Sigma rule not found') {
+          return reply.code(404).send({ error: 'Sigma rule not found' });
+        }
+        throw error;
+      }
 
       auditLogService.log({
         organizationId: query.organizationId,

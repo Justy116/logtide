@@ -186,7 +186,11 @@ export class CustomDashboardsService {
       .where('id', '=', id)
       .where('organization_id', '=', organizationId)
       .returningAll()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
+
+    if (!row) {
+      throw new Error('Dashboard not found');
+    }
 
     return this.mapRow(row as unknown as DashboardRow);
   }
@@ -249,7 +253,9 @@ export class CustomDashboardsService {
       .where('organization_id', '=', organizationId)
       .executeTakeFirst();
 
-    if (!existing) return;
+    if (!existing) {
+      throw new Error('Dashboard not found');
+    }
     if (existing.is_default) {
       throw new Error('Cannot delete the default dashboard');
     }

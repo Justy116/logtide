@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { Migrator, Migration, MigrationProvider, sql } from 'kysely';
 import { db } from './connection.js';
+import { repairMigrationTable } from './migration-repair.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,6 +49,8 @@ export async function migrateToLatest() {
   const migrationFolder = path.resolve(__dirname, '../../migrations');
   console.log('Migration folder:', migrationFolder);
 
+  await repairMigrationTable(db);
+
   const migrator = new Migrator({
     db,
     provider: new EsmFileMigrationProvider(migrationFolder),
@@ -74,6 +77,8 @@ export async function migrateToLatest() {
 
 export async function migrateDown() {
   const migrationFolder = path.resolve(__dirname, '../../migrations');
+
+  await repairMigrationTable(db);
 
   const migrator = new Migrator({
     db,

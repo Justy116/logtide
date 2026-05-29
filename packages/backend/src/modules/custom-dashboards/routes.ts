@@ -178,6 +178,9 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
           .status(400)
           .send({ error: 'Validation error', details: e.errors });
       }
+      if (e instanceof Error && e.message === 'Dashboard not found') {
+        return reply.status(404).send({ error: e.message });
+      }
       throw e;
     }
   });
@@ -226,8 +229,13 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       );
       return reply.status(204).send();
     } catch (e) {
-      if (e instanceof Error && e.message.includes('default')) {
-        return reply.status(400).send({ error: e.message });
+      if (e instanceof Error) {
+        if (e.message === 'Dashboard not found') {
+          return reply.status(404).send({ error: e.message });
+        }
+        if (e.message.includes('default')) {
+          return reply.status(400).send({ error: e.message });
+        }
       }
       throw e;
     }
