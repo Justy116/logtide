@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { requireFullAccess } from '../auth/guards.js';
 import { usersService } from '../users/service.js';
 import { OrganizationsService } from '../organizations/service.js';
+import { projectsService } from '../projects/service.js';
 import { sourceMapsService } from './index.js';
 import { db } from '../../database/index.js';
 
@@ -175,6 +176,13 @@ export async function sourcemapsRoutes(fastify: FastifyInstance) {
           return reply.status(403).send({ error: 'Not a member of this organization' });
         }
 
+        // The projectId is untrusted - listMaps only filters by projectId, so
+        // without this check a member of one org could list another tenant's
+        // source maps by supplying a known foreign projectId.
+        if (!(await projectsService.projectBelongsToOrg(query.projectId, query.organizationId))) {
+          return reply.status(403).send({ error: 'Project does not belong to this organization' });
+        }
+
         const maps = await sourceMapsService.listMaps(query.projectId, query.release);
 
         return reply.send({ sourcemaps: maps });
@@ -233,6 +241,13 @@ export async function sourcemapsRoutes(fastify: FastifyInstance) {
         const isMember = await checkOrgMembership(request.user.id, query.organizationId);
         if (!isMember) {
           return reply.status(403).send({ error: 'Not a member of this organization' });
+        }
+
+        // The projectId is untrusted - deleteMaps only filters by projectId, so
+        // without this check a member of one org could delete another tenant's
+        // source maps by supplying a known foreign projectId.
+        if (!(await projectsService.projectBelongsToOrg(query.projectId, query.organizationId))) {
+          return reply.status(403).send({ error: 'Project does not belong to this organization' });
         }
 
         const deleted = await sourceMapsService.deleteMaps(query.projectId, params.release);

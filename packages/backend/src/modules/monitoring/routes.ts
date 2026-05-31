@@ -119,6 +119,12 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
     const input = parse.data;
     if (!(await checkOrgMembership(request.user.id, input.organizationId))) return reply.status(403).send({ error: 'Forbidden' });
 
+    // The projectId is untrusted - verify it belongs to the org so a member
+    // can't inject a monitor into another tenant's project / status page.
+    if (!(await projectsService.projectBelongsToOrg(input.projectId, input.organizationId))) {
+      return reply.status(403).send({ error: 'Project does not belong to this organization' });
+    }
+
     const monitor = await monitorService.createMonitor(input);
     return reply.status(201).send({ monitor });
   });

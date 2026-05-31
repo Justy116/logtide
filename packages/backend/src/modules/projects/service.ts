@@ -139,6 +139,25 @@ export class ProjectsService {
   }
 
   /**
+   * Check that a project exists and belongs to the given organization.
+   *
+   * Used to prevent cross-tenant access when a request supplies both an
+   * organizationId (membership-checked) and an untrusted projectId. Project
+   * UUIDs appear in dashboard URLs and client API calls, so they must never be
+   * treated as authorization tokens on their own.
+   */
+  async projectBelongsToOrg(projectId: string, organizationId: string): Promise<boolean> {
+    const row = await db
+      .selectFrom('projects')
+      .select('id')
+      .where('id', '=', projectId)
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+
+    return !!row;
+  }
+
+  /**
    * Get a project by ID
    */
   async getProjectById(projectId: string, userId: string): Promise<Project | null> {

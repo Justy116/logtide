@@ -133,6 +133,27 @@ describe('POST /api/v1/monitors', () => {
     });
     expect(res.statusCode).toBe(400);
   });
+
+  it('returns 403 when projectId belongs to another organization', async () => {
+    // Member of ctx.organization tries to inject a monitor into a foreign
+    // project, which would surface on that tenant's public status page.
+    const { createTestOrganization, createTestProject } = await import('../../helpers/factories.js');
+    const foreignOrg = await createTestOrganization();
+    const foreignProject = await createTestProject({ organizationId: foreignOrg.id });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/monitors',
+      headers: authHeaders(authToken),
+      payload: {
+        organizationId: ctx.organization.id,
+        projectId: foreignProject.id,
+        name: 'Injected',
+        type: 'heartbeat',
+      },
+    });
+    expect(res.statusCode).toBe(403);
+  });
 });
 
 describe('GET /api/v1/monitors', () => {
