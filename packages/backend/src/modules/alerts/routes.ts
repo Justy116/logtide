@@ -4,6 +4,7 @@ import { LOG_LEVELS, metadataFiltersSchema } from '@logtide/shared';
 import { alertsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
+import { projectsService } from '../projects/service.js';
 import { notificationChannelsService } from '../notification-channels/index.js';
 import { auditLogService } from '../audit-log/index.js';
 
@@ -169,6 +170,14 @@ export async function alertsRoutes(fastify: FastifyInstance) {
         });
       }
 
+      // Ensure the supplied project actually belongs to the organization.
+      // Org membership alone does not authorize an arbitrary projectId.
+      if (body.projectId && !(await projectsService.projectBelongsToOrg(body.projectId, body.organizationId))) {
+        return reply.status(403).send({
+          error: 'Project does not belong to this organization',
+        });
+      }
+
       const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, metadataFilters, ...alertData } = body;
       const alertRule = await alertsService.createAlertRule({
         ...alertData,
@@ -291,6 +300,15 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       if (!isMember) {
         return reply.status(403).send({
           error: 'You are not a member of this organization',
+        });
+      }
+
+      // Ensure the supplied project actually belongs to the organization.
+      // Without this check a user could preview another tenant's logs by
+      // pairing their own orgId with a known foreign projectId.
+      if (body.projectId && !(await projectsService.projectBelongsToOrg(body.projectId, body.organizationId))) {
+        return reply.status(403).send({
+          error: 'Project does not belong to this organization',
         });
       }
 

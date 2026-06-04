@@ -4,15 +4,21 @@ import isSafeRegex from 'safe-regex2';
 import type { Database } from '../../database/types.js';
 import type { IReservoir } from '@logtide/reservoir';
 import type { CheckResult, HttpConfig, ErrorCode } from './types.js';
+import { safeFetch, resolveAndValidateHost, SsrfBlockedError } from '../../utils/ssrf-guard.js';
 
 /**
  * HTTP/HTTPS health check.
  * Never surfaces raw error messages - maps all failures to sanitized error codes.
+ *
+ * allowPrivate lets self-hosted deployments monitor internal services; when
+ * false (default) the target and every redirect hop are validated against the
+ * SSRF guard before connecting.
  */
 export async function runHttpCheck(
   target: string,
   timeoutSeconds: number,
-  config: HttpConfig = {}
+  config: HttpConfig = {},
+  allowPrivate = false
 ): Promise<CheckResult> {
   const { method = 'GET', expectedStatus = 200, headers = {}, bodyAssertion } = config;
   const start = Date.now();
@@ -21,12 +27,15 @@ export async function runHttpCheck(
   const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
 
   try {
-    const response = await fetch(target, {
-      method,
-      headers: { 'User-Agent': 'LogTide-Monitor/1.0', ...headers },
-      signal: controller.signal,
-      redirect: 'follow',
-    });
+    const response = await safeFetch(
+      target,
+      {
+        method,
+        headers: { 'User-Agent': 'LogTide-Monitor/1.0', ...headers },
+        signal: controller.signal,
+      },
+      { allowPrivate }
+    );
 
     const responseTimeMs = Date.now() - start;
     const statusCode = response.status;
@@ -67,7 +76,9 @@ export async function runHttpCheck(
     const msg = err instanceof Error ? err.message : '';
     let errorCode: ErrorCode;
 
-    if (err instanceof Error && err.name === 'AbortError') {
+    if (err instanceof SsrfBlockedError) {
+      errorCode = 'blocked';
+    } else if (err instanceof Error && err.name === 'AbortError') {
       errorCode = 'timeout';
     } else if (msg.includes('ECONNREFUSED')) {
       errorCode = 'connection_refused';
@@ -87,15 +98,29 @@ export async function runHttpCheck(
 
 /**
  * TCP connectivity check - measures time to establish connection.
+ *
+ * The host is resolved and validated against the SSRF guard, then the socket is
+ * pinned to the validated address so a hostname can't rebind to an internal IP
+ * between validation and connect.
  */
-export function runTcpCheck(
+export async function runTcpCheck(
   host: string,
   port: number,
-  timeoutSeconds: number
+  timeoutSeconds: number,
+  allowPrivate = false
 ): Promise<CheckResult> {
+  const start = Date.now();
+
+  let connectHost: string;
+  try {
+    const [address] = await resolveAndValidateHost(host, allowPrivate);
+    connectHost = address;
+  } catch {
+    return { status: 'down', responseTimeMs: Date.now() - start, statusCode: null, errorCode: 'blocked' };
+  }
+
   return new Promise((resolve) => {
-    const start = Date.now();
-    const socket = createConnection({ host, port });
+    const socket = createConnection({ host: connectHost, port });
 
     const timer = setTimeout(() => {
       socket.destroy();

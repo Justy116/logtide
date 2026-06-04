@@ -230,6 +230,57 @@ describe('OidcProvider', () => {
             expect(result.name).toBe('Test User');
         });
 
+        it('should preserve full callback query params for authorizationCodeGrant', async () => {
+            await oidcProvider.handleCallback(
+                {
+                    code: 'auth-code',
+                    state: 'test-state',
+                    redirectUri: 'http://localhost/callback',
+                    codeVerifier: 'test-code-verifier',
+                    callbackQuery: {
+                        code: 'auth-code',
+                        state: 'test-state',
+                        iss: 'https://auth.example.eu',
+                        scope: 'openid email profile',
+                    },
+                },
+                'expected-nonce'
+            );
+
+            expect(mocks.mockAuthorizationCodeGrant).toHaveBeenCalledTimes(1);
+            const callbackUrl = mocks.mockAuthorizationCodeGrant.mock.calls[0][1] as URL;
+
+            expect(callbackUrl.searchParams.get('code')).toBe('auth-code');
+            expect(callbackUrl.searchParams.get('state')).toBe('test-state');
+            expect(callbackUrl.searchParams.get('iss')).toBe('https://auth.example.eu');
+            expect(callbackUrl.searchParams.get('scope')).toBe('openid email profile');
+        });
+
+        it('should collapse duplicated callback query params to a single value', async () => {
+            await oidcProvider.handleCallback(
+                {
+                    code: 'auth-code',
+                    state: 'test-state',
+                    redirectUri: 'http://localhost/callback',
+                    codeVerifier: 'test-code-verifier',
+                    callbackQuery: {
+                        code: 'auth-code',
+                        state: 'test-state',
+                        iss: ['https://auth.example.eu', 'https://evil.example.com'],
+                        error: undefined,
+                    },
+                },
+                'expected-nonce'
+            );
+
+            const callbackUrl = mocks.mockAuthorizationCodeGrant.mock.calls[0][1] as URL;
+
+            // Only the first value is kept, no duplicate iss reaches the token exchange.
+            expect(callbackUrl.searchParams.getAll('iss')).toEqual(['https://auth.example.eu']);
+            // Undefined params are skipped entirely.
+            expect(callbackUrl.searchParams.has('error')).toBe(false);
+        });
+
         it('should return error when claims are not available', async () => {
             mocks.mockAuthorizationCodeGrant.mockResolvedValueOnce({
                 claims: vi.fn().mockReturnValue(null),

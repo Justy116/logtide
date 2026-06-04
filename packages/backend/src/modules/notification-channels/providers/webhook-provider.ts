@@ -5,22 +5,8 @@
 
 import type { NotificationProvider, NotificationContext, DeliveryResult } from './interface.js';
 import type { WebhookChannelConfig, ChannelConfig } from '@logtide/shared';
-
-const BLOCKED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]', 'metadata.google.internal'];
-
-function isPrivateIP(hostname: string): boolean {
-  // Block link-local, loopback, and private ranges
-  if (BLOCKED_HOSTS.includes(hostname.toLowerCase())) return true;
-  const parts = hostname.split('.').map(Number);
-  if (parts.length !== 4 || parts.some(isNaN)) return false;
-  // 10.x.x.x, 172.16-31.x.x, 192.168.x.x, 169.254.x.x
-  if (parts[0] === 10) return true;
-  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
-  if (parts[0] === 192 && parts[1] === 168) return true;
-  if (parts[0] === 169 && parts[1] === 254) return true;
-  if (parts[0] === 127) return true;
-  return false;
-}
+import { safeFetch, SsrfBlockedError } from '../../../utils/ssrf-guard.js';
+import { config } from '../../../config/index.js';
 
 export class WebhookProvider implements NotificationProvider {
   readonly type = 'webhook' as const;
@@ -33,10 +19,6 @@ export class WebhookProvider implements NotificationProvider {
     const webhookConfig = channelConfig as WebhookChannelConfig;
 
     try {
-      const url = new URL(webhookConfig.url);
-      if (isPrivateIP(url.hostname)) {
-        return { success: false, error: 'Webhook URLs pointing to private/internal addresses are not allowed' };
-      }
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'User-Agent': 'LogTide/1.0',
@@ -61,12 +43,19 @@ export class WebhookProvider implements NotificationProvider {
 
       const payload = this.buildPayload(context);
 
-      const response = await fetch(webhookConfig.url, {
-        method: webhookConfig.method || 'POST',
-        headers,
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(10000), // 10s timeout
-      });
+      // safeFetch validates the URL (and every redirect hop) against the SSRF
+      // guard before connecting. Private/internal targets are rejected unless
+      // MONITOR_ALLOW_PRIVATE_TARGETS is set for self-hosted deployments.
+      const response = await safeFetch(
+        webhookConfig.url,
+        {
+          method: webhookConfig.method || 'POST',
+          headers,
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(10000), // 10s timeout
+        },
+        { allowPrivate: config.MONITOR_ALLOW_PRIVATE_TARGETS }
+      );
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
@@ -87,6 +76,9 @@ export class WebhookProvider implements NotificationProvider {
         },
       };
     } catch (error) {
+      if (error instanceof SsrfBlockedError) {
+        return { success: false, error: 'Webhook URLs pointing to private/internal addresses are not allowed' };
+      }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error(`[WebhookProvider] Failed: ${errorMessage}`);
       return { success: false, error: errorMessage };

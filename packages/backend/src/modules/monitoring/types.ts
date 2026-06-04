@@ -10,6 +10,7 @@ export type ErrorCode =
   | 'ssl_error'
   | 'http_error'
   | 'no_heartbeat'
+  | 'blocked'
   | 'unexpected';
 
 // Alias for the database JSONB shape - single source of truth in database/types.ts

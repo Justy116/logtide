@@ -16,6 +16,29 @@ vi.mock('nodemailer', () => ({
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
+// safeFetch normally resolves DNS, validates against the SSRF range check and
+// revalidates every redirect hop. In these unit tests we don't hit the network
+// or DNS: re-run the real IP-range check for IP-literal hosts so the SSRF-block
+// assertions stay meaningful, treat hostnames as external, and delegate the
+// actual request to the mocked global.fetch (with the original string URL, which
+// the payload/header assertions rely on). Full DNS + redirect-hop coverage lives
+// in ssrf-guard.test.ts. SsrfBlockedError stays the real class.
+vi.mock('../../../utils/ssrf-guard.js', async (importOriginal) => {
+    const actual: any = await importOriginal();
+    const { isIP } = await import('net');
+    return {
+        ...actual,
+        safeFetch: async (rawUrl: string, init: any) => {
+            const raw = new URL(rawUrl).hostname;
+            const host = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
+            if (isIP(host) && actual.isBlockedAddress(host)) {
+                throw new actual.SsrfBlockedError(`Target address ${host} is in a blocked range`);
+            }
+            return (global.fetch as any)(rawUrl, init);
+        },
+    };
+});
+
 // Mock alertsService
 vi.mock('../../../modules/alerts/index.js', () => ({
     alertsService: {

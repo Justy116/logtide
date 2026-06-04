@@ -20,6 +20,7 @@ import type {
 } from './types.js';
 import { runHttpCheck, runTcpCheck, runHeartbeatCheck, runLogHeartbeatCheck, parseTcpTarget } from './checker.js';
 import { reservoir } from '../../database/reservoir.js';
+import { config } from '../../config/index.js';
 
 const MAX_CONCURRENT_CHECKS = 20;
 
@@ -510,11 +511,12 @@ export class MonitorService {
     const httpConfig: HttpConfig = (monitor.httpConfig as HttpConfig) ?? {};
 
     try {
+      const allowPrivate = config.MONITOR_ALLOW_PRIVATE_TARGETS;
       if (monitor.type === 'http') {
-        result = await runHttpCheck(monitor.target!, monitor.timeoutSeconds, httpConfig);
+        result = await runHttpCheck(monitor.target!, monitor.timeoutSeconds, httpConfig, allowPrivate);
       } else if (monitor.type === 'tcp') {
         const { host, port } = parseTcpTarget(monitor.target!);
-        result = await runTcpCheck(host, port, monitor.timeoutSeconds);
+        result = await runTcpCheck(host, port, monitor.timeoutSeconds, allowPrivate);
       } else if (monitor.type === 'log_heartbeat') {
         const graceSeconds = monitor.gracePeriodSeconds ?? Math.round(monitor.intervalSeconds * 1.5);
         result = await runLogHeartbeatCheck(monitor.target!, monitor.projectId, graceSeconds, reservoir);

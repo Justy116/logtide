@@ -88,7 +88,7 @@
         projectsAPI.getProjectDataAvailability($currentOrganization.id).catch(() => null),
       ]);
       const metricsProjectIds = availability?.metrics;
-      projects = metricsProjectIds
+      projects = metricsProjectIds && metricsProjectIds.length > 0
         ? res.projects.filter((p) => metricsProjectIds.includes(p.id))
         : res.projects;
       if (projects.length > 0 && !selectedProject) {

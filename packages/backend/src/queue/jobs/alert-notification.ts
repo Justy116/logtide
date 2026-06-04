@@ -5,6 +5,7 @@ import { db } from '../../database/connection.js';
 import nodemailer from 'nodemailer';
 import { config } from '../../config/index.js';
 import { generateAlertEmail, getFrontendUrl } from '../../lib/email-templates.js';
+import { safeFetch, SsrfBlockedError } from '../../utils/ssrf-guard.js';
 import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
 export interface AlertNotificationData {
@@ -213,58 +214,51 @@ async function sendEmailNotification(data: AlertNotificationData & { organizatio
   console.log(`Email sent to: ${data.email_recipients.join(', ')}`);
 }
 
-const BLOCKED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '[::1]', 'metadata.google.internal'];
-
-function isPrivateIP(hostname: string): boolean {
-  if (BLOCKED_HOSTS.includes(hostname.toLowerCase())) return true;
-  const parts = hostname.split('.').map(Number);
-  if (parts.length !== 4 || parts.some(isNaN)) return false;
-  if (parts[0] === 10) return true;
-  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
-  if (parts[0] === 192 && parts[1] === 168) return true;
-  if (parts[0] === 169 && parts[1] === 254) return true;
-  if (parts[0] === 127) return true;
-  return false;
-}
-
 async function sendWebhookNotification(data: AlertNotificationData) {
   if (!data.webhook_url) return;
 
-  // SSRF protection
+  const frontendUrl = getFrontendUrl();
+
+  // SSRF protection: route delivery through the centralized outbound guard
+  // (safeFetch resolves the host, rejects loopback/private/link-local/CGNAT/
+  // reserved IPv4+IPv6 ranges, and revalidates every redirect hop), matching
+  // the WebhookProvider. The same MONITOR_ALLOW_PRIVATE_TARGETS opt-in governs
+  // both paths so self-hosted deployments can still target internal endpoints.
+  let response: Response;
   try {
-    const url = new URL(data.webhook_url);
-    if (isPrivateIP(url.hostname)) {
+    response = await safeFetch(
+      data.webhook_url,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'LogTide/1.0',
+        },
+        body: JSON.stringify({
+          event_type: data.baseline_metadata ? 'anomaly' : 'alert',
+          alert_name: data.rule_name,
+          log_count: data.log_count,
+          threshold: data.threshold,
+          time_window: data.time_window,
+          organization_id: data.organization_id,
+          project_id: data.project_id,
+          baseline_metadata: data.baseline_metadata || null,
+          link: `${frontendUrl}/dashboard/alerts`,
+          timestamp: new Date().toISOString(),
+        }),
+        signal: AbortSignal.timeout(10000),
+      },
+      { allowPrivate: config.MONITOR_ALLOW_PRIVATE_TARGETS }
+    );
+  } catch (e) {
+    if (e instanceof SsrfBlockedError) {
       throw new Error('Webhook URLs pointing to private/internal addresses are not allowed');
     }
-  } catch (e) {
     if (e instanceof TypeError) {
       throw new Error(`Invalid webhook URL: ${data.webhook_url}`);
     }
     throw e;
   }
-
-  const frontendUrl = getFrontendUrl();
-
-  const response = await fetch(data.webhook_url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'LogTide/1.0',
-    },
-    body: JSON.stringify({
-      event_type: data.baseline_metadata ? 'anomaly' : 'alert',
-      alert_name: data.rule_name,
-      log_count: data.log_count,
-      threshold: data.threshold,
-      time_window: data.time_window,
-      organization_id: data.organization_id,
-      project_id: data.project_id,
-      baseline_metadata: data.baseline_metadata || null,
-      link: `${frontendUrl}/dashboard/alerts`,
-      timestamp: new Date().toISOString(),
-    }),
-    signal: AbortSignal.timeout(10000),
-  });
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => '');

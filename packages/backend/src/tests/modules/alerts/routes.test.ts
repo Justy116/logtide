@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterAll, beforeAll } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
 import { db } from '../../../database/index.js';
 import { alertsRoutes } from '../../../modules/alerts/routes.js';
-import { createTestContext, createTestUser, createTestAlertRule } from '../../helpers/factories.js';
+import { createTestContext, createTestUser, createTestAlertRule, createTestOrganization, createTestProject } from '../../helpers/factories.js';
 import crypto from 'crypto';
 
 // Helper to create a session for a user
@@ -135,6 +135,31 @@ describe('Alerts Routes', () => {
                 payload: {
                     organizationId: testOrganization.id,
                     name: 'Test Alert',
+                    level: ['error'],
+                    threshold: 10,
+                    timeWindow: 5,
+                    emailRecipients: ['test@example.com'],
+                },
+            });
+
+            expect(response.statusCode).toBe(403);
+        });
+
+        it('should return 403 when projectId belongs to another organization', async () => {
+            // Attacker is a member of testOrganization but supplies a foreign project UUID
+            const foreignOrg = await createTestOrganization();
+            const foreignProject = await createTestProject({ organizationId: foreignOrg.id });
+
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/alerts',
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+                payload: {
+                    organizationId: testOrganization.id,
+                    projectId: foreignProject.id,
+                    name: 'Cross-tenant Alert',
                     level: ['error'],
                     threshold: 10,
                     timeWindow: 5,
@@ -483,6 +508,32 @@ describe('Alerts Routes', () => {
             });
 
             expect(response.statusCode).toBe(401);
+        });
+
+        it('should return 403 when projectId belongs to another organization', async () => {
+            // Cross-tenant log disclosure: member of testOrganization tries to
+            // preview a foreign project's logs by pairing their orgId with a
+            // known foreign projectId.
+            const foreignOrg = await createTestOrganization();
+            const foreignProject = await createTestProject({ organizationId: foreignOrg.id });
+
+            const response = await app.inject({
+                method: 'POST',
+                url: '/api/v1/alerts/preview',
+                headers: {
+                    Authorization: `Bearer ${authToken}`,
+                },
+                payload: {
+                    organizationId: testOrganization.id,
+                    projectId: foreignProject.id,
+                    level: ['error'],
+                    threshold: 10,
+                    timeWindow: 5,
+                    previewRange: '1d',
+                },
+            });
+
+            expect(response.statusCode).toBe(403);
         });
 
         it('should accept different preview ranges', async () => {

@@ -140,7 +140,7 @@
         projectsAPI.getProjectDataAvailability($currentOrganization.id).catch(() => null),
       ]);
       const tracesProjectIds = availability?.traces;
-      projects = tracesProjectIds
+      projects = tracesProjectIds && tracesProjectIds.length > 0
         ? res.projects.filter((p) => tracesProjectIds.includes(p.id))
         : res.projects;
       if (projects.length > 0 && !selectedProject) {

@@ -3,6 +3,17 @@ import { EmailProvider } from '../../../modules/notification-channels/providers/
 import { WebhookProvider } from '../../../modules/notification-channels/providers/webhook-provider.js';
 import type { NotificationContext } from '../../../modules/notification-channels/providers/interface.js';
 
+// safeFetch normally resolves DNS + validates; in tests delegate straight to
+// the mocked global.fetch so existing payload/header assertions hold without
+// hitting the network. SsrfBlockedError stays the real class.
+vi.mock('../../../utils/ssrf-guard.js', async (importOriginal) => {
+  const actual: any = await importOriginal();
+  return {
+    ...actual,
+    safeFetch: (url: string, init: any) => (global.fetch as any)(url, init),
+  };
+});
+
 describe('EmailProvider', () => {
   let provider: EmailProvider;
 
@@ -315,6 +326,24 @@ describe('WebhookProvider', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('Network error');
+    });
+
+    it('should block webhooks pointing at internal addresses', async () => {
+      const { SsrfBlockedError } = await import('../../../utils/ssrf-guard.js');
+      global.fetch = vi.fn().mockRejectedValue(new SsrfBlockedError('blocked'));
+
+      const context: NotificationContext = {
+        organizationId: 'org-123',
+        organizationName: 'Test Org',
+        eventType: 'alert',
+        title: 'Test',
+        message: 'Test',
+      };
+
+      const result = await provider.send(context, { url: 'http://169.254.169.254/' });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('private/internal');
     });
   });
 

@@ -3,7 +3,7 @@ import Fastify, { FastifyInstance } from 'fastify';
 import crypto from 'node:crypto';
 import { db } from '../../../database/index.js';
 import { sourcemapsRoutes } from '../../../modules/sourcemaps/routes.js';
-import { createTestContext } from '../../helpers/factories.js';
+import { createTestContext, createTestOrganization, createTestProject } from '../../helpers/factories.js';
 
 /**
  * Build a multipart/form-data body buffer.
@@ -262,6 +262,20 @@ describe('Sourcemaps Routes', () => {
             expect(parsed.sourcemaps).toEqual([]);
         });
 
+        it('returns 403 when projectId belongs to another organization', async () => {
+            // Member of testOrganization supplies a foreign projectId to read
+            // another tenant's source maps.
+            const foreignOrg = await createTestOrganization();
+            const foreignProject = await createTestProject({ organizationId: foreignOrg.id });
+
+            const res = await app.inject({
+                method: 'GET',
+                url: `/api/v1/sourcemaps?organizationId=${testOrganization.id}&projectId=${foreignProject.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+            expect(res.statusCode).toBe(403);
+        });
+
         it('returns 200 with maps filtered by release', async () => {
             const res = await app.inject({
                 method: 'GET',
@@ -296,6 +310,18 @@ describe('Sourcemaps Routes', () => {
                 method: 'DELETE',
                 url: `/api/v1/sourcemaps/1.0.0?organizationId=${otherCtx.organization.id}&projectId=${otherCtx.project.id}`,
                 headers: { Authorization: `Bearer ${otherSession.token}` },
+            });
+            expect(res.statusCode).toBe(403);
+        });
+
+        it('returns 403 when projectId belongs to another organization', async () => {
+            const foreignOrg = await createTestOrganization();
+            const foreignProject = await createTestProject({ organizationId: foreignOrg.id });
+
+            const res = await app.inject({
+                method: 'DELETE',
+                url: `/api/v1/sourcemaps/1.0.0?organizationId=${testOrganization.id}&projectId=${foreignProject.id}`,
+                headers: { Authorization: `Bearer ${authToken}` },
             });
             expect(res.statusCode).toBe(403);
         });

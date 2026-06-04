@@ -439,7 +439,7 @@
         projectsAPI.getProjectDataAvailability($currentOrganization.id).catch(() => null),
       ]);
       const logsProjectIds = availability?.logs;
-      projects = logsProjectIds
+      projects = logsProjectIds && logsProjectIds.length > 0
         ? response.projects.filter((p) => logsProjectIds.includes(p.id))
         : response.projects;
 
