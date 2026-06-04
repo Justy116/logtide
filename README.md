@@ -6,7 +6,7 @@
   </p>
 
   <p>
-    <a href="https://logtide.dev"><strong>☁️ Try Cloud (Free Alpha)</strong></a> •
+    <a href="https://logtide.dev"><strong>☁️ Try Cloud (Free Beta)</strong></a> •
     <a href="#self-hosting">Self-Host</a> •
     <a href="#sdks--integrations">SDKs</a> •
     <a href="https://logtide.dev/docs">Docs</a>
@@ -16,9 +16,9 @@
   <a href="https://codecov.io/gh/logtide-dev/logtide"><img src="https://codecov.io/gh/logtide-dev/logtide/branch/main/graph/badge.svg" alt="Coverage"></a>
   <a href="https://hub.docker.com/r/logtide/backend"><img src="https://img.shields.io/docker/v/logtide/backend?label=docker&logo=docker" alt="Docker"></a>
   <a href="https://artifacthub.io/packages/helm/logtide/logtide"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/logtide" alt="Artifact Hub"></a>
-  <img src="https://img.shields.io/badge/version-0.9.7-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License">
-  <img src="https://img.shields.io/badge/status-stable_alpha-success.svg" alt="Status">
+  <img src="https://img.shields.io/badge/status-beta-success.svg" alt="Status">
 </div>
 
 <br />
@@ -124,7 +124,7 @@ We host it for you. Perfect for testing. [**Sign up at logtide.dev**](https://lo
 
 ---
 
-## ✨ Core Features (v0.9.7)
+## ✨ Core Features (v1.0.0)
 
 ### 🆕 New in 0.9.1
 * 🩺 **Uptime Monitoring & Status Pages:** HTTP/TCP/heartbeat monitors with configurable thresholds, auto-created SIEM incidents on failure, scheduled maintenances, and public Uptime-Kuma-style status pages per project.

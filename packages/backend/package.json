@@ -1,6 +1,6 @@
 {
   "name": "@logtide/backend",
-  "version": "0.9.7",
+  "version": "1.0.0",
   "private": true,
   "description": "LogTide Backend API",
   "type": "module",
