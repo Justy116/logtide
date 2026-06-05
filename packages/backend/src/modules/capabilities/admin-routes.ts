@@ -10,6 +10,7 @@ import {
   isKnownCapability,
   type CapabilityName,
 } from '../../capabilities/index.js';
+import { auditLogService } from '../audit-log/index.js';
 
 const entitlementInputSchema = z.object({
   capability: z.string(),
@@ -112,6 +113,19 @@ export async function adminEntitlementsRoutes(fastify: FastifyInstance) {
         }
 
         capabilities.invalidate(id);
+
+        auditLogService.log({
+          organizationId: id,
+          userId: (request as any).user?.id,
+          userEmail: (request as any).user?.email,
+          action: 'update_entitlements',
+          category: 'config_change',
+          resourceType: 'organization_entitlement',
+          resourceId: id,
+          ipAddress: request.ip,
+          userAgent: request.headers['user-agent'],
+          metadata: { entitlements: body.entitlements },
+        });
 
         return reply.send({ message: 'Entitlements updated', updated: rows.length });
       } catch (error: unknown) {
