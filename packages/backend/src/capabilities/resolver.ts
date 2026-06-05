@@ -109,7 +109,8 @@ export class DbCapabilityResolver implements CapabilityResolver {
   }
 
   async list(organizationId: string): Promise<Record<CapabilityName, EntitlementValue>> {
-    return this.load(organizationId);
+    // Shallow copy: callers must not be able to mutate the cached map.
+    return { ...(await this.load(organizationId)) };
   }
 
   invalidate(organizationId: string): void {
