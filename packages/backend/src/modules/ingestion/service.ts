@@ -10,6 +10,7 @@ import { correlationService, type IdentifierMatch } from '../correlation/service
 import { piiMaskingService } from '../pii-masking/service.js';
 import { projectsService } from '../projects/service.js';
 import { extractHostname } from './routes.js';
+import { recordLogIngestion } from '../metering/index.js';
 
 /**
  * Remove null characters (\u0000) that PostgreSQL doesn't support in text fields.
@@ -156,6 +157,16 @@ export class IngestionService {
     notificationPublisher.publishLogIngestion(projectId, logIds).catch((err) => {
       console.error('[Ingestion] Failed to publish notification:', err);
     });
+
+    // Record resource usage (#212). Fire-and-forget, never blocks ingestion.
+    if (organizationId) {
+      recordLogIngestion({
+        logs,
+        eventCount: insertedLogs.length,
+        organizationId,
+        projectId,
+      });
+    }
 
     return insertedLogs.length;
   }
