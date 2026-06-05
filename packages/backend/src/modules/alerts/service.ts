@@ -173,6 +173,16 @@ export class AlertsService {
     return this.mapAlertRule(alertRule);
   }
 
+  /** Count alert rules for an org (used for the alerts.max_rules capability check). */
+  async countAlertRules(organizationId: string): Promise<number> {
+    const row = await db
+      .selectFrom('alert_rules')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
+  }
+
   /**
    * Get all alert rules for an organization
    */
