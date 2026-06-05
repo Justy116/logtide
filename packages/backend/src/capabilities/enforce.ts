@@ -1,7 +1,8 @@
 import { context } from '@logtide/shared/context';
 import { capabilities } from './facade.js';
-import { CapabilityError } from './errors.js';
+import { CapabilityError, QuotaExceededError } from './errors.js';
 import type { CapabilityName } from './registry.js';
+import { quotaFlagCache } from './quota-cache.js';
 
 /** Read the current org from request context, or throw a clear developer error. */
 function currentOrgId(): string {
@@ -46,6 +47,25 @@ export async function assertWithinLimit(
     throw new CapabilityError(
       `capability.${capability}.limit_reached`,
       `Limit reached for '${capability}' (${currentCount}/${limit})`,
+      capability
+    );
+  }
+}
+
+/**
+ * Metered usage quota. Takes no count and does NOT read the DB: it consults the
+ * in-memory over-quota flag maintained by the QuotaEvaluator (so the ingestion
+ * hot path is a cheap map lookup). No-op when the configured limit is null
+ * (unlimited). Throws QuotaExceededError (429) when the org is flagged over quota.
+ */
+export async function assertWithinUsageQuota(capability: CapabilityName): Promise<void> {
+  const orgId = currentOrgId();
+  const limit = await capabilities.getLimit(orgId, capability);
+  if (limit === null) return; // unlimited -> never blocks
+  if (quotaFlagCache.isOverQuota(orgId, capability)) {
+    throw new QuotaExceededError(
+      `capability.${capability}.exceeded`,
+      `Usage quota exceeded for '${capability}'`,
       capability
     );
   }
