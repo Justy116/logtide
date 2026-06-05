@@ -61,6 +61,11 @@ const configSchema = z.object({
   CACHE_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   CACHE_TTL: z.string().default('60').transform(Number), // Default TTL in seconds
 
+  // Metering / resource usage tracking (#212)
+  METERING_ENABLED: z.string().default('true').transform((val) => val === 'true'),
+  METERING_FLUSH_INTERVAL_MS: z.string().default('5000').transform(Number),
+  METERING_FLUSH_MAX_BUFFER: z.string().default('500').transform(Number),
+
   // Outbound SSRF guard. By default, HTTP/TCP monitors and webhook delivery
   // reject loopback/private/link-local/reserved targets. Self-hosted
   // deployments that legitimately monitor internal services can opt in.

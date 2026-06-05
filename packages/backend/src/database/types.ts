@@ -64,6 +64,19 @@ export interface LogsTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface MeteringEventsTable {
+  time: Generated<Timestamp>;
+  organization_id: string;
+  project_id: string | null;
+  type: string;
+  quantity: number;
+  metadata: ColumnType<
+    Record<string, unknown> | null,
+    Record<string, unknown> | null,
+    Record<string, unknown> | null
+  >;
+}
+
 export interface UsersTable {
   id: Generated<string>;
   email: string;
@@ -1129,4 +1142,6 @@ export interface Database {
   // Digest email reports
   digest_configs: DigestConfigsTable;
   digest_recipients: DigestRecipientsTable;
+  // Resource usage metering (#212)
+  metering_events: MeteringEventsTable;
 }
