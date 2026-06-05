@@ -38,6 +38,8 @@ export function recordLogIngestion(params: {
 
 export { MeteringRecorder } from './recorder.js';
 export { meteringService, MeteringService } from './service.js';
+export { getUsageBreakdown } from './breakdown.js';
+export type { UsageBreakdown, UsageBreakdownParams, ProjectUsage, TypeUsage, ValueCount } from './breakdown.js';
 export type { MeteringEvent, MeteringEventType } from './types.js';
 export type { UsageAggregateParams, UsageGroupBy, UsageRow } from './service.js';
 export { usageRoutes } from './routes.js';
