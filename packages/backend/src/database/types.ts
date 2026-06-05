@@ -77,6 +77,15 @@ export interface MeteringEventsTable {
   >;
 }
 
+// Per-organization feature entitlements (#214)
+export interface OrganizationEntitlementsTable {
+  organization_id: string;
+  capability: string;
+  enabled: boolean | null;
+  limit_value: number | null;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface UsersTable {
   id: Generated<string>;
   email: string;
@@ -1144,4 +1153,6 @@ export interface Database {
   digest_recipients: DigestRecipientsTable;
   // Resource usage metering (#212)
   metering_events: MeteringEventsTable;
+  // Per-organization feature entitlements (#214)
+  organization_entitlements: OrganizationEntitlementsTable;
 }
