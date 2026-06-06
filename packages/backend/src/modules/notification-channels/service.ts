@@ -554,7 +554,7 @@ export class NotificationChannelsService {
       }
 
       try {
-        const result = await provider.send(context, channel.config as ChannelConfig);
+        const result = await provider.send({ ...context, channelId: channel.id }, channel.config as ChannelConfig);
         results.set(channel.id, result);
       } catch (error) {
         results.set(channel.id, {
