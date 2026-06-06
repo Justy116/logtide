@@ -9,7 +9,7 @@ import { meteringService } from './service.js';
  * a persisted `storage.snapshot` metering event per (org, project).
  *
  * The estimate is *logical bytes ingested within the org's retention window*
- * (SUM of logs.ingested.bytes over [now - retention_days, now], read from
+ * (SUM of logs.ingested.bytes over [now - retention_days, now), read from
  * metering_events). It deliberately never queries the reservoir: identical
  * behavior on every storage engine, no full-table scans. It ignores
  * compression and manual deletions by design (gauge of logical data volume).
