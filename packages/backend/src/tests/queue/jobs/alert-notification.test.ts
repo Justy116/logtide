@@ -686,6 +686,7 @@ describe('Alert Notification Job', () => {
                     organizationId: ctx.organizationId,
                     targetHost: ctx.targetHost,
                     channelId: ctx.channelId,
+                    url: ctx.url,
                 };
                 ctx.headers['X-Injected'] = 'yes';
             });
@@ -707,7 +708,8 @@ describe('Alert Notification Job', () => {
 
             expect(seen).not.toBeNull();
             expect(seen.targetHost).toBe('example.com');
-            expect(seen.ruleId).toBeTruthy();
+            expect(seen.ruleId).toBe(jobData.rule_id);
+            expect(seen.url).toBe('https://example.com/legacy-hook');
             expect(seen.organizationId).toBe(organization.id);
             expect(seen.channelId).toBeUndefined();
             expect(mockFetch).toHaveBeenCalledTimes(1);

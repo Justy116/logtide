@@ -241,11 +241,17 @@ async function sendWebhookNotification(data: AlertNotificationData) {
   // A rejection (or broken hook) propagates and is recorded as a delivery
   // failure by the caller; the HTTP call never happens.
   if (hooks.hasHandlers('beforeWebhookDispatch')) {
+    let targetHost: string;
+    try {
+      targetHost = new URL(data.webhook_url).hostname;
+    } catch {
+      throw new Error(`Invalid webhook URL: ${data.webhook_url}`);
+    }
     await hooks.run('beforeWebhookDispatch', {
       organizationId: data.organization_id,
       ruleId: data.rule_id,
       url: data.webhook_url,
-      targetHost: new URL(data.webhook_url).hostname,
+      targetHost,
       headers,
       body,
     });

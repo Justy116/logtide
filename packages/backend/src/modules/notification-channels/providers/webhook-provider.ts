@@ -48,12 +48,18 @@ export class WebhookProvider implements NotificationProvider {
       // call. headers/body are mutable; url stays readonly (safeFetch still
       // SSRF-validates regardless).
       if (hooks.hasHandlers('beforeWebhookDispatch')) {
+        let targetHost: string;
+        try {
+          targetHost = new URL(webhookConfig.url).hostname;
+        } catch {
+          return { success: false, error: 'Invalid webhook configuration' };
+        }
         try {
           await hooks.run('beforeWebhookDispatch', {
             organizationId: context.organizationId || null,
             channelId: context.channelId,
             url: webhookConfig.url,
-            targetHost: new URL(webhookConfig.url).hostname,
+            targetHost,
             headers,
             body: payload,
           });
