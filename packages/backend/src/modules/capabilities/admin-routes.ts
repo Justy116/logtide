@@ -87,30 +87,32 @@ export async function adminEntitlementsRoutes(fastify: FastifyInstance) {
     '/organizations/:id/entitlements',
     { preHandler: [requireAdmin], config: { rateLimit: rateLimitConfig } },
     async (request, reply) => {
+      const { id } = request.params as { id: string };
+      let rows: ReturnType<typeof toUpsertRow>[] = [];
       try {
-        const { id } = request.params as { id: string };
         const body = putBodySchema.parse(request.body);
+        rows = body.entitlements.map((e) => toUpsertRow(id, e));
 
-        const rows = body.entitlements.map((e) => toUpsertRow(id, e));
-
-        for (const row of rows) {
-          await db
-            .insertInto('organization_entitlements')
-            .values({
-              organization_id: row.organization_id,
-              capability: row.capability,
-              enabled: row.enabled,
-              limit_value: row.limit_value,
-            })
-            .onConflict((oc) =>
-              oc.columns(['organization_id', 'capability']).doUpdateSet({
+        await db.transaction().execute(async (trx) => {
+          for (const row of rows) {
+            await trx
+              .insertInto('organization_entitlements')
+              .values({
+                organization_id: row.organization_id,
+                capability: row.capability,
                 enabled: row.enabled,
                 limit_value: row.limit_value,
-                updated_at: sql`NOW()`,
               })
-            )
-            .execute();
-        }
+              .onConflict((oc) =>
+                oc.columns(['organization_id', 'capability']).doUpdateSet({
+                  enabled: row.enabled,
+                  limit_value: row.limit_value,
+                  updated_at: sql`NOW()`,
+                })
+              )
+              .execute();
+          }
+        });
 
         capabilities.invalidate(id);
 
@@ -124,11 +126,12 @@ export async function adminEntitlementsRoutes(fastify: FastifyInstance) {
           resourceId: id,
           ipAddress: request.ip,
           userAgent: request.headers['user-agent'],
-          metadata: { entitlements: body.entitlements },
+          metadata: { entitlements: rows.map((r) => ({ capability: r.capability, enabled: r.enabled, limitValue: r.limit_value })) },
         });
 
         return reply.send({ message: 'Entitlements updated', updated: rows.length });
       } catch (error: unknown) {
+        capabilities.invalidate(id);
         if (error instanceof z.ZodError) {
           return reply.status(400).send({ error: 'Validation error', details: error.errors });
         }
