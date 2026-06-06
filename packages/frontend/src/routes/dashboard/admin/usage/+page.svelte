@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { adminAPI, type OrganizationBasic } from '$lib/api/admin';
-    import { getUsage, getUsageBreakdown, type UsageRecord, type UsageBreakdown } from '$lib/api/usage';
+    import { getUsage, getUsageBreakdown, getStorageUsage, type UsageRecord, type UsageBreakdown, type StorageUsageResponse } from '$lib/api/usage';
     import {
         Card,
         CardContent,
@@ -46,6 +46,7 @@
     let byDayEvents = $state<UsageRecord[]>([]);
     let byDayBytes = $state<UsageRecord[]>([]);
     let breakdown = $state<UsageBreakdown | null>(null);
+    let storage = $state<StorageUsageResponse | null>(null);
 
     onMount(async () => {
         orgsLoading = true;
@@ -66,6 +67,7 @@
     $effect(() => {
         if (selectedOrgId) {
             // Depend on selectedDays so re-runs when range changes too
+            storage = null;
             void load(selectedOrgId, selectedDays);
         }
     });
@@ -74,19 +76,22 @@
         if (!orgId) return;
         loading = true;
         error = '';
+        storage = null;
         try {
             const to = new Date().toISOString();
             const from = new Date(Date.now() - days * 86_400_000).toISOString();
 
-            const [dayEvt, dayByt, bd] = await Promise.all([
+            const [dayEvt, dayByt, bd, stor] = await Promise.all([
                 getUsage({ organizationId: orgId, from, to, groupBy: 'day', type: 'logs.ingested.events' }),
                 getUsage({ organizationId: orgId, from, to, groupBy: 'day', type: 'logs.ingested.bytes' }),
                 getUsageBreakdown({ organizationId: orgId, from, to }),
+                getStorageUsage({ organizationId: orgId, from, to }).catch(() => null),
             ]);
 
             byDayEvents = dayEvt.usage;
             byDayBytes = dayByt.usage;
             breakdown = bd.breakdown;
+            storage = stor;
         } catch (e) {
             error = e instanceof Error ? e.message : 'Failed to load usage data';
         } finally {
@@ -212,7 +217,7 @@
         {/if}
 
         <!-- Summary cards -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Card>
                 <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
                     <CardTitle class="text-sm font-medium">Events ingested</CardTitle>
@@ -248,7 +253,61 @@
                     {/if}
                 </CardContent>
             </Card>
+
+            <Card>
+                <CardHeader class="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <CardTitle class="text-sm font-medium">Current storage (estimated)</CardTitle>
+                    <BarChart3 class="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                    {#if loading}
+                        <Spinner size="sm" />
+                    {:else}
+                        <div class="text-2xl font-bold">{storage ? formatBytes(storage.current) : '—'}</div>
+                        <p class="text-xs text-muted-foreground mt-1">
+                            Logical bytes within retention · daily snapshot
+                        </p>
+                    {/if}
+                </CardContent>
+            </Card>
         </div>
+
+        <!-- Storage trend -->
+        <Card>
+            <CardHeader class="pb-3">
+                <CardTitle class="text-base">Storage trend (estimated)</CardTitle>
+                <CardDescription>Daily storage snapshot within retention window</CardDescription>
+            </CardHeader>
+            <CardContent class="p-0">
+                {#if loading}
+                    <div class="flex justify-center py-10"><Spinner /></div>
+                {:else if !storage || storage.series.length === 0}
+                    <div class="py-12 text-center">
+                        <BarChart3 class="mx-auto h-10 w-10 text-muted-foreground/40" />
+                        <p class="mt-3 text-sm text-muted-foreground">No storage data for this period.</p>
+                    </div>
+                {:else}
+                    <div class="overflow-x-auto">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Date</TableHead>
+                                    <TableHead class="text-right">Storage</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {#each [...storage.series].sort((a, b) => b.bucket.localeCompare(a.bucket)) as row (row.bucket)}
+                                    <TableRow>
+                                        <TableCell class="text-sm">{formatDate(row.bucket)}</TableCell>
+                                        <TableCell class="text-right font-mono text-sm">{formatBytes(row.quantity)}</TableCell>
+                                    </TableRow>
+                                {/each}
+                            </TableBody>
+                        </Table>
+                    </div>
+                {/if}
+            </CardContent>
+        </Card>
 
         <!-- By event type (metering signal) -->
         <Card>
