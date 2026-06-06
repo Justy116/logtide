@@ -88,6 +88,7 @@ export async function usageRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
+      // current is the all-time latest gauge (not bounded by from/to); stale values decay to 0 via the snapshot job's zero-decay pass.
       const [current, series] = await Promise.all([
         meteringService.latestPointInTime(q.organizationId, 'storage.snapshot'),
         meteringService.storageSeries(q.organizationId, new Date(q.from), new Date(q.to)),
