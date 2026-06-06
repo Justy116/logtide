@@ -21,13 +21,14 @@ export class StorageSnapshotJob {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
 
-  /** Orgs worth snapshotting: those with any ingestion history. */
+  /** Orgs worth snapshotting: any ingestion history, plus orgs with existing
+   *  snapshots (so stale gauges keep decaying after ingestion data ages out). */
   private async activeOrgIds(): Promise<string[]> {
     const rows = await db
       .selectFrom('metering_events')
       .select('organization_id')
       .distinct()
-      .where('type', '=', 'logs.ingested.bytes')
+      .where('type', 'in', ['logs.ingested.bytes', 'storage.snapshot'])
       .execute();
     return rows.map((r) => r.organization_id);
   }
@@ -61,6 +62,34 @@ export class StorageSnapshotJob {
         projectId: row.project_id,
       });
     }
+
+    // Zero-decay: a project absent from the current window but whose latest
+    // snapshot is nonzero must be snapshotted to 0, otherwise the gauge (and
+    // the storage.max_bytes block) would stay frozen at the last value forever.
+    // Once the latest snapshot is 0 we stop recording, so dead projects do not
+    // accumulate endless zero rows.
+    const currentProjects = new Set(rows.map((r) => r.project_id));
+    const previous = await db
+      .selectFrom('metering_events')
+      .select(['project_id', 'quantity'])
+      .distinctOn('project_id')
+      .where('organization_id', '=', organizationId)
+      .where('type', '=', 'storage.snapshot')
+      .orderBy('project_id')
+      .orderBy('time', 'desc')
+      .execute();
+
+    for (const prev of previous) {
+      if (!prev.project_id || currentProjects.has(prev.project_id)) continue;
+      if (Number(prev.quantity) > 0) {
+        metering.record({
+          type: 'storage.snapshot',
+          quantity: 0,
+          organizationId,
+          projectId: prev.project_id,
+        });
+      }
+    }
   }
 
   /** One full pass. Exposed for tests and for the interval tick. */
@@ -78,7 +107,7 @@ export class StorageSnapshotJob {
   }
 
   start(): void {
-    if (this.timer || !config.STORAGE_SNAPSHOT_ENABLED) return;
+    if (this.timer || !config.STORAGE_SNAPSHOT_ENABLED || !config.METERING_ENABLED) return;
     const tick = () => {
       void context.runAsSystem('cron:storage-snapshot', async () => {
         if (this.running) return; // in-flight lock

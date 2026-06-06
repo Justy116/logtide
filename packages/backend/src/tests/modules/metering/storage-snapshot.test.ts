@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../../database/index.js';
 import { configSchema } from '../../../config/index.js';
 import { StorageSnapshotJob } from '../../../modules/metering/storage-snapshot.js';
-import { meteringRecorder } from '../../../modules/metering/index.js';
+import { meteringRecorder, meteringService } from '../../../modules/metering/index.js';
 import { createTestContext, createTestProject } from '../../helpers/factories.js';
 
 async function insertIngestedBytes(orgId: string, projectId: string, quantity: number, time: Date) {
@@ -116,10 +116,7 @@ describe('StorageSnapshotJob.runOnce', () => {
     const doomed = await createTestContext();
     await insertIngestedBytes(doomed.organization.id, doomed.project.id, 100, new Date());
     await db.deleteFrom('organizations').where('id', '=', doomed.organization.id).execute();
-    // NOTE: verify metering_events has no FK to organizations (check migrations/045_metering_events.sql).
-    // If a cascade deletes the event row, this setup won't exercise the skip path -- in that case
-    // adapt: keep the org but stub/force a failure differently, or simply assert the healthy org
-    // still snapshots while the doomed org produces none. Keep the healthy-org assertion identical.
+    // metering_events has no FK to organizations (migration 045), so the event row survives the org delete.
 
     await setRetentionDays(orgId, 30);
     await insertIngestedBytes(orgId, projectA, 800, new Date());
@@ -131,5 +128,50 @@ describe('StorageSnapshotJob.runOnce', () => {
     const rows = await snapshotRows(orgId);
     expect(rows).toHaveLength(1);
     expect(Number(rows[0].quantity)).toBe(800);
+  });
+
+  it('decays a project to zero when its data ages out of the retention window', async () => {
+    await setRetentionDays(orgId, 30);
+    await insertIngestedBytes(orgId, projectA, 1000, new Date());
+
+    const job = new StorageSnapshotJob();
+    await job.runOnce();
+    await meteringRecorder.flush();
+    expect((await snapshotRows(orgId)).map((r) => Number(r.quantity))).toEqual([1000]);
+
+    // Simulate the data aging out: remove the bytes events, keep the snapshot.
+    await db
+      .deleteFrom('metering_events')
+      .where('organization_id', '=', orgId)
+      .where('type', '=', 'logs.ingested.bytes')
+      .execute();
+
+    await job.runOnce();
+    await meteringRecorder.flush();
+
+    expect(await meteringService.latestPointInTime(orgId, 'storage.snapshot')).toBe(0);
+  });
+
+  it('stops recording zeros once the latest snapshot is already zero', async () => {
+    await setRetentionDays(orgId, 30);
+    await insertIngestedBytes(orgId, projectA, 500, new Date());
+
+    const job = new StorageSnapshotJob();
+    await job.runOnce();
+    await meteringRecorder.flush();
+
+    await db
+      .deleteFrom('metering_events')
+      .where('organization_id', '=', orgId)
+      .where('type', '=', 'logs.ingested.bytes')
+      .execute();
+
+    await job.runOnce(); // writes the zero
+    await meteringRecorder.flush();
+    const afterZero = (await snapshotRows(orgId)).length;
+
+    await job.runOnce(); // must NOT write another zero
+    await meteringRecorder.flush();
+    expect((await snapshotRows(orgId)).length).toBe(afterZero);
   });
 });
