@@ -181,13 +181,16 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       }
 
       // Capability: enforce the alerts.max_rules static cap before creating.
-      // Session-auth requests don't populate request.organizationId, so the ALS
-      // context org is null here; patch it (scoped) from the validated body.
+      // Session-auth requests don't populate request.organizationId in the ALS
+      // context, so we establish a scoped system context with the org from the
+      // validated body. Same pattern as otlp/trace-routes.ts.
       // Note: count -> insert is not atomic; a concurrent create can briefly
       // exceed the cap by one. Acceptable for user-initiated rule creation.
-      await context.with({ organizationId: body.organizationId }, async () => {
-        const currentRuleCount = await alertsService.countAlertRules(body.organizationId);
-        await assertWithinLimit('alerts.max_rules', currentRuleCount);
+      await context.runAsSystem('alerts:create-limit-check', async () => {
+        await context.with({ organizationId: body.organizationId }, async () => {
+          const currentRuleCount = await alertsService.countAlertRules(body.organizationId);
+          await assertWithinLimit('alerts.max_rules', currentRuleCount);
+        });
       });
 
       const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, metadataFilters, ...alertData } = body;
