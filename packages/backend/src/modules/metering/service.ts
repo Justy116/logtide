@@ -28,10 +28,6 @@ interface RawRow {
 
 export class MeteringService {
   /**
-   * Aggregate usage for a single organization over [from, to).
-   * Query-time grouping (no continuous aggregates). Always org-scoped.
-   */
-  /**
    * Sum of the LATEST event per (organization, project) for a gauge-type signal
    * (e.g. storage.snapshot). Used by the quota evaluator's point_in_time window:
    * snapshots are gauges, so history must never be summed.
@@ -79,6 +75,10 @@ export class MeteringService {
     }));
   }
 
+  /**
+   * Aggregate usage for a single organization over [from, to).
+   * Query-time grouping (no continuous aggregates). Always org-scoped.
+   */
   async aggregate(params: UsageAggregateParams): Promise<UsageRow[]> {
     const { organizationId, from, to, groupBy, type } = params;
     const typeFilter = type ? sql`AND type = ${type}` : sql``;
