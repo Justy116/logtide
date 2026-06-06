@@ -2,6 +2,7 @@ import { db } from '../../database/index.js';
 import { pool } from '../../database/connection.js';
 import { reservoir } from '../../database/reservoir.js';
 import { projectsService } from '../projects/service.js';
+import { recordSpanIngestion } from '../metering/index.js';
 import type { TransformedSpan, AggregatedTrace } from '../otlp/trace-transformer.js';
 import type {
   SpanRecord as ReservoirSpanRecord,
@@ -124,6 +125,12 @@ export class TracesService {
     }));
 
     const result = await reservoir.ingestSpans(reservoirSpans);
+
+    // Metering: record ingested span count (fire-and-forget; activates
+    // the tracing.max_spans_monthly quota in the capability system).
+    if (organizationId) {
+      recordSpanIngestion({ spanCount: result.ingested, organizationId, projectId });
+    }
 
     for (const [, trace] of traces) {
       await reservoir.upsertTrace({
