@@ -10,6 +10,7 @@ import type { LogInput } from '@logtide/shared';
 import { createTestContext } from '../../helpers/factories.js';
 import Fastify from 'fastify';
 import otlpTraceRoutes from '../../../modules/otlp/trace-routes.js';
+import otlpRoutes from '../../../modules/otlp/routes.js';
 
 function asOrg<T>(orgId: string, fn: () => Promise<T> | T): Promise<T> {
   return context.run(
@@ -160,5 +161,86 @@ describe('span ingestion hard-block on tracing quota', () => {
       payload: JSON.stringify(otlpTracesBody()),
     });
     expect(res.statusCode).toBe(200);
+  });
+});
+
+describe('otlp log ingestion returns 429 on quota', () => {
+  let app: any;
+  let orgId: string;
+  let projectId: string;
+
+  beforeAll(async () => {
+    await reservoirReady;
+  });
+
+  beforeEach(async () => {
+    await db.deleteFrom('organization_entitlements').execute();
+    quotaFlagCache.clear();
+    const ctx = await createTestContext();
+    orgId = ctx.organization.id;
+    projectId = ctx.project.id;
+    capabilities.invalidate(orgId);
+
+    app = Fastify();
+    // Stand in for the OTLP auth that sets request.projectId.
+    app.addHook('onRequest', async (request: any) => {
+      request.projectId = projectId;
+    });
+    await app.register(otlpRoutes);
+    await app.ready();
+  });
+
+  function otlpLogsBody() {
+    const now = String(Date.now() * 1_000_000); // ns
+    return {
+      resourceLogs: [
+        {
+          resource: { attributes: [{ key: 'service.name', value: { stringValue: 'svc' } }] },
+          scopeLogs: [
+            {
+              logRecords: [
+                {
+                  timeUnixNano: now,
+                  severityNumber: 9, // INFO
+                  body: { stringValue: 'hello from test' },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  it('returns 429 when flagged over ingestion.max_events_monthly', async () => {
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'ingestion.max_events_monthly', enabled: null, limit_value: 1 })
+      .execute();
+    capabilities.invalidate(orgId);
+    quotaFlagCache.setOrgFlags(orgId, { 'ingestion.max_events_monthly': true });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/otlp/logs',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify(otlpLogsBody()),
+    });
+
+    expect(res.statusCode).toBe(429);
+    const body = JSON.parse(res.payload);
+    expect(body.partialSuccess.rejectedLogRecords).toBe(-1);
+  });
+
+  it('ingests logs when no quota is set', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/otlp/logs',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify(otlpLogsBody()),
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body.partialSuccess.rejectedLogRecords).toBe(0);
   });
 });
