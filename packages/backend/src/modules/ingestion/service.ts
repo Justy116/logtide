@@ -82,8 +82,8 @@ export class IngestionService {
 
     // Capability: hard-block ingestion when over a usage quota (#214).
     // Reads only the in-memory over-quota flag (no DB on the hot path).
-    // Guarded by organizationId AND a live context: anonymous/missing-org ingestion is never blocked.
-    if (organizationId && context.currentOrNull()?.organizationId) {
+    // Guarded: only assert when the request context org matches the project org; anonymous/missing-org ingestion is never blocked.
+    if (organizationId && context.currentOrNull()?.organizationId === organizationId) {
       await assertWithinUsageQuota('ingestion.max_bytes_monthly');
       await assertWithinUsageQuota('ingestion.max_events_monthly');
       await assertWithinUsageQuota('storage.max_bytes');
