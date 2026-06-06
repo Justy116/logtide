@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import { config } from '../../config/index.js';
 import { generateAlertEmail, getFrontendUrl } from '../../lib/email-templates.js';
 import { safeFetch, SsrfBlockedError } from '../../utils/ssrf-guard.js';
+import { hooks } from '../../hooks/index.js';
 import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
 export interface AlertNotificationData {
@@ -219,6 +220,37 @@ async function sendWebhookNotification(data: AlertNotificationData) {
 
   const frontendUrl = getFrontendUrl();
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'LogTide/1.0',
+  };
+  const body: Record<string, unknown> = {
+    event_type: data.baseline_metadata ? 'anomaly' : 'alert',
+    alert_name: data.rule_name,
+    log_count: data.log_count,
+    threshold: data.threshold,
+    time_window: data.time_window,
+    organization_id: data.organization_id,
+    project_id: data.project_id,
+    baseline_metadata: data.baseline_metadata || null,
+    link: `${frontendUrl}/dashboard/alerts`,
+    timestamp: new Date().toISOString(),
+  };
+
+  // Lifecycle hook (#216): same interception point as WebhookProvider.
+  // A rejection (or broken hook) propagates and is recorded as a delivery
+  // failure by the caller; the HTTP call never happens.
+  if (hooks.hasHandlers('beforeWebhookDispatch')) {
+    await hooks.run('beforeWebhookDispatch', {
+      organizationId: data.organization_id,
+      ruleId: data.rule_id,
+      url: data.webhook_url,
+      targetHost: new URL(data.webhook_url).hostname,
+      headers,
+      body,
+    });
+  }
+
   // SSRF protection: route delivery through the centralized outbound guard
   // (safeFetch resolves the host, rejects loopback/private/link-local/CGNAT/
   // reserved IPv4+IPv6 ranges, and revalidates every redirect hop), matching
@@ -230,22 +262,8 @@ async function sendWebhookNotification(data: AlertNotificationData) {
       data.webhook_url,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'LogTide/1.0',
-        },
-        body: JSON.stringify({
-          event_type: data.baseline_metadata ? 'anomaly' : 'alert',
-          alert_name: data.rule_name,
-          log_count: data.log_count,
-          threshold: data.threshold,
-          time_window: data.time_window,
-          organization_id: data.organization_id,
-          project_id: data.project_id,
-          baseline_metadata: data.baseline_metadata || null,
-          link: `${frontendUrl}/dashboard/alerts`,
-          timestamp: new Date().toISOString(),
-        }),
+        headers,
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(10000),
       },
       { allowPrivate: config.MONITOR_ALLOW_PRIVATE_TARGETS }
