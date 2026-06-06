@@ -70,6 +70,10 @@ const configSchema = z.object({
   QUOTA_EVALUATOR_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   QUOTA_EVALUATOR_INTERVAL_MS: z.string().default('60000').transform(Number),
 
+  // Storage snapshot job (#212 follow-up). Periodic per-project stored-bytes estimate.
+  STORAGE_SNAPSHOT_ENABLED: z.string().default('true').transform((val) => val === 'true'),
+  STORAGE_SNAPSHOT_INTERVAL_MS: z.string().default('86400000').transform(Number),
+
   // Outbound SSRF guard. By default, HTTP/TCP monitors and webhook delivery
   // reject loopback/private/link-local/reserved targets. Self-hosted
   // deployments that legitimately monitor internal services can opt in.
