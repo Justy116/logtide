@@ -22,6 +22,7 @@ export class HookRegistry {
   private handlers: HandlerMap = emptyHandlerMap();
 
   register<P extends HookPhase>(phase: P, handler: HookHandler<P>): void {
+    // TS cannot correlate handlers[phase] with HookHandler<P> through a generic key
     (this.handlers[phase] as Array<HookHandler<P>>).push(handler);
   }
 
@@ -38,7 +39,7 @@ export class HookRegistry {
       } catch (err) {
         if (err instanceof HookRejectionError) throw err;
         console.error(`[Hooks] Handler failed in phase ${phase}:`, err);
-        throw new HookExecutionError(phase);
+        throw new HookExecutionError(phase, err);
       }
     }
   }

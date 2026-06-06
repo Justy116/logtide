@@ -24,8 +24,8 @@ export class HookRejectionError extends Error {
 export class HookExecutionError extends Error {
   readonly code = 'hook.execution_failed';
   readonly statusCode = 500;
-  constructor(public readonly phase: HookPhase) {
-    super(`Hook execution failed in phase ${phase}`);
+  constructor(public readonly phase: HookPhase, cause?: unknown) {
+    super(`Hook execution failed in phase ${phase}`, { cause });
     this.name = 'HookExecutionError';
   }
 }

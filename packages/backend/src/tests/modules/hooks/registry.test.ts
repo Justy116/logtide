@@ -100,6 +100,8 @@ describe('HookRegistry', () => {
       expect((e as HookExecutionError).code).toBe('hook.execution_failed');
       // original message must NOT leak into the client-facing message
       expect((e as HookExecutionError).message).not.toContain('boom');
+      expect((e as HookExecutionError).phase).toBe('beforeIngest');
+      expect((e as HookExecutionError).cause).toBeInstanceOf(TypeError);
     }
   });
 
@@ -107,9 +109,13 @@ describe('HookRegistry', () => {
     const registry = new HookRegistry();
     registry.register('beforeIngest', async () => {});
     registry.register('beforeQuery', async () => {});
+    registry.register('beforeAlertEvaluation', async () => {});
+    registry.register('beforeWebhookDispatch', async () => {});
     registry.clear();
     expect(registry.hasHandlers('beforeIngest')).toBe(false);
     expect(registry.hasHandlers('beforeQuery')).toBe(false);
+    expect(registry.hasHandlers('beforeAlertEvaluation')).toBe(false);
+    expect(registry.hasHandlers('beforeWebhookDispatch')).toBe(false);
   });
 
   it('phases are isolated from each other', async () => {
