@@ -1,7 +1,8 @@
 <script lang="ts">
     import { onMount } from "svelte";
     import { page } from "$app/state";
-    import { adminAPI, type OrganizationDetails } from "$lib/api/admin";
+    import { adminAPI, type OrganizationDetails, type EntitlementMap, type EntitlementUpdate } from "$lib/api/admin";
+    import { Switch } from "$lib/components/ui/switch";
     import { Button, buttonVariants } from "$lib/components/ui/button";
     import { Badge } from "$lib/components/ui/badge";
     import {
@@ -30,6 +31,7 @@
         AlertTriangle,
         Clock,
         Save,
+        ShieldCheck,
     } from "@lucide/svelte";
     import {
         AlertDialog,
@@ -52,6 +54,88 @@
     let retentionDays = $state(90);
     let savingRetention = $state(false);
     let retentionError = $state("");
+
+    // Entitlements (#214)
+    let entitlements = $state<EntitlementMap>({});
+    let entitlementsLoading = $state(true);
+    let entitlementsError = $state("");
+    let savingEntitlements = $state(false);
+    // Working copy of numeric caps as strings for the inputs ("" = unlimited / null).
+    let limitInputs = $state<Record<string, string>>({});
+
+    async function loadEntitlements() {
+        entitlementsLoading = true;
+        entitlementsError = "";
+        try {
+            const res = await adminAPI.getOrganizationEntitlements(orgId);
+            entitlements = res.entitlements;
+            const inputs: Record<string, string> = {};
+            for (const [cap, val] of Object.entries(entitlements)) {
+                if (val.kind === "limit" || val.kind === "quota") {
+                    inputs[cap] = val.limit === null ? "" : String(val.limit);
+                }
+            }
+            limitInputs = inputs;
+        } catch (err: any) {
+            entitlementsError = err.message || "Failed to load entitlements";
+        } finally {
+            entitlementsLoading = false;
+        }
+    }
+
+    function booleanCaps(): string[] {
+        return Object.keys(entitlements)
+            .filter((c) => entitlements[c].kind === "boolean")
+            .sort();
+    }
+
+    function numericCaps(): string[] {
+        return Object.keys(entitlements)
+            .filter((c) => {
+                const k = entitlements[c].kind;
+                return k === "limit" || k === "quota";
+            })
+            .sort();
+    }
+
+    async function saveEntitlements() {
+        savingEntitlements = true;
+        entitlementsError = "";
+        try {
+            const updates: EntitlementUpdate[] = [];
+
+            for (const cap of booleanCaps()) {
+                const val = entitlements[cap];
+                if (val.kind === "boolean") {
+                    updates.push({ capability: cap, enabled: val.enabled });
+                }
+            }
+
+            for (const cap of numericCaps()) {
+                const raw = (limitInputs[cap] ?? "").trim();
+                let limitValue: number | null;
+                if (raw === "") {
+                    limitValue = null; // unlimited
+                } else {
+                    const n = Number(raw);
+                    if (!Number.isInteger(n) || n < 0) {
+                        entitlementsError = `Invalid value for ${cap}: must be a non-negative integer or empty for unlimited`;
+                        savingEntitlements = false;
+                        return;
+                    }
+                    limitValue = n;
+                }
+                updates.push({ capability: cap, limitValue });
+            }
+
+            await adminAPI.updateOrganizationEntitlements(orgId, updates);
+            await loadEntitlements(); // refresh from server
+        } catch (err: any) {
+            entitlementsError = err.message || "Failed to save entitlements";
+        } finally {
+            savingEntitlements = false;
+        }
+    }
 
     async function loadOrganization() {
         loading = true;
@@ -105,6 +189,7 @@
 
     onMount(() => {
         loadOrganization();
+        loadEntitlements();
     });
 </script>
 
@@ -222,6 +307,82 @@
                         Valid range: 1-365 days.
                     </p>
                 </div>
+            </CardContent>
+        </Card>
+
+        <Card>
+            <CardHeader>
+                <div class="flex items-center gap-2">
+                    <ShieldCheck class="h-5 w-5 text-muted-foreground" />
+                    <CardTitle>Entitlements</CardTitle>
+                </div>
+                <CardDescription>
+                    Feature gates and usage caps for this organization. Empty cap = unlimited.
+                </CardDescription>
+            </CardHeader>
+            <CardContent>
+                {#if entitlementsLoading}
+                    <p class="text-muted-foreground text-sm">Loading entitlements...</p>
+                {:else}
+                    <div class="space-y-6">
+                        <!-- Boolean feature gates -->
+                        <div class="space-y-3">
+                            <h3 class="text-sm font-medium">Feature gates</h3>
+                            {#each booleanCaps() as cap}
+                                {@const val = entitlements[cap]}
+                                {#if val.kind === "boolean"}
+                                    <div class="flex items-center justify-between">
+                                        <Label for={`ent-${cap}`} class="font-mono text-sm">{cap}</Label>
+                                        <Switch
+                                            id={`ent-${cap}`}
+                                            checked={val.enabled}
+                                            onCheckedChange={(checked) => {
+                                                entitlements = {
+                                                    ...entitlements,
+                                                    [cap]: { kind: "boolean", enabled: checked },
+                                                };
+                                            }}
+                                            disabled={savingEntitlements}
+                                        />
+                                    </div>
+                                {/if}
+                            {/each}
+                        </div>
+
+                        <!-- Numeric limits and quotas -->
+                        <div class="space-y-3">
+                            <h3 class="text-sm font-medium">Limits & quotas</h3>
+                            {#each numericCaps() as cap}
+                                <div class="flex items-center justify-between gap-4">
+                                    <Label for={`ent-${cap}`} class="font-mono text-sm">{cap}</Label>
+                                    <Input
+                                        id={`ent-${cap}`}
+                                        type="number"
+                                        min="0"
+                                        placeholder="unlimited"
+                                        bind:value={limitInputs[cap]}
+                                        disabled={savingEntitlements}
+                                        class="w-40"
+                                    />
+                                </div>
+                            {/each}
+                        </div>
+
+                        {#if entitlementsError}
+                            <p class="text-sm text-destructive">{entitlementsError}</p>
+                        {/if}
+
+                        <div class="flex items-center gap-3">
+                            <Button onclick={saveEntitlements} disabled={savingEntitlements}>
+                                <Save class="h-4 w-4 mr-2" />
+                                {savingEntitlements ? "Saving..." : "Save entitlements"}
+                            </Button>
+                            <p class="text-sm text-muted-foreground">
+                                Quota changes take effect on the next evaluator tick (~1 min).
+                            </p>
+                        </div>
+                    </div>
+                {/if}
             </CardContent>
         </Card>
 
