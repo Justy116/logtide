@@ -181,11 +181,14 @@ export async function alertsRoutes(fastify: FastifyInstance) {
       }
 
       // Capability: enforce the alerts.max_rules static cap before creating.
-      // Update context with the org so assertWithinLimit can read it.
-      const currentCtx = context.current();
-      context.enterWith({ ...currentCtx, organizationId: body.organizationId });
-      const currentRuleCount = await alertsService.countAlertRules(body.organizationId);
-      await assertWithinLimit('alerts.max_rules', currentRuleCount);
+      // Session-auth requests don't populate request.organizationId, so the ALS
+      // context org is null here; patch it (scoped) from the validated body.
+      // Note: count -> insert is not atomic; a concurrent create can briefly
+      // exceed the cap by one. Acceptable for user-initiated rule creation.
+      await context.with({ organizationId: body.organizationId }, async () => {
+        const currentRuleCount = await alertsService.countAlertRules(body.organizationId);
+        await assertWithinLimit('alerts.max_rules', currentRuleCount);
+      });
 
       const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, metadataFilters, ...alertData } = body;
       const alertRule = await alertsService.createAlertRule({

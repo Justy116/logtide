@@ -173,7 +173,10 @@ export class AlertsService {
     return this.mapAlertRule(alertRule);
   }
 
-  /** Count alert rules for an org (used for the alerts.max_rules capability check). */
+  /**
+   * Count alert rules for an org (used for the alerts.max_rules capability check).
+   * Counts ALL rules, including disabled ones: the cap is on configured rules.
+   */
   async countAlertRules(organizationId: string): Promise<number> {
     const row = await db
       .selectFrom('alert_rules')
