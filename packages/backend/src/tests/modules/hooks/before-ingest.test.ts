@@ -4,6 +4,7 @@ import { reservoirReady } from '../../../database/reservoir.js';
 import { ingestionService } from '../../../modules/ingestion/service.js';
 import { hooks, HookRejectionError } from '../../../hooks/index.js';
 import type { BeforeIngestContext } from '../../../hooks/index.js';
+// HookExecutionError used indirectly via toMatchObject shape assertion
 import type { LogInput } from '@logtide/shared';
 import { createTestContext } from '../../helpers/factories.js';
 
@@ -112,6 +113,20 @@ describe('beforeIngest hook', () => {
     const rows = await db.selectFrom('logs').selectAll().where('project_id', '=', projectId).execute();
     const messages = rows.map((r) => r.message).sort();
     expect(messages).toEqual(['[REDACTED]', 'keep']);
+  });
+
+  it('a hook that rewrites projectId fails closed, nothing written', async () => {
+    hooks.register('beforeIngest', async (ctx) => {
+      ctx.records[0].projectId = '00000000-0000-0000-0000-00000000dead';
+    });
+
+    await expect(ingestionService.ingestLogs(logs, projectId)).rejects.toMatchObject({
+      code: 'hook.execution_failed',
+      statusCode: 500,
+    });
+
+    const rows = await db.selectFrom('logs').selectAll().where('project_id', '=', projectId).execute();
+    expect(rows).toHaveLength(0);
   });
 
   it('filtering realigns the logs passed to downstream consumers', async () => {

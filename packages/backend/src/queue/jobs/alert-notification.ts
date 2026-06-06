@@ -131,21 +131,23 @@ export async function processAlertNotification(job: any) {
       console.log(`No email recipients configured for: ${data.rule_name}`);
     }
 
-    // STEP 5: Collect webhook URLs from notification channels
-    const webhookUrls = new Set<string>();
+    // STEP 5: Collect webhook targets from notification channels
+    // (dedup by URL; first channel wins for hook attribution)
+    const webhookTargets = new Map<string, string>();
 
-    // Add webhook URLs from channels
     channels
       .filter((ch) => ch.type === 'webhook' && ch.enabled)
       .forEach((ch) => {
         const webhookConfig = ch.config as WebhookChannelConfig;
-        webhookUrls.add(webhookConfig.url);
+        if (!webhookTargets.has(webhookConfig.url)) {
+          webhookTargets.set(webhookConfig.url, ch.id);
+        }
       });
 
     // STEP 6: Send webhooks
-    for (const url of webhookUrls) {
+    for (const [url, channelId] of webhookTargets) {
       try {
-        await sendWebhookNotification({ ...data, webhook_url: url });
+        await sendWebhookNotification({ ...data, webhook_url: url }, channelId);
         console.log(`Webhook notification sent: ${data.rule_name} -> ${url}`);
       } catch (error) {
         const errMsg = `Webhook failed (${url}): ${error instanceof Error ? error.message : 'Unknown error'}`;
@@ -154,7 +156,7 @@ export async function processAlertNotification(job: any) {
       }
     }
 
-    if (webhookUrls.size === 0) {
+    if (webhookTargets.size === 0) {
       console.log(`No webhook configured for: ${data.rule_name}`);
     }
 
@@ -215,7 +217,7 @@ async function sendEmailNotification(data: AlertNotificationData & { organizatio
   console.log(`Email sent to: ${data.email_recipients.join(', ')}`);
 }
 
-async function sendWebhookNotification(data: AlertNotificationData) {
+async function sendWebhookNotification(data: AlertNotificationData, channelId?: string) {
   if (!data.webhook_url) return;
 
   const frontendUrl = getFrontendUrl();
@@ -250,6 +252,7 @@ async function sendWebhookNotification(data: AlertNotificationData) {
     await hooks.run('beforeWebhookDispatch', {
       organizationId: data.organization_id,
       ruleId: data.rule_id,
+      channelId,
       url: data.webhook_url,
       targetHost,
       headers,

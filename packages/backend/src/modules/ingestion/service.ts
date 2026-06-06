@@ -13,7 +13,7 @@ import { extractHostname } from './routes.js';
 import { recordLogIngestion } from '../metering/index.js';
 import { assertWithinUsageQuota } from '../../capabilities/index.js';
 import { context } from '@logtide/shared/context';
-import { hooks } from '../../hooks/index.js';
+import { hooks, HookExecutionError } from '../../hooks/index.js';
 import type { BeforeIngestContext } from '../../hooks/index.js';
 
 /**
@@ -132,6 +132,16 @@ export class IngestionService {
       };
       await hooks.run('beforeIngest', hookCtx);
       records = hookCtx.records;
+
+      // Tenancy guard: a hook must never move records across projects.
+      // Fail closed rather than silently writing into another tenant.
+      if (records.some((r) => r.projectId !== projectId)) {
+        throw new HookExecutionError(
+          'beforeIngest',
+          new Error('beforeIngest hook changed record projectId')
+        );
+      }
+
       if (records.length === 0) {
         return 0;
       }

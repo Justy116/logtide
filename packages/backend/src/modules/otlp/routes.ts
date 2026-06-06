@@ -246,10 +246,16 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const statusCode = typeof (error as { statusCode?: unknown }).statusCode === 'number'
+          ? (error as { statusCode: number }).statusCode
+          : undefined;
 
-        // Over-quota log batches return 429 (retry later / upgrade), not 400.
-        if (error && (error as any).statusCode === 429) {
-          return reply.code(429).send({
+        // Client-addressable rejections (quota 429, hook policy 4xx) keep
+        // their status so OTLP exporters can react appropriately.
+        if (statusCode && statusCode >= 400 && statusCode < 500) {
+          // Cast needed: schema only enumerates 400/401/429 but hook
+          // rejections can carry arbitrary 4xx codes (e.g. 403).
+          return (reply as any).code(statusCode).send({
             partialSuccess: {
               rejectedLogRecords: -1,
               errorMessage,
@@ -258,6 +264,17 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         console.error('[OTLP] Ingestion error:', errorMessage);
+
+        // Server-side failures (e.g. a broken hook failing closed) are
+        // retryable: 503, not 400 (400 makes OTLP exporters drop the batch).
+        if (statusCode && statusCode >= 500) {
+          return (reply as any).code(503).send({
+            partialSuccess: {
+              rejectedLogRecords: -1,
+              errorMessage: 'temporary ingestion failure',
+            },
+          });
+        }
 
         return reply.code(400).send({
           partialSuccess: {

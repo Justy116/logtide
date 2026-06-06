@@ -711,7 +711,7 @@ describe('Alert Notification Job', () => {
             expect(seen.ruleId).toBe(jobData.rule_id);
             expect(seen.url).toBe('https://example.com/legacy-hook');
             expect(seen.organizationId).toBe(organization.id);
-            expect(seen.channelId).toBeUndefined();
+            expect(seen.channelId).toBe('00000000-0000-0000-0000-000000000010');
             expect(mockFetch).toHaveBeenCalledTimes(1);
             const [, init] = mockFetch.mock.calls[0];
             expect(init.headers['X-Injected']).toBe('yes');
