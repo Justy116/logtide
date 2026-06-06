@@ -46,6 +46,10 @@ export interface BeforeIngestContext {
 | `byteSize` | STABLE-READONLY | `JSON.stringify(records)` byte length, computed only when handlers exist (zero-overhead guard). Not recomputed after mutation. |
 | `records` | MUTABLE | May be filtered, redacted, reordered, or replaced with a new array. If the array is emptied, ingestion returns 0 and no downstream processing happens. If records are filtered or replaced, downstream consumers (Sigma detection, exception parsing, pipeline processing, metering, correlation) are automatically realigned with the new array so they never see phantom entries; newly created records (records with no original counterpart) are synthesized as minimal `LogInput` for downstream. |
 
+**Mutating `records` in place vs. cloning.** The downstream realignment is keyed by object identity: a record is considered "original" if it is the same object reference as one in the pre-hook snapshot. A handler that clones records (`ctx.records = ctx.records.map(r => ({ ...r }))`) produces new objects with no match in the snapshot; all cloned records are treated as hook-created and the synthesized `LogInput` view loses span/session ids. Mutate fields in place or filter the array; do not clone records you want to keep.
+
+**Tenancy guard on `projectId`.** The ingestion service enforces that every record's `projectId` matches the original project after hooks run. Changing a record's `projectId` is treated as a cross-tenant write attempt and fails closed with HTTP 500 (a `HookExecutionError` whose cause is "beforeIngest hook changed record projectId"). This is a hard guarantee: hooks cannot move data across tenant boundaries even if the operator intends it.
+
 ### `BeforeQueryContext`
 
 ```ts
@@ -105,8 +109,8 @@ export interface BeforeWebhookDispatchContext {
 | Field | Status | Notes |
 |---|---|---|
 | `organizationId` | STABLE-READONLY | Null when the channel has no org context. |
-| `channelId` | STABLE-READONLY | Present on the notification-channel path; absent on the legacy path. |
-| `ruleId` | STABLE-READONLY | Present on the legacy alert-rule `webhook_url` path; absent on the channel path. |
+| `channelId` | STABLE-READONLY | Present on the notification-channel path. Also set on the legacy alert-rule `webhook_url` path when the webhook comes from a notification channel (the job resolves the channel id and passes it through). May be undefined only on hypothetical future callers that dispatch without a channel id. |
+| `ruleId` | STABLE-READONLY | Present on the legacy alert-rule `webhook_url` path; absent on the channel path. On the legacy path both `ruleId` and `channelId` are now available. |
 | `url` | STABLE-READONLY | The validated webhook URL. Readonly by design: changing the target would bypass the SSRF-validated channel configuration. `safeFetch` still validates the URL against the SSRF guard regardless of what a hook does to other fields. |
 | `targetHost` | STABLE-READONLY | Hostname extracted from `url`. Provided for convenience (avoids re-parsing in handlers). |
 | `headers` | MUTABLE | Add, remove or replace outbound headers (e.g. HMAC signatures, compliance headers). |
@@ -160,9 +164,11 @@ export class HookExecutionError extends Error {
 }
 ```
 
-The original error is chained via `Error.cause` and logged on the server. The client only sees a 500 with code `hook.execution_failed`. The original error is never sent to the client.
+The original error is chained via `Error.cause` and logged on the server. `HookExecutionError` propagates up as an unhandled server error, which the global error handler catches. Because the global error handler treats all 5xx errors uniformly, the client receives `{ statusCode: 500, error: 'Internal Server Error' }` with no `code` field - `hook.execution_failed` and the chained cause appear in server logs only, never in the response body.
 
-Exception: in the alert evaluation loop, an unexpected hook error is caught at the call site. The rule is skipped and the error is logged (`[Alerts] Rule <id> skipped, hook failed: <err>`), but `HookExecutionError` is not rethrown. The batch survives.
+Exception for OTLP: on the `POST /v1/otlp/logs` route, a `HookExecutionError` (statusCode 500) is caught by the route's own catch block and translated to HTTP 503 with `{ partialSuccess: { rejectedLogRecords: -1, errorMessage: 'temporary ingestion failure' } }`. The 503 signals a retryable server-side failure so OTLP exporters retry rather than dropping the batch.
+
+Exception for the alert evaluation loop: an unexpected hook error is caught at the call site. The rule is skipped and the error is logged (`[Alerts] Rule <id> skipped, hook failed: <err>`), but `HookExecutionError` is not rethrown. The batch survives.
 
 ---
 
@@ -224,7 +230,7 @@ export default function register(hooks, { HookRejectionError }) {
 }
 ```
 
-Throwing `HookRejectionError` from an external module surfaces a clean 4xx with a machine-readable code to the client. Any other error fails closed as HTTP 500 (`hook.execution_failed`): the operation is still blocked, but the error surfaced to the client is not the intended 4xx. Observe and mutate use cases never need to throw.
+Throwing `HookRejectionError` from an external module surfaces a clean 4xx with a machine-readable code to the client. Any other error fails closed as HTTP 500: the operation is still blocked, but the client only sees `{ statusCode: 500, error: 'Internal Server Error' }` (the global error handler strips all internal detail from 5xx responses). `hook.execution_failed` and the original cause are in server logs only. Observe and mutate use cases never need to throw.
 
 ---
 
@@ -241,6 +247,7 @@ Throwing `HookRejectionError` from an external module surfaces a clean 4xx with 
 ## v1 Limitations
 
 - `beforeQuery` covers only `QueryService.queryLogs`. It does not intercept the stats, histogram, trace correlation or log-context endpoints.
+- `beforeQuery` also fires inside the SSE live-tail polling loop (`GET /api/v1/logs/stream`), which calls `queryService.queryLogs` on a `setInterval` at roughly 1-second intervals for each connected client. Hooks fire once per poll tick. A rejection or unexpected hook error inside the interval catches the error, terminates the stream (`reply.raw.end()`), and gives the client no visible error reason (only the server-sent `error` event console-logged server-side). `beforeQuery` handlers must be cheap and idempotent to avoid degrading live-tail for every connected viewer.
 - `eventCount` and `byteSize` on `BeforeIngestContext` are pre-hook snapshots. They are not recomputed after `records` is mutated, filtered or replaced. If you need the post-mutation count, use `ctx.records.length` directly.
 - No timeout is enforced on handlers. This is intentional in v1 to avoid surprising registered handlers; it may be added in a future version with an opt-in per-handler budget.
 - There is no hook for OTLP trace or metric ingestion paths in v1.
