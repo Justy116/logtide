@@ -79,6 +79,11 @@ const configSchema = z.object({
   // deployments that legitimately monitor internal services can opt in.
   MONITOR_ALLOW_PRIVATE_TARGETS: z.string().default('false').transform((val) => val === 'true'),
 
+  // Lifecycle hooks (#216). Comma-separated paths to .js/.mjs modules loaded
+  // at boot (server AND worker). Each default-exports (hooks) => void.
+  // A missing or throwing module is FATAL at boot, by design.
+  HOOKS_MODULES: z.string().optional(),
+
   // Initial Admin (for first deployment - creates admin user if no users exist)
   INITIAL_ADMIN_EMAIL: z.string().email().optional(),
   INITIAL_ADMIN_PASSWORD: z.string().min(8).optional(),
