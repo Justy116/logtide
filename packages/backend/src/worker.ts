@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { context } from '@logtide/shared/context';
 import { createWorker, startQueueWorkers, shutdownQueueSystem, getQueueBackend } from './queue/connection.js';
+import { loadExternalHooks } from './hooks/index.js';
 import { processAlertNotification, type AlertNotificationData } from './queue/jobs/alert-notification.js';
 import { processSigmaDetection, type SigmaDetectionData } from './queue/jobs/sigma-detection.js';
 import { processIncidentAutoGrouping } from './queue/jobs/incident-autogrouping.js';
@@ -31,6 +32,8 @@ await initializeWorkerLogging();
 
 // Wait for reservoir to be ready before processing jobs that need it
 await reservoirReady;
+
+await loadExternalHooks();
 
 // Initialize enrichment services (downloads GeoLite2 if missing)
 await enrichmentService.initialize();
