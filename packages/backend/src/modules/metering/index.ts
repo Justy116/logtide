@@ -36,6 +36,24 @@ export function recordLogIngestion(params: {
   });
 }
 
+/**
+ * Recording site helper for span ingestion (#212 follow-up). Fire-and-forget.
+ * Count only; span bytes are not metered.
+ */
+export function recordSpanIngestion(params: {
+  spanCount: number;
+  organizationId: string;
+  projectId: string;
+}): void {
+  if (params.spanCount <= 0) return;
+  metering.record({
+    type: 'spans.ingested',
+    quantity: params.spanCount,
+    organizationId: params.organizationId,
+    projectId: params.projectId,
+  });
+}
+
 export { MeteringRecorder } from './recorder.js';
 export { meteringService, MeteringService } from './service.js';
 export { getUsageBreakdown } from './breakdown.js';

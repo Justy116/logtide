@@ -37,6 +37,7 @@ import { customDashboardsRoutes } from './modules/custom-dashboards/index.js';
 import { usageRoutes, meteringRecorder, meteringService } from './modules/metering/index.js';
 import { capabilitiesRoutes, adminEntitlementsRoutes } from './modules/capabilities/index.js';
 import { QuotaEvaluator } from './capabilities/index.js';
+import { storageSnapshotJob } from './modules/metering/storage-snapshot.js';
 import { monitoringRoutes, heartbeatRoutes, publicStatusRoutes } from './modules/monitoring/index.js';
 import { statusIncidentRoutes } from './modules/status-incidents/routes.js';
 import { maintenanceRoutes } from './modules/maintenances/routes.js';
@@ -230,6 +231,7 @@ async function start() {
   await notificationManager.initialize(config.DATABASE_URL);
   meteringRecorder.start();
   quotaEvaluator.start();
+  storageSnapshotJob.start();
 
   const authMode = await settingsService.getAuthMode();
   if (authMode === 'none') {
@@ -242,6 +244,7 @@ async function start() {
   const shutdown = async () => {
     console.log('[Server] Shutting down gracefully...');
     quotaEvaluator.stop();
+    storageSnapshotJob.stop();
     await meteringRecorder.stop();
     await auditLogService.shutdown();
     await notificationManager.shutdown();

@@ -6,8 +6,11 @@ import { capabilities } from '../../capabilities/facade.js';
 import type { UsageRow, UsageAggregateParams } from '../../modules/metering/index.js';
 import { createTestContext } from '../helpers/factories.js';
 
-/** Stub matching the shape the evaluator depends on (aggregate only). */
-function makeMeteringStub(byOrgType: Record<string, Record<string, number>>) {
+/** Stub matching the shape the evaluator depends on (aggregate + latestPointInTime). */
+function makeMeteringStub(
+  byOrgType: Record<string, Record<string, number>>,
+  latestByOrgType: Record<string, Record<string, number>> = {}
+) {
   return {
     async aggregate(params: UsageAggregateParams): Promise<UsageRow[]> {
       const forOrg = byOrgType[params.organizationId] ?? {};
@@ -19,6 +22,9 @@ function makeMeteringStub(byOrgType: Record<string, Record<string, number>>) {
         project_id: null,
         quantity: quantity as number,
       }));
+    },
+    async latestPointInTime(organizationId: string, type: string): Promise<number> {
+      return latestByOrgType[organizationId]?.[type] ?? 0;
     },
   };
 }
@@ -116,5 +122,40 @@ describe('QuotaEvaluator', () => {
     await evaluator.runOnce();
 
     expect(quotaFlagCache.isOverQuota(orgId, 'ingestion.max_events_monthly')).toBe(false);
+  });
+
+  it('reads point_in_time quotas from the LATEST snapshot, not the aggregate sum', async () => {
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'storage.max_bytes', enabled: null, limit_value: 1000 })
+      .execute();
+    capabilities.invalidate(orgId);
+
+    // aggregate would say 5000 (historical sum) but the latest snapshot is 400:
+    // the org must NOT be flagged. The evaluator must use latestPointInTime.
+    const stub = makeMeteringStub(
+      { [orgId]: { 'storage.snapshot': 5000 } },
+      { [orgId]: { 'storage.snapshot': 400 } }
+    );
+    const evaluator = new QuotaEvaluator(stub as any);
+
+    await evaluator.runOnce();
+
+    expect(quotaFlagCache.isOverQuota(orgId, 'storage.max_bytes')).toBe(false);
+  });
+
+  it('flags a point_in_time quota when the latest snapshot exceeds the limit', async () => {
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'storage.max_bytes', enabled: null, limit_value: 1000 })
+      .execute();
+    capabilities.invalidate(orgId);
+
+    const stub = makeMeteringStub({}, { [orgId]: { 'storage.snapshot': 2500 } });
+    const evaluator = new QuotaEvaluator(stub as any);
+
+    await evaluator.runOnce();
+
+    expect(quotaFlagCache.isOverQuota(orgId, 'storage.max_bytes')).toBe(true);
   });
 });

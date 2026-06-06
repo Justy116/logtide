@@ -96,3 +96,27 @@ export async function getUsageBreakdown(params: BreakdownParams): Promise<Breakd
   const response = await request(`/usage/breakdown?${p}`);
   return response.json();
 }
+
+export interface StorageUsagePoint {
+  bucket: string;
+  quantity: number;
+}
+
+export interface StorageUsageResponse {
+  current: number;
+  series: StorageUsagePoint[];
+}
+
+export async function getStorageUsage(params: {
+  organizationId: string;
+  from: string;
+  to: string;
+}): Promise<StorageUsageResponse> {
+  const qs = new URLSearchParams({
+    organizationId: params.organizationId,
+    from: params.from,
+    to: params.to,
+  });
+  const response = await request(`/usage/storage?${qs.toString()}`);
+  return response.json();
+}
