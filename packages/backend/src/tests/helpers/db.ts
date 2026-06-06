@@ -7,6 +7,7 @@ import { db } from '../../database/index.js';
 export async function truncateAllTables() {
     const tables = [
         'metering_events',
+        'organization_entitlements',
         'logs',
         'alert_history',
         'sigma_rules',
