@@ -30,6 +30,14 @@ describe('loadExternalHooks', () => {
     expect(registry.hasHandlers('beforeIngest')).toBe(true);
   });
 
+  it('loads multiple modules from a comma-separated list', async () => {
+    const registry = new HookRegistry();
+    const spec = `${path.join(fixturesDir, 'sample-hooks.mjs')},${path.join(fixturesDir, 'sample-hooks-2.mjs')}`;
+    await loadExternalHooks(spec, registry);
+    expect(registry.hasHandlers('beforeIngest')).toBe(true);
+    expect(registry.hasHandlers('beforeWebhookDispatch')).toBe(true);
+  });
+
   it('throws (fatal) on a missing module path', async () => {
     const registry = new HookRegistry();
     await expect(

@@ -24,13 +24,21 @@ export async function loadExternalHooks(
 
   for (const modulePath of paths) {
     const resolved = path.resolve(modulePath);
-    const mod = await import(pathToFileURL(resolved).href);
+    let mod: { default?: unknown };
+    try {
+      mod = await import(pathToFileURL(resolved).href);
+    } catch (err) {
+      throw new Error(
+        `[Hooks] Failed to load module ${resolved}: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err }
+      );
+    }
     if (typeof mod.default !== 'function') {
       throw new Error(
         `[Hooks] Module ${resolved} must default-export a function (hooks: HookRegistry) => void`
       );
     }
-    await mod.default(registry);
+    await (mod.default as (r: HookRegistry) => void | Promise<void>)(registry);
     console.log(`[Hooks] Loaded hooks module: ${resolved}`);
   }
 }
