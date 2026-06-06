@@ -30,7 +30,7 @@ export class QuotaEvaluator {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
 
-  constructor(private readonly metering: Pick<MeteringService, 'aggregate'>) {}
+  constructor(private readonly metering: Pick<MeteringService, 'aggregate' | 'latestPointInTime'>) {}
 
   /**
    * Orgs to evaluate: those with at least one non-null quota entitlement row.
@@ -60,28 +60,20 @@ export class QuotaEvaluator {
         continue;
       }
 
-      const from =
-        def.window === 'calendar_month'
-          ? startOfUtcMonth(now)
-          : new Date(0); // point_in_time: read all-time, take the latest snapshot below
-      const to = now;
-
       try {
-        const rows = await this.metering.aggregate({
-          organizationId,
-          from,
-          to,
-          groupBy: 'type',
-          type: def.signal,
-        });
-
         let usage = 0;
         if (def.window === 'point_in_time') {
-          // storage.snapshot is a point-in-time gauge; the recorder (not yet in #212)
-          // would write the latest snapshot. With groupBy:'type' we get the summed
-          // quantity; until a snapshot recorder exists there are no rows -> usage 0.
-          usage = rows.reduce((sum, r) => sum + r.quantity, 0);
+          // Gauge semantics: read the LATEST snapshot per project (summed across
+          // projects), never the historical sum of snapshot events.
+          usage = await this.metering.latestPointInTime(organizationId, def.signal);
         } else {
+          const rows = await this.metering.aggregate({
+            organizationId,
+            from: startOfUtcMonth(now),
+            to: now,
+            groupBy: 'type',
+            type: def.signal,
+          });
           usage = rows.reduce((sum, r) => sum + r.quantity, 0);
         }
 

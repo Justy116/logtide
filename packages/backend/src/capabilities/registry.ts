@@ -105,14 +105,14 @@ export const CAPABILITIES = {
     defaultLimit: null,
     signal: 'storage.snapshot',
     window: 'point_in_time',
-    description: 'Current stored bytes cap (hard-block ingestion). NOTE: #212 does not yet record storage.snapshot, so this never trips until that recorder exists.',
+    description: 'Current stored bytes cap (hard-block ingestion). Read from the latest storage.snapshot (daily estimate: logical bytes within retention).',
   },
   'tracing.max_spans_monthly': {
     kind: 'quota',
     defaultLimit: null,
     signal: 'spans.ingested',
     window: 'calendar_month',
-    description: 'Month-to-date ingested spans cap (hard-block span ingestion). NOTE: #212 does not yet record spans.ingested (deferred follow-up), so this never trips until that recorder exists.',
+    description: 'Month-to-date ingested spans cap (hard-block span ingestion)',
   },
 } as const satisfies Record<string, CapabilityDef>;
 
