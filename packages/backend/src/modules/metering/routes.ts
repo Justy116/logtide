@@ -77,4 +77,28 @@ export async function usageRoutes(fastify: FastifyInstance) {
       throw e;
     }
   });
+
+  // Storage estimate: current value (latest snapshot, summed across projects)
+  // plus the daily trend. storage.snapshot is a gauge - it is read with
+  // last-per-day semantics, never summed over time.
+  fastify.get('/storage', async (request: any, reply) => {
+    try {
+      const q = breakdownQuerySchema.parse(request.query);
+      if (!(await checkMembership(request.user.id, q.organizationId))) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
+      const [current, series] = await Promise.all([
+        meteringService.latestPointInTime(q.organizationId, 'storage.snapshot'),
+        meteringService.storageSeries(q.organizationId, new Date(q.from), new Date(q.to)),
+      ]);
+
+      return reply.send({ current, series });
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Validation error', details: e.errors });
+      }
+      throw e;
+    }
+  });
 }
