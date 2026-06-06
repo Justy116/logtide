@@ -14,7 +14,7 @@ Nothing is registered by default. In an OSS deployment with no external modules 
 |---|---|---|
 | `beforeIngest` | After auth, PII masking and quota checks; after records are converted to reservoir format; immediately before `reservoir.ingestReturning`. | `IngestionService.ingestLogs` in `modules/ingestion/service.ts`. Covers both HTTP ingest (`POST /api/v1/logs`) and OTLP log ingestion, since both go through this method. |
 | `beforeQuery` | At the top of `QueryService.queryLogs`, after request parsing and access checks in the route, before the cache key is built. | `QueryService.queryLogs` in `modules/query/service.ts`. Covers only the main log query path; stats, histogram, trace and context endpoints are not covered in v1 (see limitations). |
-| `beforeAlertEvaluation` | Once per rule, inside the alert evaluation loop, before `checkRule` is called. | `AlertsService.evaluateRules` in `modules/alerts/service.ts`. |
+| `beforeAlertEvaluation` | Once per rule, inside the alert evaluation loop, before `checkRule` is called. | `AlertsService.checkAlertRules` in `modules/alerts/service.ts`. |
 | `beforeWebhookDispatch` | Immediately before the outbound `safeFetch` call, after headers and payload are fully assembled. | `WebhookProvider.send` in `modules/notification-channels/providers/webhook-provider.ts` (notification channel path) AND `sendWebhookNotification` in `queue/jobs/alert-notification.ts` (legacy alert-rule `webhook_url` path). Both paths are covered. |
 
 ---
@@ -146,7 +146,7 @@ A handler throws `HookRejectionError` to abort the operation intentionally. The 
 | `beforeQuery` | The query aborts. Same HTTP error surface as above. |
 | `beforeAlertEvaluation` | That rule is skipped for this evaluation cycle. The rejection is logged (`[Alerts] Rule <id> skipped by hook: <code>`). The rest of the batch continues. |
 | `beforeWebhookDispatch` (channel path) | Delivery is recorded as failed. The provider returns `{ success: false, error: 'Webhook dispatch rejected: <message>' }`. No retry. |
-| `beforeWebhookDispatch` (legacy path) | The error propagates to the job and is recorded as a delivery failure. No retry. |
+| `beforeWebhookDispatch` (legacy path) | The rejection propagates out of `sendWebhookNotification`; the job's catch records `HookRejectionError.message` as a delivery failure string in alert history (raw message, without the channel path's `Webhook dispatch rejected:` prefix). No retry. |
 
 ### Unexpected errors (fail-closed)
 
