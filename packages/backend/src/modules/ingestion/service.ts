@@ -57,7 +57,7 @@ export class IngestionService {
 
     // Extract identifiers from logs before insertion (using org-specific patterns)
     // Note: org_id and project_id are excluded from extraction to avoid storing useless data
-    const identifiersByLog = new Map<number, IdentifierMatch[]>();
+    let identifiersByLog = new Map<number, IdentifierMatch[]>();
     for (let i = 0; i < logs.length; i++) {
       try {
         const identifiers = organizationId
@@ -121,9 +121,8 @@ export class IngestionService {
     // write. Hooks may reject (throw) or mutate/replace `records`.
     // hasHandlers guard keeps the OSS no-hooks path at zero overhead
     // (no byteSize computation, no ctx allocation).
-    // NOTE: filtering records here may desync identifiersByLog (keyed by
-    // original logs index); acceptable for v1.
     if (hooks.hasHandlers('beforeIngest')) {
+      const originalRecords = records.slice();
       const hookCtx: BeforeIngestContext = {
         organizationId: organizationId ?? null,
         projectId,
@@ -135,6 +134,39 @@ export class IngestionService {
       records = hookCtx.records;
       if (records.length === 0) {
         return 0;
+      }
+
+      // Realign the original logs view and identifier indexes with the
+      // (possibly filtered/reordered/replaced) records, so downstream
+      // consumers that pair logs[i] with insertedLogs[i] (sigma, exception
+      // parsing, pipelines, metering, correlation) never see phantom entries.
+      const changed =
+        records.length !== originalRecords.length ||
+        records.some((r, i) => originalRecords[i] !== r);
+      if (changed) {
+        const indexByRecord = new Map(originalRecords.map((r, i) => [r, i]));
+        const realignedLogs: LogInput[] = [];
+        const realignedIdentifiers = new Map<number, IdentifierMatch[]>();
+        records.forEach((r, newIndex) => {
+          const originalIndex = indexByRecord.get(r);
+          if (originalIndex !== undefined) {
+            realignedLogs.push(logs[originalIndex]);
+            const ids = identifiersByLog.get(originalIndex);
+            if (ids) realignedIdentifiers.set(newIndex, ids);
+          } else {
+            // Hook-created record: synthesize a log view for downstream consumers
+            realignedLogs.push({
+              time: r.time,
+              service: r.service,
+              level: r.level,
+              message: r.message,
+              metadata: r.metadata,
+              trace_id: r.traceId,
+            } as LogInput);
+          }
+        });
+        logs = realignedLogs;
+        identifiersByLog = realignedIdentifiers;
       }
     }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { db } from '../../../database/index.js';
 import { reservoirReady } from '../../../database/reservoir.js';
 import { ingestionService } from '../../../modules/ingestion/service.js';
@@ -98,5 +98,38 @@ describe('beforeIngest hook', () => {
 
     const rows = await db.selectFrom('logs').selectAll().where('project_id', '=', projectId).execute();
     expect(rows).toHaveLength(0);
+  });
+
+  it('mutation: a hook can redact a record field in place', async () => {
+    hooks.register('beforeIngest', async (ctx) => {
+      const target = ctx.records.find((r) => r.message === 'drop-me');
+      if (target) target.message = '[REDACTED]';
+    });
+
+    const n = await ingestionService.ingestLogs(logs, projectId);
+    expect(n).toBe(2);
+
+    const rows = await db.selectFrom('logs').selectAll().where('project_id', '=', projectId).execute();
+    const messages = rows.map((r) => r.message).sort();
+    expect(messages).toEqual(['[REDACTED]', 'keep']);
+  });
+
+  it('filtering realigns the logs passed to downstream consumers', async () => {
+    const spy = vi.spyOn(ingestionService as any, 'triggerSigmaDetection').mockResolvedValue(undefined);
+    try {
+      hooks.register('beforeIngest', async (ctx) => {
+        ctx.records = ctx.records.filter((r) => r.message !== 'drop-me');
+      });
+
+      await ingestionService.ingestLogs(logs, projectId);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [logsArg, insertedArg] = spy.mock.calls[0] as [Array<{ message: string }>, Array<unknown>];
+      expect(logsArg).toHaveLength(1);
+      expect(logsArg[0].message).toBe('keep');
+      expect(insertedArg).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
