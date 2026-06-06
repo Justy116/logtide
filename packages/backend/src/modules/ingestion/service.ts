@@ -13,6 +13,8 @@ import { extractHostname } from './routes.js';
 import { recordLogIngestion } from '../metering/index.js';
 import { assertWithinUsageQuota } from '../../capabilities/index.js';
 import { context } from '@logtide/shared/context';
+import { hooks } from '../../hooks/index.js';
+import type { BeforeIngestContext } from '../../hooks/index.js';
 
 /**
  * Remove null characters (\u0000) that PostgreSQL doesn't support in text fields.
@@ -91,7 +93,7 @@ export class IngestionService {
 
     // Convert logs to reservoir LogRecord format
     // Note: reservoir handles null byte sanitization internally
-    const records = logs.map((log) => {
+    let records: BeforeIngestContext['records'] = logs.map((log) => {
       // Extract hostname if not already set in metadata
       const hostname = log.metadata?.hostname || extractHostname(log);
       
@@ -114,6 +116,27 @@ export class IngestionService {
         sessionId: sanitizeForPostgres((log as { session_id?: string }).session_id) || undefined,
       };
     });
+
+    // Lifecycle hook (#216): last interception point before the reservoir
+    // write. Hooks may reject (throw) or mutate/replace `records`.
+    // hasHandlers guard keeps the OSS no-hooks path at zero overhead
+    // (no byteSize computation, no ctx allocation).
+    // NOTE: filtering records here may desync identifiersByLog (keyed by
+    // original logs index); acceptable for v1.
+    if (hooks.hasHandlers('beforeIngest')) {
+      const hookCtx: BeforeIngestContext = {
+        organizationId: organizationId ?? null,
+        projectId,
+        eventCount: records.length,
+        byteSize: Buffer.byteLength(JSON.stringify(records)),
+        records,
+      };
+      await hooks.run('beforeIngest', hookCtx);
+      records = hookCtx.records;
+      if (records.length === 0) {
+        return 0;
+      }
+    }
 
     // Insert via reservoir (raw parametrized SQL with RETURNING *)
     const ingestResult = await reservoir.ingestReturning(records);
