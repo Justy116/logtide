@@ -51,4 +51,22 @@ describe('loadExternalHooks', () => {
       loadExternalHooks(path.join(fixturesDir, 'bad-export.mjs'), registry)
     ).rejects.toThrow(/default-export a function/);
   });
+
+  it('external modules can throw a real HookRejectionError via the helpers arg', async () => {
+    const registry = new HookRegistry();
+    await loadExternalHooks(path.join(fixturesDir, 'sample-hooks.mjs'), registry);
+    await expect(
+      registry.run('beforeIngest', {
+        organizationId: 'org-1',
+        projectId: 'proj-1',
+        eventCount: 5000,
+        byteSize: 1,
+        records: [],
+      })
+    ).rejects.toMatchObject({
+      name: 'HookRejectionError',
+      code: 'policy.batch_too_large',
+      statusCode: 429,
+    });
+  });
 });

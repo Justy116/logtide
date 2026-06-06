@@ -3,11 +3,23 @@ import { pathToFileURL } from 'url';
 import { config } from '../config/index.js';
 import { hooks } from './facade.js';
 import type { HookRegistry } from './registry.js';
+import { HookRejectionError } from './errors.js';
+
+/**
+ * Helpers handed to external modules so they can construct typed errors
+ * without importing backend internals.
+ */
+export interface HookModuleHelpers {
+  HookRejectionError: typeof HookRejectionError;
+}
+
+const moduleHelpers: HookModuleHelpers = { HookRejectionError };
 
 /**
  * Load external hook modules listed in HOOKS_MODULES (comma-separated paths,
  * typically volume-mounted into the container). Each module default-exports
- * `(hooks: HookRegistry) => void | Promise<void>`.
+ * `(hooks: HookRegistry, helpers: HookModuleHelpers) => void | Promise<void>`
+ * (the second argument is optional for modules that only observe/mutate).
  *
  * Any failure (missing file, bad export, register() throwing) is FATAL at
  * boot: operator policy that silently fails to load is worse than a crash.
@@ -38,7 +50,10 @@ export async function loadExternalHooks(
         `[Hooks] Module ${resolved} must default-export a function (hooks: HookRegistry) => void`
       );
     }
-    await (mod.default as (r: HookRegistry) => void | Promise<void>)(registry);
+    await (mod.default as (r: HookRegistry, h: HookModuleHelpers) => void | Promise<void>)(
+      registry,
+      moduleHelpers
+    );
     console.log(`[Hooks] Loaded hooks module: ${resolved}`);
   }
 }

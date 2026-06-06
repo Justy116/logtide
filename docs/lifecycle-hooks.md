@@ -187,18 +187,24 @@ This works because the distribution builds from source and can import `HookRejec
 
 ### `HOOKS_MODULES` (container deployments)
 
-Set `HOOKS_MODULES` to a comma-separated list of absolute paths to `.js` or `.mjs` files. Each file must default-export a function with the signature `(hooks: HookRegistry) => void | Promise<void>`. The loader calls this function at boot, on both the server process and the worker process. A load failure (missing file, bad export, any error from the register function) is fatal: the process exits rather than running without the intended policy.
+Set `HOOKS_MODULES` to a comma-separated list of absolute paths to `.js` or `.mjs` files. Each file must default-export a function with the signature `(hooks: HookRegistry, helpers: HookModuleHelpers) => void | Promise<void>` (the second argument is optional for modules that only observe or mutate). The loader calls this function at boot, on both the server process and the worker process. A load failure (missing file, bad export, any error from the register function) is fatal: the process exits rather than running without the intended policy.
 
 ```
 HOOKS_MODULES=/etc/logtide/hooks/policy.mjs,/etc/logtide/hooks/audit.mjs
 ```
 
+The `helpers` argument carries the `HookRejectionError` class so external modules can produce clean 4xx rejections without importing backend internals. The registry's `instanceof HookRejectionError` check uses the same class reference passed through helpers, so the identity matches correctly.
+
 Example module:
 
 ```js
 // /etc/logtide/hooks/policy.mjs
-export default function register(hooks) {
+export default function register(hooks, { HookRejectionError }) {
   hooks.register('beforeIngest', async (ctx) => {
+    // Reject: block batches that exceed the policy limit with a clean 429
+    if (ctx.byteSize > 5 * 1024 * 1024) {
+      throw new HookRejectionError('policy.batch_too_large', 'Batch exceeds 5MB policy', 429);
+    }
     // Observe-only: log large batches without rejecting
     if (ctx.eventCount > 10000) {
       console.warn(`[Policy] Large batch from project ${ctx.projectId}: ${ctx.eventCount} events`);
@@ -218,24 +224,7 @@ export default function register(hooks) {
 }
 ```
 
-**Critical limitation for external `.mjs` modules and `HookRejectionError`:**
-
-The registry's rejection detection uses `instanceof HookRejectionError`. External `.mjs` files loaded via `HOOKS_MODULES` cannot import the backend's `HookRejectionError` class (they are mounted independently and have no access to the backend module graph). A plain `Error` thrown from an external module does NOT satisfy `instanceof HookRejectionError`; the registry treats it as an unexpected execution failure, wraps it in `HookExecutionError`, and the client sees a 500 `hook.execution_failed` regardless of what `statusCode` you set on the plain error.
-
-This means:
-
-- **Observe and mutate use cases are unaffected.** Handlers that only read context fields or mutate mutable fields never need to throw.
-- **Outright blocking (rejecting the entire operation) from a plain `.mjs` file will fail closed as 500**, not as the intended 4xx. The operation is still blocked; the error surfaced to the client is not what you intended.
-- **To get clean 4xx rejections from an external module**, the downstream distribution must build from source and import `HookRejectionError` directly, or the external module must be bundled together with the backend so the class identity is shared.
-
-The `packages/backend/src/tests/fixtures/hooks/sample-hooks.mjs` fixture calls this out explicitly:
-
-```js
-// NOTE: a plain Error fails closed as HTTP 500. Real policies should
-// throw HookRejectionError(code, message, statusCode) for clean 4xx
-// rejections - plain Error is enough for this loader test.
-throw new Error('batch too large');
-```
+Throwing `HookRejectionError` from an external module surfaces a clean 4xx with a machine-readable code to the client. Any other error fails closed as HTTP 500 (`hook.execution_failed`): the operation is still blocked, but the error surfaced to the client is not the intended 4xx. Observe and mutate use cases never need to throw.
 
 ---
 
