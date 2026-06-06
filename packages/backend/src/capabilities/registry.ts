@@ -112,7 +112,7 @@ export const CAPABILITIES = {
     defaultLimit: null,
     signal: 'spans.ingested',
     window: 'calendar_month',
-    description: 'Month-to-date ingested spans cap (hard-block span ingestion)',
+    description: 'Month-to-date ingested spans cap (hard-block span ingestion). NOTE: #212 does not yet record spans.ingested (deferred follow-up), so this never trips until that recorder exists.',
   },
 } as const satisfies Record<string, CapabilityDef>;
 
