@@ -66,6 +66,10 @@ const configSchema = z.object({
   METERING_FLUSH_INTERVAL_MS: z.string().default('5000').transform(Number),
   METERING_FLUSH_MAX_BUFFER: z.string().default('500').transform(Number),
 
+  // Capability usage-quota evaluator (#214). Periodic job that flags over-quota orgs.
+  QUOTA_EVALUATOR_ENABLED: z.string().default('true').transform((val) => val === 'true'),
+  QUOTA_EVALUATOR_INTERVAL_MS: z.string().default('60000').transform(Number),
+
   // Outbound SSRF guard. By default, HTTP/TCP monitors and webhook delivery
   // reject loopback/private/link-local/reserved targets. Self-hosted
   // deployments that legitimately monitor internal services can opt in.

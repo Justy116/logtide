@@ -11,6 +11,8 @@ import { piiMaskingService } from '../pii-masking/service.js';
 import { projectsService } from '../projects/service.js';
 import { extractHostname } from './routes.js';
 import { recordLogIngestion } from '../metering/index.js';
+import { assertWithinUsageQuota } from '../../capabilities/index.js';
+import { context } from '@logtide/shared/context';
 
 /**
  * Remove null characters (\u0000) that PostgreSQL doesn't support in text fields.
@@ -76,6 +78,15 @@ export class IngestionService {
         // Don't fail ingestion if PII masking fails
         console.warn('[Ingestion] PII masking failed, proceeding with unmasked data:', err);
       }
+    }
+
+    // Capability: hard-block ingestion when over a usage quota (#214).
+    // Reads only the in-memory over-quota flag (no DB on the hot path).
+    // Guarded: only assert when the request context org matches the project org; anonymous/missing-org ingestion is never blocked.
+    if (organizationId && context.currentOrNull()?.organizationId === organizationId) {
+      await assertWithinUsageQuota('ingestion.max_bytes_monthly');
+      await assertWithinUsageQuota('ingestion.max_events_monthly');
+      await assertWithinUsageQuota('storage.max_bytes');
     }
 
     // Convert logs to reservoir LogRecord format

@@ -1,0 +1,136 @@
+import { db } from '../database/index.js';
+import { config } from '../config/index.js';
+import { context } from '@logtide/shared/context';
+import { capabilities } from './facade.js';
+import { quotaFlagCache } from './quota-cache.js';
+import {
+  CAPABILITIES,
+  CAPABILITY_NAMES,
+  type CapabilityName,
+} from './registry.js';
+import type { MeteringService } from '../modules/metering/index.js';
+
+const QUOTA_CAPABILITIES = CAPABILITY_NAMES.filter(
+  (n) => CAPABILITIES[n].kind === 'quota'
+) as CapabilityName[];
+
+/** Start of the current UTC calendar month. */
+function startOfUtcMonth(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+}
+
+/**
+ * Periodic job: the single place that joins a configured quota limit (#214) to
+ * measured usage (#212). For each org that has at least one non-null quota limit,
+ * it reads usage via MeteringService.aggregate and writes per-capability over-quota
+ * flags into the in-memory cache. Fail-open: a metering-read failure leaves the
+ * flag unset (under quota).
+ */
+export class QuotaEvaluator {
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private running = false;
+
+  constructor(private readonly metering: Pick<MeteringService, 'aggregate'>) {}
+
+  /**
+   * Orgs to evaluate: those with at least one non-null quota entitlement row.
+   * Cost scales with restricted orgs, not total orgs.
+   */
+  private async restrictedOrgIds(): Promise<string[]> {
+    const rows = await db
+      .selectFrom('organization_entitlements')
+      .select('organization_id')
+      .distinct()
+      .where('capability', 'in', QUOTA_CAPABILITIES)
+      .where('limit_value', 'is not', null)
+      .execute();
+    return rows.map((r) => r.organization_id);
+  }
+
+  private async evaluateOrg(organizationId: string, now: Date): Promise<void> {
+    const flags: Partial<Record<CapabilityName, boolean>> = {};
+
+    for (const cap of QUOTA_CAPABILITIES) {
+      const def = CAPABILITIES[cap];
+      if (def.kind !== 'quota') continue;
+
+      const limit = await capabilities.getLimit(organizationId, cap);
+      if (limit === null) {
+        flags[cap] = false; // unlimited
+        continue;
+      }
+
+      const from =
+        def.window === 'calendar_month'
+          ? startOfUtcMonth(now)
+          : new Date(0); // point_in_time: read all-time, take the latest snapshot below
+      const to = now;
+
+      try {
+        const rows = await this.metering.aggregate({
+          organizationId,
+          from,
+          to,
+          groupBy: 'type',
+          type: def.signal,
+        });
+
+        let usage = 0;
+        if (def.window === 'point_in_time') {
+          // storage.snapshot is a point-in-time gauge; the recorder (not yet in #212)
+          // would write the latest snapshot. With groupBy:'type' we get the summed
+          // quantity; until a snapshot recorder exists there are no rows -> usage 0.
+          usage = rows.reduce((sum, r) => sum + r.quantity, 0);
+        } else {
+          usage = rows.reduce((sum, r) => sum + r.quantity, 0);
+        }
+
+        flags[cap] = usage >= limit;
+      } catch (err) {
+        // Fail-open: leave this capability's flag unset (under quota).
+        console.warn(
+          `[QuotaEvaluator] metering read failed for org ${organizationId} cap ${cap}, leaving under-quota:`,
+          err
+        );
+      }
+    }
+
+    quotaFlagCache.setOrgFlags(organizationId, flags);
+  }
+
+  /** One full pass over all restricted orgs. Exposed for tests and for the interval. */
+  async runOnce(): Promise<void> {
+    const now = new Date();
+    const orgIds = await this.restrictedOrgIds();
+    for (const orgId of orgIds) {
+      await this.evaluateOrg(orgId, now);
+    }
+  }
+
+  start(): void {
+    if (this.timer || !config.QUOTA_EVALUATOR_ENABLED) return;
+    const tick = () => {
+      void context.runAsSystem('cron:quota-evaluator', async () => {
+        if (this.running) return; // in-flight lock
+        this.running = true;
+        try {
+          await this.runOnce();
+        } catch (err) {
+          console.error('[QuotaEvaluator] tick failed:', err);
+        } finally {
+          this.running = false;
+        }
+      });
+    };
+    this.timer = setInterval(tick, config.QUOTA_EVALUATOR_INTERVAL_MS);
+    if (typeof this.timer.unref === 'function') this.timer.unref();
+    tick(); // run immediately on start
+  }
+
+  stop(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+}

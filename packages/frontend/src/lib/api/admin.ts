@@ -218,6 +218,20 @@ export interface OrganizationsListResponse {
     totalPages: number;
 }
 
+// Capability entitlements (#214)
+export type EntitlementValue =
+    | { kind: 'boolean'; enabled: boolean }
+    | { kind: 'limit'; limit: number | null }
+    | { kind: 'quota'; limit: number | null };
+
+export type EntitlementMap = Record<string, EntitlementValue>;
+
+export interface EntitlementUpdate {
+    capability: string;
+    enabled?: boolean;
+    limitValue?: number | null;
+}
+
 // Project Management Interfaces
 export interface ProjectBasic {
     id: string;
@@ -603,6 +617,10 @@ class AdminAPI {
         return this.fetch<OrganizationDetails>(`/organizations/${orgId}`);
     }
 
+    async getOrganizationEntitlements(orgId: string): Promise<{ entitlements: EntitlementMap }> {
+        return this.fetch<{ entitlements: EntitlementMap }>(`/organizations/${orgId}/entitlements`);
+    }
+
     async deleteOrganization(orgId: string): Promise<{ message: string }> {
         const auth = get(authStore);
         const token = auth.token;
@@ -647,6 +665,35 @@ class AdminAPI {
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.error || 'Failed to update retention policy');
+        }
+
+        return response.json();
+    }
+
+    async updateOrganizationEntitlements(
+        orgId: string,
+        entitlements: EntitlementUpdate[]
+    ): Promise<{ message: string; updated: number }> {
+        const auth = get(authStore);
+        const token = auth.token;
+
+        if (!token) {
+            goto('/login');
+            throw new Error('No token found');
+        }
+
+        const response = await fetch(`${getApiBaseUrl()}/admin/organizations/${orgId}/entitlements`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ entitlements }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to update entitlements');
         }
 
         return response.json();

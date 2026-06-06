@@ -16,6 +16,8 @@ import { detectContentType, isGzipCompressed, decompressGzip } from './parser.js
 import { tracesService } from '../traces/service.js';
 import { config } from '../../config/index.js';
 import { db } from '../../database/index.js';
+import { context } from '@logtide/shared/context';
+import { assertWithinUsageQuota } from '../../capabilities/index.js';
 
 /**
  * Helper to collect chunks from a stream into a buffer.
@@ -128,6 +130,18 @@ const otlpTraceRoutes: FastifyPluginAsync = async (fastify) => {
             error: { type: 'string' },
           },
         },
+        429: {
+          type: 'object',
+          properties: {
+            partialSuccess: {
+              type: 'object',
+              properties: {
+                rejectedSpans: { type: 'number' },
+                errorMessage: { type: 'string' },
+              },
+            },
+          },
+        },
       },
     },
     handler: async (request: any, reply) => {
@@ -205,8 +219,14 @@ const otlpTraceRoutes: FastifyPluginAsync = async (fastify) => {
           };
         }
 
-        // Ingest spans and trace aggregations
-        await tracesService.ingestSpans(spans, traces, projectId, project.organization_id);
+        // Capability: hard-block span ingestion when over the tracing quota (#214).
+        // Establish the org context so assertWithinUsageQuota can read it, then ingest.
+        await context.runAsSystem('otlp:trace-ingest', async () => {
+          await context.with({ organizationId: project.organization_id }, async () => {
+            await assertWithinUsageQuota('tracing.max_spans_monthly');
+            await tracesService.ingestSpans(spans, traces, projectId, project.organization_id);
+          });
+        });
 
         return {
           partialSuccess: {
@@ -216,6 +236,16 @@ const otlpTraceRoutes: FastifyPluginAsync = async (fastify) => {
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+        // Over-quota span batches return 429 (retry later / upgrade), not 400.
+        if (error && (error as any).statusCode === 429) {
+          return reply.code(429).send({
+            partialSuccess: {
+              rejectedSpans: -1,
+              errorMessage,
+            },
+          });
+        }
 
         console.error('[OTLP Traces] Ingestion error:', errorMessage);
 

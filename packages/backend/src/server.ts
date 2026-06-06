@@ -34,7 +34,9 @@ import { correlationRoutes, patternRoutes } from './modules/correlation/index.js
 import { piiMaskingRoutes } from './modules/pii-masking/index.js';
 import { pipelineRoutes } from './modules/log-pipeline/index.js';
 import { customDashboardsRoutes } from './modules/custom-dashboards/index.js';
-import { usageRoutes, meteringRecorder } from './modules/metering/index.js';
+import { usageRoutes, meteringRecorder, meteringService } from './modules/metering/index.js';
+import { capabilitiesRoutes, adminEntitlementsRoutes } from './modules/capabilities/index.js';
+import { QuotaEvaluator } from './capabilities/index.js';
 import { monitoringRoutes, heartbeatRoutes, publicStatusRoutes } from './modules/monitoring/index.js';
 import { statusIncidentRoutes } from './modules/status-incidents/routes.js';
 import { maintenanceRoutes } from './modules/maintenances/routes.js';
@@ -60,6 +62,8 @@ const packageJson = JSON.parse(readFileSync(path.resolve(__serverDirname, '../pa
 
 const PORT = config.PORT;
 const HOST = config.HOST;
+
+const quotaEvaluator = new QuotaEvaluator(meteringService);
 
 export async function build(opts = {}) {
   const fastify = Fastify({
@@ -96,6 +100,9 @@ export async function build(opts = {}) {
         body.details = (error as any).validation;
       } else if ((error as any).name === 'ZodError' && Array.isArray((error as any).errors)) {
         body.details = (error as any).errors;
+      }
+      if (typeof (error as any).code === 'string') {
+        body.code = (error as any).code;
       }
       reply.code(statusCode).send(body);
       return;
@@ -182,6 +189,7 @@ export async function build(opts = {}) {
   await fastify.register(settingsRoutes, { prefix: '/api/v1/admin/settings' });
   await fastify.register(auditLogRoutes, { prefix: '/api/v1/audit-log' });
   await fastify.register(retentionRoutes, { prefix: '/api/v1/admin' });
+  await fastify.register(adminEntitlementsRoutes, { prefix: '/api/v1/admin' });
 
   await fastify.register(authPlugin);
   await fastify.register(contextPlugin);
@@ -193,6 +201,7 @@ export async function build(opts = {}) {
   await fastify.register(pipelineRoutes, { prefix: '/api/v1/log-pipelines' });
   await fastify.register(customDashboardsRoutes, { prefix: '/api/v1/custom-dashboards' });
   await fastify.register(usageRoutes, { prefix: '/api/v1/usage' });
+  await fastify.register(capabilitiesRoutes, { prefix: '/api/v1/capabilities' });
   await fastify.register(otlpRoutes);
   await fastify.register(otlpTraceRoutes);
   await fastify.register(otlpMetricRoutes);
@@ -220,6 +229,7 @@ async function start() {
   await enrichmentService.initialize();
   await notificationManager.initialize(config.DATABASE_URL);
   meteringRecorder.start();
+  quotaEvaluator.start();
 
   const authMode = await settingsService.getAuthMode();
   if (authMode === 'none') {
@@ -231,6 +241,7 @@ async function start() {
 
   const shutdown = async () => {
     console.log('[Server] Shutting down gracefully...');
+    quotaEvaluator.stop();
     await meteringRecorder.stop();
     await auditLogService.shutdown();
     await notificationManager.shutdown();

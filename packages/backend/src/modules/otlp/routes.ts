@@ -15,6 +15,8 @@ import { parseOtlpRequest, detectContentType, decompressGzip, isGzipCompressed }
 import { transformOtlpToLogTide } from './transformer.js';
 import { ingestionService } from '../ingestion/service.js';
 import { config } from '../../config/index.js';
+import { db } from '../../database/index.js';
+import { context } from '@logtide/shared/context';
 
 /**
  * Helper to collect chunks from a stream into a buffer.
@@ -132,6 +134,18 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
             error: { type: 'string' },
           },
         },
+        429: {
+          type: 'object',
+          properties: {
+            partialSuccess: {
+              type: 'object',
+              properties: {
+                rejectedLogRecords: { type: 'number' },
+                errorMessage: { type: 'string' },
+              },
+            },
+          },
+        },
       },
     },
     handler: async (request: any, reply) => {
@@ -143,6 +157,22 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
           partialSuccess: {
             rejectedLogRecords: -1,
             errorMessage: 'Unauthorized: Missing or invalid API key',
+          },
+        });
+      }
+
+      // Get organization_id for the project so quota enforcement has org context.
+      const project = await db
+        .selectFrom('projects')
+        .select(['organization_id'])
+        .where('id', '=', projectId)
+        .executeTakeFirst();
+
+      if (!project) {
+        return reply.code(401).send({
+          partialSuccess: {
+            rejectedLogRecords: -1,
+            errorMessage: 'Unauthorized: Project not found',
           },
         });
       }
@@ -189,7 +219,8 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
           };
         }
 
-        // Ingest logs using existing service
+        // Ingest logs using existing service.
+        // Wrap in org context so the ingestion service quota guard can read organizationId.
         // Convert TransformedLog to LogInput format
         const logInputs = logs.map((log) => ({
           time: log.time,
@@ -201,7 +232,11 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
           span_id: log.span_id,
         }));
 
-        await ingestionService.ingestLogs(logInputs, projectId);
+        await context.runAsSystem('otlp:log-ingest', async () => {
+          await context.with({ organizationId: project.organization_id }, async () => {
+            await ingestionService.ingestLogs(logInputs, projectId);
+          });
+        });
 
         return {
           partialSuccess: {
@@ -211,6 +246,16 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+        // Over-quota log batches return 429 (retry later / upgrade), not 400.
+        if (error && (error as any).statusCode === 429) {
+          return reply.code(429).send({
+            partialSuccess: {
+              rejectedLogRecords: -1,
+              errorMessage,
+            },
+          });
+        }
 
         console.error('[OTLP] Ingestion error:', errorMessage);
 
