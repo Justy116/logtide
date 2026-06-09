@@ -15,6 +15,8 @@ import { processMonitorNotification, type MonitorNotificationJob } from './queue
 import { processLogPipeline, type LogPipelineJobData } from './queue/jobs/log-pipeline.js';
 import { processDigestGeneration } from './queue/jobs/digest-generation.js';
 import type { DigestJobPayload } from './modules/digests/scheduler.js';
+import { processWebhookDelivery } from './queue/jobs/webhook-delivery.js';
+import type { WebhookDeliveryJobData } from './modules/webhooks/types.js';
 import { alertsService } from './modules/alerts/index.js';
 import { monitorService } from './modules/monitoring/index.js';
 import { maintenanceService } from './modules/maintenances/service.js';
@@ -88,6 +90,11 @@ const digestWorker = createWorker<DigestJobPayload>('digest-generation', async (
   await processDigestGeneration(job);
 });
 await digestScheduler.registerAllDigests();
+
+// Create worker for outbound webhook delivery (#218)
+const webhookDeliveryWorker = createWorker<WebhookDeliveryJobData>('webhook-delivery', async (job) => {
+  await processWebhookDelivery(job);
+});
 
 // Start workers (required for graphile-worker backend, no-op for BullMQ)
 console.log(`[Worker] Using queue backend: ${getQueueBackend()}`);
@@ -311,6 +318,17 @@ digestWorker.on('failed', (job, err) => {
       jobId: job?.id,
       organizationId: job?.data?.organizationId,
       frequency: job?.data?.frequency,
+    });
+  }
+});
+
+webhookDeliveryWorker.on('failed', (job, err) => {
+  console.error(`Webhook delivery job ${job?.id} failed:`, err);
+  if (isInternalLoggingEnabled()) {
+    hub.captureLog('error', `Webhook delivery job failed: ${err.message}`, {
+      error: { name: err.name, message: err.message, stack: err.stack },
+      jobId: job?.id,
+      deliveryId: job?.data?.deliveryId,
     });
   }
 });
@@ -719,6 +737,7 @@ async function gracefulShutdown(signal: string) {
     await monitorNotificationWorker.close();
     await pipelineWorker.close();
     await digestWorker.close();
+    await webhookDeliveryWorker.close();
     console.log('[Worker] Workers closed');
 
     // Close queue system (Redis/PostgreSQL connections)
