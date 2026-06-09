@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { processAlertNotification, type AlertNotificationData } from '../../../queue/jobs/alert-notification.js';
+import { hooks, HookRejectionError } from '../../../hooks/index.js';
 import { db } from '../../../database/index.js';
 import { createTestContext, createTestUser } from '../../helpers/factories.js';
 
@@ -90,10 +91,12 @@ describe('Alert Notification Job', () => {
         mockFetch.mockReset();
         mockGetAlertRuleChannels.mockReset();
         mockGetAlertRuleChannels.mockResolvedValue([]);
+        hooks.clear();
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
+        hooks.clear();
     });
 
     describe('processAlertNotification', () => {
@@ -659,6 +662,97 @@ describe('Alert Notification Job', () => {
             expect(alertsService.markAsNotified).toHaveBeenCalledWith(
                 jobData.historyId,
                 expect.stringContaining('503')
+            );
+        });
+    });
+
+    describe('beforeWebhookDispatch hook (legacy alert webhook)', () => {
+        it('hook receives ruleId and org; mutation reaches the outbound request', async () => {
+            const { organization, project } = await createTestContext();
+
+            mockFetch.mockResolvedValue({ ok: true, status: 200, statusText: 'OK', text: async () => '' });
+
+            mockGetAlertRuleChannels.mockResolvedValueOnce([{
+                id: '00000000-0000-0000-0000-000000000010',
+                type: 'webhook',
+                enabled: true,
+                config: { url: 'https://example.com/legacy-hook' },
+            }]);
+
+            let seen: any = null;
+            hooks.register('beforeWebhookDispatch', async (ctx) => {
+                seen = {
+                    ruleId: ctx.ruleId,
+                    organizationId: ctx.organizationId,
+                    targetHost: ctx.targetHost,
+                    channelId: ctx.channelId,
+                    url: ctx.url,
+                };
+                ctx.headers['X-Injected'] = 'yes';
+            });
+
+            const jobData: AlertNotificationData = {
+                historyId: '00000000-0000-0000-0000-000000000001',
+                rule_id: '00000000-0000-0000-0000-000000000002',
+                rule_name: 'Hook Test Rule',
+                organization_id: organization.id,
+                project_id: project.id,
+                log_count: 100,
+                threshold: 50,
+                time_window: 5,
+                email_recipients: [],
+                webhook_url: undefined,
+            };
+
+            await processAlertNotification({ data: jobData });
+
+            expect(seen).not.toBeNull();
+            expect(seen.targetHost).toBe('example.com');
+            expect(seen.ruleId).toBe(jobData.rule_id);
+            expect(seen.url).toBe('https://example.com/legacy-hook');
+            expect(seen.organizationId).toBe(organization.id);
+            expect(seen.channelId).toBe('00000000-0000-0000-0000-000000000010');
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            const [, init] = mockFetch.mock.calls[0];
+            expect(init.headers['X-Injected']).toBe('yes');
+        });
+
+        it('rejection blocks the legacy webhook delivery: no HTTP call', async () => {
+            const { organization, project } = await createTestContext();
+            const { alertsService } = await import('../../../modules/alerts/index.js');
+
+            mockGetAlertRuleChannels.mockResolvedValueOnce([{
+                id: '00000000-0000-0000-0000-000000000010',
+                type: 'webhook',
+                enabled: true,
+                config: { url: 'https://example.com/legacy-hook' },
+            }]);
+
+            hooks.register('beforeWebhookDispatch', async () => {
+                throw new HookRejectionError('policy.webhook_blocked', 'blocked');
+            });
+
+            const jobData: AlertNotificationData = {
+                historyId: '00000000-0000-0000-0000-000000000001',
+                rule_id: '00000000-0000-0000-0000-000000000002',
+                rule_name: 'Hook Rejection Test Rule',
+                organization_id: organization.id,
+                project_id: project.id,
+                log_count: 100,
+                threshold: 50,
+                time_window: 5,
+                email_recipients: [],
+                webhook_url: undefined,
+            };
+
+            // processAlertNotification swallows webhook errors into the errors array
+            // and calls markAsNotified with the error message; it does not rethrow.
+            await processAlertNotification({ data: jobData });
+
+            expect(mockFetch).not.toHaveBeenCalled();
+            expect(alertsService.markAsNotified).toHaveBeenCalledWith(
+                jobData.historyId,
+                expect.stringContaining('blocked')
             );
         });
     });

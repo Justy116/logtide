@@ -7,6 +7,7 @@ import type { NotificationProvider, NotificationContext, DeliveryResult } from '
 import type { WebhookChannelConfig, ChannelConfig } from '@logtide/shared';
 import { safeFetch, SsrfBlockedError } from '../../../utils/ssrf-guard.js';
 import { config } from '../../../config/index.js';
+import { hooks, HookRejectionError } from '../../../hooks/index.js';
 
 export class WebhookProvider implements NotificationProvider {
   readonly type = 'webhook' as const;
@@ -42,6 +43,33 @@ export class WebhookProvider implements NotificationProvider {
       }
 
       const payload = this.buildPayload(context);
+
+      // Lifecycle hook (#216): last interception point before the outbound
+      // call. headers/body are mutable; url stays readonly (safeFetch still
+      // SSRF-validates regardless).
+      if (hooks.hasHandlers('beforeWebhookDispatch')) {
+        let targetHost: string;
+        try {
+          targetHost = new URL(webhookConfig.url).hostname;
+        } catch {
+          return { success: false, error: 'Invalid webhook configuration' };
+        }
+        try {
+          await hooks.run('beforeWebhookDispatch', {
+            organizationId: context.organizationId || null,
+            channelId: context.channelId,
+            url: webhookConfig.url,
+            targetHost,
+            headers,
+            body: payload,
+          });
+        } catch (e) {
+          if (e instanceof HookRejectionError) {
+            return { success: false, error: `Webhook dispatch rejected: ${e.message}` };
+          }
+          return { success: false, error: 'Webhook dispatch blocked: hook failed' };
+        }
+      }
 
       // safeFetch validates the URL (and every redirect hop) against the SSRF
       // guard before connecting. Private/internal targets are rejected unless

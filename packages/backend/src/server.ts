@@ -37,6 +37,7 @@ import { customDashboardsRoutes } from './modules/custom-dashboards/index.js';
 import { usageRoutes, meteringRecorder, meteringService } from './modules/metering/index.js';
 import { capabilitiesRoutes, adminEntitlementsRoutes } from './modules/capabilities/index.js';
 import { QuotaEvaluator } from './capabilities/index.js';
+import { loadExternalHooks } from './hooks/index.js';
 import { storageSnapshotJob } from './modules/metering/storage-snapshot.js';
 import { monitoringRoutes, heartbeatRoutes, publicStatusRoutes } from './modules/monitoring/index.js';
 import { statusIncidentRoutes } from './modules/status-incidents/routes.js';
@@ -224,6 +225,7 @@ export async function build(opts = {}) {
 async function start() {
   validateStorageConfig();
 
+  await loadExternalHooks();
   await bootstrapService.runInitialBootstrap();
   await initializeInternalLogging();
   auditLogService.start();

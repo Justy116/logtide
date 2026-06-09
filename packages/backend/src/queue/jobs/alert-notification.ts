@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import { config } from '../../config/index.js';
 import { generateAlertEmail, getFrontendUrl } from '../../lib/email-templates.js';
 import { safeFetch, SsrfBlockedError } from '../../utils/ssrf-guard.js';
+import { hooks } from '../../hooks/index.js';
 import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
 export interface AlertNotificationData {
@@ -130,21 +131,23 @@ export async function processAlertNotification(job: any) {
       console.log(`No email recipients configured for: ${data.rule_name}`);
     }
 
-    // STEP 5: Collect webhook URLs from notification channels
-    const webhookUrls = new Set<string>();
+    // STEP 5: Collect webhook targets from notification channels
+    // (dedup by URL; first channel wins for hook attribution)
+    const webhookTargets = new Map<string, string>();
 
-    // Add webhook URLs from channels
     channels
       .filter((ch) => ch.type === 'webhook' && ch.enabled)
       .forEach((ch) => {
         const webhookConfig = ch.config as WebhookChannelConfig;
-        webhookUrls.add(webhookConfig.url);
+        if (!webhookTargets.has(webhookConfig.url)) {
+          webhookTargets.set(webhookConfig.url, ch.id);
+        }
       });
 
     // STEP 6: Send webhooks
-    for (const url of webhookUrls) {
+    for (const [url, channelId] of webhookTargets) {
       try {
-        await sendWebhookNotification({ ...data, webhook_url: url });
+        await sendWebhookNotification({ ...data, webhook_url: url }, channelId);
         console.log(`Webhook notification sent: ${data.rule_name} -> ${url}`);
       } catch (error) {
         const errMsg = `Webhook failed (${url}): ${error instanceof Error ? error.message : 'Unknown error'}`;
@@ -153,7 +156,7 @@ export async function processAlertNotification(job: any) {
       }
     }
 
-    if (webhookUrls.size === 0) {
+    if (webhookTargets.size === 0) {
       console.log(`No webhook configured for: ${data.rule_name}`);
     }
 
@@ -214,10 +217,48 @@ async function sendEmailNotification(data: AlertNotificationData & { organizatio
   console.log(`Email sent to: ${data.email_recipients.join(', ')}`);
 }
 
-async function sendWebhookNotification(data: AlertNotificationData) {
+async function sendWebhookNotification(data: AlertNotificationData, channelId?: string) {
   if (!data.webhook_url) return;
 
   const frontendUrl = getFrontendUrl();
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'LogTide/1.0',
+  };
+  const body: Record<string, unknown> = {
+    event_type: data.baseline_metadata ? 'anomaly' : 'alert',
+    alert_name: data.rule_name,
+    log_count: data.log_count,
+    threshold: data.threshold,
+    time_window: data.time_window,
+    organization_id: data.organization_id,
+    project_id: data.project_id,
+    baseline_metadata: data.baseline_metadata || null,
+    link: `${frontendUrl}/dashboard/alerts`,
+    timestamp: new Date().toISOString(),
+  };
+
+  // Lifecycle hook (#216): same interception point as WebhookProvider.
+  // A rejection (or broken hook) propagates and is recorded as a delivery
+  // failure by the caller; the HTTP call never happens.
+  if (hooks.hasHandlers('beforeWebhookDispatch')) {
+    let targetHost: string;
+    try {
+      targetHost = new URL(data.webhook_url).hostname;
+    } catch {
+      throw new Error(`Invalid webhook URL: ${data.webhook_url}`);
+    }
+    await hooks.run('beforeWebhookDispatch', {
+      organizationId: data.organization_id,
+      ruleId: data.rule_id,
+      channelId,
+      url: data.webhook_url,
+      targetHost,
+      headers,
+      body,
+    });
+  }
 
   // SSRF protection: route delivery through the centralized outbound guard
   // (safeFetch resolves the host, rejects loopback/private/link-local/CGNAT/
@@ -230,22 +271,8 @@ async function sendWebhookNotification(data: AlertNotificationData) {
       data.webhook_url,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'LogTide/1.0',
-        },
-        body: JSON.stringify({
-          event_type: data.baseline_metadata ? 'anomaly' : 'alert',
-          alert_name: data.rule_name,
-          log_count: data.log_count,
-          threshold: data.threshold,
-          time_window: data.time_window,
-          organization_id: data.organization_id,
-          project_id: data.project_id,
-          baseline_metadata: data.baseline_metadata || null,
-          link: `${frontendUrl}/dashboard/alerts`,
-          timestamp: new Date().toISOString(),
-        }),
+        headers,
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(10000),
       },
       { allowPrivate: config.MONITOR_ALLOW_PRIVATE_TARGETS }

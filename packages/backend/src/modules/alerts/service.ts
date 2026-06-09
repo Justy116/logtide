@@ -4,6 +4,7 @@ import type { LogLevel, MetadataFilter } from '@logtide/shared';
 import type { AlertType, BaselineType, BaselineMetadata } from '../../database/types.js';
 import { baselineCalculator } from './baseline-calculator.js';
 import { reservoir } from '../../database/reservoir.js';
+import { hooks, HookRejectionError } from '../../hooks/index.js';
 
 // Preview types
 export type { LogLevel } from '@logtide/shared';
@@ -325,6 +326,25 @@ export class AlertsService {
     const triggeredAlerts = [];
 
     for (const rule of rules) {
+      // Lifecycle hook (#216): rejection (or a broken hook) skips THIS rule
+      // and the batch continues - a hook must never kill the whole cron run.
+      if (hooks.hasHandlers('beforeAlertEvaluation')) {
+        try {
+          await hooks.run('beforeAlertEvaluation', {
+            organizationId: rule.organization_id,
+            ruleId: rule.id,
+            ruleType: rule.alert_type === 'rate_of_change' ? 'rate_of_change' : 'threshold',
+          });
+        } catch (err) {
+          if (err instanceof HookRejectionError) {
+            console.log(`[Alerts] Rule ${rule.id} skipped by hook: ${err.code}`);
+          } else {
+            console.error(`[Alerts] Rule ${rule.id} skipped, hook failed:`, err);
+          }
+          continue;
+        }
+      }
+
       const triggered = await this.checkRule(rule, orgProjectsMap);
       if (triggered) {
         triggeredAlerts.push(triggered);
