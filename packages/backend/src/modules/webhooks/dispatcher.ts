@@ -19,19 +19,16 @@ const RESPONSE_EXCERPT_MAX = 500;
 
 export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnceResult> {
   const started = Date.now();
-  const bodyString = JSON.stringify(params.body ?? {});
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'User-Agent': 'LogTide/1.0',
     ...(params.headers ?? {}),
   };
-  if (params.signingSecret) {
-    const unix = Math.floor(Date.now() / 1000);
-    Object.assign(headers, buildSignatureHeaders(params.signingSecret, bodyString, unix));
-  }
 
   // Lifecycle hook (#216): last interception point before the outbound call.
+  // Runs BEFORE the body is serialized and signed so that header/body mutations
+  // made by the hook reach the actual request (and are covered by the signature).
   if (hooks.hasHandlers('beforeWebhookDispatch')) {
     let targetHost: string;
     try {
@@ -53,6 +50,13 @@ export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnc
       const msg = e instanceof HookRejectionError ? `rejected: ${e.message}` : 'blocked: hook failed';
       return { success: false, durationMs: Date.now() - started, error: `Webhook dispatch ${msg}`, retryable: false };
     }
+  }
+
+  // Serialize and sign AFTER the hook so mutations are included.
+  const bodyString = JSON.stringify(params.body ?? {});
+  if (params.signingSecret) {
+    const unix = Math.floor(Date.now() / 1000);
+    Object.assign(headers, buildSignatureHeaders(params.signingSecret, bodyString, unix));
   }
 
   try {
