@@ -41,7 +41,7 @@ describe('webhookDeliveryService', () => {
     const d = await webhookDeliveryService.createDelivery({
       organizationId: orgId, eventType: 'alert', eventId: 'evt-3', url: 'https://e.com', maxAttempts: 5,
     });
-    await webhookDeliveryService.markDead(d.id, 'gave up');
+    await webhookDeliveryService.markDead(d.id, 3, 'gave up');
     const dead = await webhookDeliveryService.listDeliveries(orgId, { status: 'dead', limit: 50, offset: 0 });
     expect(dead.map((x) => x.id)).toContain(d.id);
   });
@@ -50,7 +50,7 @@ describe('webhookDeliveryService', () => {
     const d = await webhookDeliveryService.createDelivery({
       organizationId: orgId, eventType: 'alert', eventId: 'evt-4', url: 'https://e.com', maxAttempts: 5,
     });
-    await webhookDeliveryService.markDead(d.id, 'gave up');
+    await webhookDeliveryService.markDead(d.id, 3, 'gave up');
     const reset = await webhookDeliveryService.resetForReplay(d.id);
     expect(reset?.status).toBe('pending');
     expect(reset?.attempt_count).toBe(0);

@@ -103,10 +103,10 @@ export const webhookDeliveryService = {
       .execute();
   },
 
-  async markDead(id: string, lastError: string): Promise<void> {
+  async markDead(id: string, attemptCount: number, lastError: string): Promise<void> {
     await db
       .updateTable('webhook_deliveries')
-      .set({ status: 'dead', next_attempt_at: null, last_error: lastError, updated_at: new Date() })
+      .set({ status: 'dead', attempt_count: attemptCount, next_attempt_at: null, last_error: lastError, updated_at: new Date() })
       .where('id', '=', id)
       .execute();
   },

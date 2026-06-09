@@ -66,7 +66,7 @@ export async function processWebhookDelivery(job: IJob<WebhookDeliveryJobData>):
 
   const canRetry = result.retryable && attemptNumber < delivery.max_attempts;
   if (!canRetry) {
-    await webhookDeliveryService.markDead(delivery.id, result.error ?? 'delivery failed');
+    await webhookDeliveryService.markDead(delivery.id, attemptNumber, result.error ?? 'delivery failed');
     return;
   }
 

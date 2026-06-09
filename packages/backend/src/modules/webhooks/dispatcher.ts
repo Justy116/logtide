@@ -144,8 +144,14 @@ export const webhookDispatcher = {
     return { deliveryId: delivery.id };
   },
 
-  /** Re-enqueue an already-persisted delivery (used by manual replay). */
+  /**
+   * Re-enqueue an already-persisted delivery (used by manual replay). The
+   * jobKey dedupes rapid double-replays of the same delivery.
+   */
   async enqueueExisting(deliveryId: string): Promise<void> {
-    await webhookQueue.add('deliver', { deliveryId }, { maxAttempts: 1 });
+    await webhookQueue.add('deliver', { deliveryId }, {
+      jobKey: `webhook-replay:${deliveryId}`,
+      maxAttempts: 1,
+    });
   },
 };

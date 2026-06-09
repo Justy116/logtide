@@ -54,7 +54,7 @@ describe('processWebhookDelivery', () => {
     svc.getDelivery.mockResolvedValue(delivery({ attempt_count: 4, max_attempts: 5 }));
     deliverOnceMock.mockResolvedValue({ success: false, statusCode: 503, durationMs: 5, error: 'HTTP 503', retryable: true });
     await processWebhookDelivery({ id: 'j', name: 'deliver', data: { deliveryId: 'del-1' } } as IJob<WebhookDeliveryJobData>);
-    expect(svc.markDead).toHaveBeenCalledWith('del-1', 'HTTP 503');
+    expect(svc.markDead).toHaveBeenCalledWith('del-1', 5, 'HTTP 503');
     expect(addMock).not.toHaveBeenCalled();
   });
 
@@ -62,7 +62,7 @@ describe('processWebhookDelivery', () => {
     svc.getDelivery.mockResolvedValue(delivery({ attempt_count: 0 }));
     deliverOnceMock.mockResolvedValue({ success: false, statusCode: 400, durationMs: 5, error: 'HTTP 400', retryable: false });
     await processWebhookDelivery({ id: 'j', name: 'deliver', data: { deliveryId: 'del-1' } } as IJob<WebhookDeliveryJobData>);
-    expect(svc.markDead).toHaveBeenCalledWith('del-1', 'HTTP 400');
+    expect(svc.markDead).toHaveBeenCalledWith('del-1', 1, 'HTTP 400');
   });
 
   it('skips a delivery already delivered or dead (idempotent)', async () => {
