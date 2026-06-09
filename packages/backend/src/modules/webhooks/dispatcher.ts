@@ -4,13 +4,16 @@
  * `deliverOnce` is the single-attempt primitive shared by the synchronous
  * notification-channel provider and the queued retry layer: it runs the
  * beforeWebhookDispatch hook, signs the body, and sends via the SSRF guard.
- * `enqueue` (added later) layers persistence + retry + DLQ on top.
+ * `enqueue` layers persistence + retry + DLQ on top.
  */
+import { createHash } from 'crypto';
 import { config } from '../../config/index.js';
 import { safeFetch, SsrfBlockedError } from '../../utils/ssrf-guard.js';
 import { hooks, HookRejectionError } from '../../hooks/index.js';
 import { buildSignatureHeaders } from './signing.js';
-import type { DeliverOnceParams, DeliverOnceResult } from './types.js';
+import { createQueue } from '../../queue/connection.js';
+import { webhookDeliveryService } from './service.js';
+import type { DeliverOnceParams, DeliverOnceResult, EnqueueParams, WebhookDeliveryJobData } from './types.js';
 
 const RESPONSE_EXCERPT_MAX = 500;
 
@@ -44,7 +47,7 @@ export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnc
         url: params.url,
         targetHost,
         headers,
-        body: params.body,
+        body: params.body as Record<string, unknown>,
       });
     } catch (e) {
       const msg = e instanceof HookRejectionError ? `rejected: ${e.message}` : 'blocked: hook failed';
@@ -96,3 +99,53 @@ export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnc
     };
   }
 }
+
+export const WEBHOOK_DELIVERY_QUEUE = 'webhook-delivery';
+const webhookQueue = createQueue<WebhookDeliveryJobData>(WEBHOOK_DELIVERY_QUEUE);
+
+function deriveEventId(params: EnqueueParams): string {
+  if (params.eventId) return params.eventId;
+  return createHash('sha256')
+    .update(`${params.url}\n${JSON.stringify(params.payload ?? {})}`)
+    .digest('hex')
+    .slice(0, 32);
+}
+
+export const webhookDispatcher = {
+  deliverOnce,
+
+  /**
+   * Persist a delivery row and enqueue it. Deterministic jobKey
+   * (webhook:<org>:<eventType>:<eventId>) deduplicates upstream double-enqueues.
+   * Retries are driven manually by the job re-enqueueing itself, so the queue's
+   * own retry is disabled (maxAttempts: 1).
+   */
+  async enqueue(params: EnqueueParams): Promise<{ deliveryId: string }> {
+    const eventId = deriveEventId(params);
+    const delivery = await webhookDeliveryService.createDelivery({
+      organizationId: params.organizationId,
+      eventType: params.eventType,
+      eventId,
+      url: params.url,
+      maxAttempts: params.maxAttempts ?? config.WEBHOOK_MAX_ATTEMPTS,
+      metadata: {
+        payload: params.payload as Record<string, unknown>,
+        signingSecret: params.signingSecret ?? null,
+        headers: params.headers ?? null,
+        channelId: params.channelId ?? null,
+        ruleId: params.ruleId ?? null,
+        ...(params.metadata ?? {}),
+      },
+    });
+    await webhookQueue.add('deliver', { deliveryId: delivery.id }, {
+      jobKey: `webhook:${params.organizationId}:${params.eventType}:${eventId}`,
+      maxAttempts: 1,
+    });
+    return { deliveryId: delivery.id };
+  },
+
+  /** Re-enqueue an already-persisted delivery (used by manual replay). */
+  async enqueueExisting(deliveryId: string): Promise<void> {
+    await webhookQueue.add('deliver', { deliveryId }, { maxAttempts: 1 });
+  },
+};
