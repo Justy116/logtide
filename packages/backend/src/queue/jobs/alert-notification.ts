@@ -5,8 +5,7 @@ import { db } from '../../database/connection.js';
 import nodemailer from 'nodemailer';
 import { config } from '../../config/index.js';
 import { generateAlertEmail, getFrontendUrl } from '../../lib/email-templates.js';
-import { safeFetch, SsrfBlockedError } from '../../utils/ssrf-guard.js';
-import { hooks } from '../../hooks/index.js';
+import { webhookDispatcher } from '../../modules/webhooks/index.js';
 import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
 export interface AlertNotificationData {
@@ -222,77 +221,30 @@ async function sendWebhookNotification(data: AlertNotificationData, channelId?: 
 
   const frontendUrl = getFrontendUrl();
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'User-Agent': 'LogTide/1.0',
-  };
-  const body: Record<string, unknown> = {
-    event_type: data.baseline_metadata ? 'anomaly' : 'alert',
-    alert_name: data.rule_name,
-    log_count: data.log_count,
-    threshold: data.threshold,
-    time_window: data.time_window,
-    organization_id: data.organization_id,
-    project_id: data.project_id,
-    baseline_metadata: data.baseline_metadata || null,
-    link: `${frontendUrl}/dashboard/alerts`,
-    timestamp: new Date().toISOString(),
-  };
-
-  // Lifecycle hook (#216): same interception point as WebhookProvider.
-  // A rejection (or broken hook) propagates and is recorded as a delivery
-  // failure by the caller; the HTTP call never happens.
-  if (hooks.hasHandlers('beforeWebhookDispatch')) {
-    let targetHost: string;
-    try {
-      targetHost = new URL(data.webhook_url).hostname;
-    } catch {
-      throw new Error(`Invalid webhook URL: ${data.webhook_url}`);
-    }
-    await hooks.run('beforeWebhookDispatch', {
-      organizationId: data.organization_id,
-      ruleId: data.rule_id,
-      channelId,
-      url: data.webhook_url,
-      targetHost,
-      headers,
-      body,
-    });
-  }
-
-  // SSRF protection: route delivery through the centralized outbound guard
-  // (safeFetch resolves the host, rejects loopback/private/link-local/CGNAT/
-  // reserved IPv4+IPv6 ranges, and revalidates every redirect hop), matching
-  // the WebhookProvider. The same MONITOR_ALLOW_PRIVATE_TARGETS opt-in governs
-  // both paths so self-hosted deployments can still target internal endpoints.
-  let response: Response;
-  try {
-    response = await safeFetch(
-      data.webhook_url,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10000),
-      },
-      { allowPrivate: config.MONITOR_ALLOW_PRIVATE_TARGETS }
-    );
-  } catch (e) {
-    if (e instanceof SsrfBlockedError) {
-      throw new Error('Webhook URLs pointing to private/internal addresses are not allowed');
-    }
-    if (e instanceof TypeError) {
-      throw new Error(`Invalid webhook URL: ${data.webhook_url}`);
-    }
-    throw e;
-  }
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
-    throw new Error(`Webhook request failed: HTTP ${response.status}${errorText ? ` - ${errorText}` : ''}`);
-  }
-
-  console.log(`Webhook notification sent to: ${data.webhook_url}`);
+  // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
+  // retry/backoff, DLQ, delivery logging, and the beforeWebhookDispatch hook
+  // (#216) all live in one place now. Same payload as before, no regression.
+  await webhookDispatcher.enqueue({
+    url: data.webhook_url,
+    organizationId: data.organization_id,
+    eventType: data.baseline_metadata ? 'anomaly' : 'alert',
+    eventId: `${data.historyId || data.rule_id}:${data.webhook_url}`,
+    channelId,
+    ruleId: data.rule_id,
+    metadata: { ruleName: data.rule_name },
+    payload: {
+      event_type: data.baseline_metadata ? 'anomaly' : 'alert',
+      alert_name: data.rule_name,
+      log_count: data.log_count,
+      threshold: data.threshold,
+      time_window: data.time_window,
+      organization_id: data.organization_id,
+      project_id: data.project_id,
+      baseline_metadata: data.baseline_metadata || null,
+      link: `${frontendUrl}/dashboard/alerts`,
+      timestamp: new Date().toISOString(),
+    },
+  });
 }
 
 async function createInAppNotifications(data: AlertNotificationData, projectName: string | null) {

@@ -14,6 +14,7 @@ import { notificationsService } from '../../modules/notifications/service.js';
 import { notificationChannelsService } from '../../modules/notification-channels/index.js';
 import { createQueue } from '../connection.js';
 import { generateErrorEmail, getFrontendUrl } from '../../lib/email-templates.js';
+import { webhookDispatcher } from '../../modules/webhooks/index.js';
 import type { ExceptionLanguage } from '../../modules/exceptions/types.js';
 import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
@@ -63,13 +64,15 @@ async function sendErrorWebhook(
 ): Promise<void> {
   const frontendUrl = getFrontendUrl();
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'LogTide/1.0',
-    },
-    body: JSON.stringify({
+  // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
+  // retry/backoff, DLQ, and delivery logging. Previously this used raw fetch
+  // with no SSRF protection. Same payload as before.
+  await webhookDispatcher.enqueue({
+    url,
+    organizationId: data.organizationId,
+    eventType: 'error',
+    eventId: `${errorGroupId}:${url}`,
+    payload: {
       event_type: 'error',
       title: `${data.isNewErrorGroup ? 'New Error' : 'Error'}: ${data.exceptionType}`,
       message: data.exceptionMessage || `An error occurred in ${data.service}`,
@@ -89,13 +92,8 @@ async function sendErrorWebhook(
       is_new: data.isNewErrorGroup,
       link: `${frontendUrl}/dashboard/errors/${errorGroupId}`,
       timestamp: new Date().toISOString(),
-    }),
-    signal: AbortSignal.timeout(10000),
+    },
   });
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
 }
 
 /**

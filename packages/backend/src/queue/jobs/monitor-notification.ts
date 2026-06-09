@@ -6,6 +6,7 @@ import { notificationsService } from '../../modules/notifications/service.js';
 import { notificationChannelsService } from '../../modules/notification-channels/index.js';
 import { createQueue } from '../connection.js';
 import { generateMonitorEmail, getFrontendUrl } from '../../lib/email-templates.js';
+import { webhookDispatcher } from '../../modules/webhooks/index.js';
 import type { Severity, EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
 export interface MonitorNotificationJob {
@@ -51,13 +52,14 @@ async function sendMonitorWebhook(url: string, job: MonitorNotificationJob, orgN
   const frontendUrl = getFrontendUrl();
   const isDown = job.status === 'down';
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'LogTide/1.0',
-    },
-    body: JSON.stringify({
+  // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
+  // retry/backoff, DLQ, and delivery logging. Same payload as before.
+  await webhookDispatcher.enqueue({
+    url,
+    organizationId: job.organizationId,
+    eventType: 'monitoring',
+    eventId: `${job.monitorId}:${job.status}:${url}`,
+    payload: {
       event_type: 'monitor_status_change',
       monitor_id: job.monitorId,
       monitor_name: job.monitorName,
@@ -78,13 +80,8 @@ async function sendMonitorWebhook(url: string, job: MonitorNotificationJob, orgN
       downtime_duration: job.downtimeDuration,
       link: `${frontendUrl}/dashboard/monitoring`,
       timestamp: new Date().toISOString(),
-    }),
-    signal: AbortSignal.timeout(10000),
+    },
   });
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
 }
 
 export async function processMonitorNotification(job: IJob<MonitorNotificationJob>): Promise<void> {

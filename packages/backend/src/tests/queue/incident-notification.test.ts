@@ -14,9 +14,12 @@ vi.mock('nodemailer', () => ({
   },
 }));
 
-// Mock fetch for webhooks
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+// Mock webhookDispatcher — SSRF guard, hook execution, retry/backoff are
+// all handled inside the dispatcher and covered by deliver-once.test.ts (#218).
+const { enqueueMock } = vi.hoisted(() => ({ enqueueMock: vi.fn() }));
+vi.mock('../../modules/webhooks/index.js', () => ({
+  webhookDispatcher: { enqueue: enqueueMock },
+}));
 
 describe('Incident Notification Job', () => {
   let testOrganization: any;
@@ -25,8 +28,7 @@ describe('Incident Notification Job', () => {
   beforeEach(async () => {
     // Reset mocks
     vi.clearAllMocks();
-    mockFetch.mockReset();
-    mockFetch.mockResolvedValue({ ok: true, status: 200 });
+    enqueueMock.mockReset().mockResolvedValue({ deliveryId: 'del-1' });
 
     // Clean up tables
     await db.deleteFrom('notifications').execute();
@@ -203,13 +205,14 @@ describe('Incident Notification Job', () => {
 
       await processIncidentNotification(job);
 
-      // Should call webhook
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://example.com/incident-hook',
+      // Should enqueue webhook via dispatcher
+      expect(enqueueMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            'Content-Type': 'application/json',
+          url: 'https://example.com/incident-hook',
+          eventType: 'incident',
+          payload: expect.objectContaining({
+            event_type: 'incident',
+            title: 'Test Incident',
           }),
         })
       );
@@ -249,15 +252,18 @@ describe('Incident Notification Job', () => {
 
       await processIncidentNotification(job);
 
-      // Should use default webhook
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://example.com/default-hook',
-        expect.anything()
+      // Should enqueue via dispatcher using the default webhook URL
+      expect(enqueueMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: 'https://example.com/default-hook',
+          eventType: 'incident',
+        })
       );
     });
 
     it('should handle webhook errors gracefully', async () => {
-      mockFetch.mockRejectedValue(new Error('Network error'));
+      // Simulate a dispatcher enqueue failure (e.g. DB down during persistence)
+      enqueueMock.mockRejectedValueOnce(new Error('Network error'));
 
       const [channel] = await db
         .insertInto('notification_channels')

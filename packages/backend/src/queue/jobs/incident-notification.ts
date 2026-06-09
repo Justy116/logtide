@@ -6,6 +6,7 @@ import { notificationsService } from '../../modules/notifications/service.js';
 import { notificationChannelsService } from '../../modules/notification-channels/index.js';
 import { createQueue } from '../connection.js';
 import { generateIncidentEmail, getFrontendUrl } from '../../lib/email-templates.js';
+import { webhookDispatcher } from '../../modules/webhooks/index.js';
 import type { Severity } from '../../database/types.js';
 import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
@@ -55,13 +56,14 @@ function createTransporter() {
 async function sendIncidentWebhook(url: string, job: IncidentNotificationJob, orgName: string): Promise<void> {
   const frontendUrl = getFrontendUrl();
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'LogTide/1.0',
-    },
-    body: JSON.stringify({
+  // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
+  // retry/backoff, DLQ, and delivery logging. Same payload as before.
+  await webhookDispatcher.enqueue({
+    url,
+    organizationId: job.organizationId,
+    eventType: 'incident',
+    eventId: `${job.incidentId}:${url}`,
+    payload: {
       event_type: 'incident',
       title: job.title,
       message: job.description || `Security incident: ${job.title}`,
@@ -74,13 +76,8 @@ async function sendIncidentWebhook(url: string, job: IncidentNotificationJob, or
       affected_services: job.affectedServices,
       link: `${frontendUrl}/dashboard/security/incidents/${job.incidentId}`,
       timestamp: new Date().toISOString(),
-    }),
-    signal: AbortSignal.timeout(10000),
+    },
   });
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
 }
 
 /**
