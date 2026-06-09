@@ -5,6 +5,8 @@ export interface DeliverOnceParams {
   eventType: string;
   signingSecret?: string;
   headers?: Record<string, string>;
+  /** HTTP method, defaults to POST. */
+  method?: string;
   /** Extra context forwarded to the beforeWebhookDispatch hook. */
   channelId?: string;
   ruleId?: string;

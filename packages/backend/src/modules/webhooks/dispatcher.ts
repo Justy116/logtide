@@ -59,7 +59,7 @@ export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnc
     const response = await safeFetch(
       params.url,
       {
-        method: 'POST',
+        method: params.method ?? 'POST',
         headers,
         body: bodyString,
         signal: AbortSignal.timeout(config.WEBHOOK_REQUEST_TIMEOUT_MS),
@@ -111,6 +111,16 @@ function deriveEventId(params: EnqueueParams): string {
     .slice(0, 32);
 }
 
+/**
+ * Build the queue job id. BullMQ forbids ':' in custom job ids (it is the Redis
+ * key separator), and event ids can embed URLs, so the readable composite is
+ * hashed to a stable, collision-resistant, separator-safe id.
+ */
+function buildJobKey(organizationId: string, eventType: string, eventId: string): string {
+  const digest = createHash('sha256').update(`${organizationId}:${eventType}:${eventId}`).digest('hex');
+  return `webhook-${digest}`;
+}
+
 export const webhookDispatcher = {
   deliverOnce,
 
@@ -138,7 +148,7 @@ export const webhookDispatcher = {
       },
     });
     await webhookQueue.add('deliver', { deliveryId: delivery.id }, {
-      jobKey: `webhook:${params.organizationId}:${params.eventType}:${eventId}`,
+      jobKey: buildJobKey(params.organizationId, params.eventType, eventId),
       maxAttempts: 1,
     });
     return { deliveryId: delivery.id };
@@ -150,7 +160,7 @@ export const webhookDispatcher = {
    */
   async enqueueExisting(deliveryId: string): Promise<void> {
     await webhookQueue.add('deliver', { deliveryId }, {
-      jobKey: `webhook-replay:${deliveryId}`,
+      jobKey: `webhook-replay-${deliveryId}`,
       maxAttempts: 1,
     });
   },

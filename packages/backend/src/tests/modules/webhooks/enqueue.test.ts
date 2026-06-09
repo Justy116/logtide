@@ -32,7 +32,17 @@ describe('webhookDispatcher.enqueue', () => {
     }));
     const [, jobData, opts] = addMock.mock.calls[0];
     expect(jobData).toEqual({ deliveryId: 'del-1' });
-    expect(opts.jobKey).toBe('webhook:org-1:alert:evt-9');
+    // jobKey must be deterministic and contain no ':' (BullMQ forbids it in job ids).
+    expect(opts.jobKey).toMatch(/^webhook-[0-9a-f]{64}$/);
+  });
+
+  it('builds the same jobKey for the same org/eventType/eventId', async () => {
+    const args = { url: 'https://e.com/hook', payload: { a: 1 }, organizationId: 'org-1', eventType: 'alert', eventId: 'evt-9' };
+    await webhookDispatcher.enqueue(args);
+    const key1 = addMock.mock.calls[0][2].jobKey;
+    addMock.mockClear(); createDeliveryMock.mockClear();
+    await webhookDispatcher.enqueue(args);
+    expect(addMock.mock.calls[0][2].jobKey).toBe(key1);
   });
 
   it('derives a stable eventId when none is given', async () => {
