@@ -1,7 +1,24 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { db } from '../../../database/index.js';
 import { createTestOrganization } from '../../helpers/factories.js';
-import { webhookDeliveryService } from '../../../modules/webhooks/service.js';
+import { webhookDeliveryService, redactDeliveryForApi } from '../../../modules/webhooks/service.js';
+
+describe('redactDeliveryForApi', () => {
+  it('strips signingSecret and headers from metadata, keeps the rest', () => {
+    const row = {
+      id: 'd', metadata: { payload: { a: 1 }, signingSecret: 'whsec_x', headers: { Authorization: 'Bearer z' }, ruleName: 'r' },
+    } as any;
+    const redacted = redactDeliveryForApi(row);
+    expect(redacted.metadata).toEqual({ payload: { a: 1 }, ruleName: 'r' });
+    expect(redacted.metadata).not.toHaveProperty('signingSecret');
+    expect(redacted.metadata).not.toHaveProperty('headers');
+  });
+
+  it('passes through undefined and null metadata safely', () => {
+    expect(redactDeliveryForApi(undefined)).toBeUndefined();
+    expect(redactDeliveryForApi({ id: 'd', metadata: null } as any).metadata).toBeNull();
+  });
+});
 
 describe('webhookDeliveryService', () => {
   let orgId: string;

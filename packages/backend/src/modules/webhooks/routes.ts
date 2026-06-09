@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
-import { webhookDeliveryService } from './service.js';
+import { webhookDeliveryService, redactDeliveryForApi } from './service.js';
 import { webhookDispatcher } from './dispatcher.js';
 
 const organizationsService = new OrganizationsService();
@@ -59,7 +59,7 @@ export async function webhookDeliveriesRoutes(fastify: FastifyInstance) {
     }
 
     const deliveries = await webhookDeliveryService.listDeliveries(organizationId, { status, limit, offset });
-    return reply.send({ deliveries });
+    return reply.send({ deliveries: deliveries.map(redactDeliveryForApi) });
   });
 
   /**
@@ -78,7 +78,7 @@ export async function webhookDeliveriesRoutes(fastify: FastifyInstance) {
     }
 
     const attempts = await webhookDeliveryService.listAttempts(id);
-    return reply.send({ delivery, attempts });
+    return reply.send({ delivery: redactDeliveryForApi(delivery), attempts });
   });
 
   /**
@@ -102,6 +102,6 @@ export async function webhookDeliveriesRoutes(fastify: FastifyInstance) {
 
     const reset = await webhookDeliveryService.resetForReplay(id);
     await webhookDispatcher.enqueueExisting(id);
-    return reply.send({ delivery: reset });
+    return reply.send({ delivery: redactDeliveryForApi(reset) });
   });
 }

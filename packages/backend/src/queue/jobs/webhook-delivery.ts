@@ -73,5 +73,10 @@ export async function processWebhookDelivery(job: IJob<WebhookDeliveryJobData>):
   const delay = BACKOFF_SCHEDULE_MS[Math.min(attemptNumber - 1, BACKOFF_SCHEDULE_MS.length - 1)];
   const nextAttemptAt = new Date(Date.now() + delay);
   await webhookDeliveryService.markRetrying(delivery.id, attemptNumber, nextAttemptAt, result.error ?? 'delivery failed');
-  await queue.add('deliver', { deliveryId: delivery.id }, { delay, maxAttempts: 1 });
+  // Per-attempt jobKey dedupes a retry if two workers race the same job.
+  await queue.add('deliver', { deliveryId: delivery.id }, {
+    delay,
+    maxAttempts: 1,
+    jobKey: `webhook-retry-${delivery.id}-${attemptNumber}`,
+  });
 }

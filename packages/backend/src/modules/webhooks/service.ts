@@ -138,3 +138,16 @@ export const webhookDeliveryService = {
       .execute();
   },
 };
+
+/**
+ * Strip delivery-internal secrets from a row's metadata before it crosses the
+ * API boundary. The worker reads `signingSecret`/`headers` from metadata to send
+ * the request, but those must never be returned to API clients.
+ */
+export function redactDeliveryForApi<T extends DeliveryRow | undefined>(row: T): T {
+  if (!row) return row;
+  const metadata = row.metadata as Record<string, unknown> | null;
+  if (!metadata) return row;
+  const { signingSecret: _s, headers: _h, ...safe } = metadata;
+  return { ...row, metadata: safe };
+}
