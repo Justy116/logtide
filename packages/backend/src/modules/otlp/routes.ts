@@ -232,16 +232,17 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
           span_id: log.span_id,
         }));
 
+        let ingestResult = { received: 0, rejected: [] as Array<{ index: number; reason: string }> };
         await context.runAsSystem('otlp:log-ingest', async () => {
           await context.with({ organizationId: project.organization_id }, async () => {
-            await ingestionService.ingestLogs(logInputs, projectId);
+            ingestResult = await ingestionService.ingestLogs(logInputs, projectId);
           });
         });
 
         return {
           partialSuccess: {
-            rejectedLogRecords: 0,
-            errorMessage: '',
+            rejectedLogRecords: ingestResult.rejected.length,
+            errorMessage: ingestResult.rejected.length > 0 ? 'pii_masking_failed' : '',
           },
         };
       } catch (error) {
