@@ -503,6 +503,16 @@ export class CustomDashboardsService {
     return `panel-${globalThis.crypto.randomUUID()}`;
   }
 
+  /** Count custom dashboards for an organization (capability limit input). */
+  async countForOrg(organizationId: string): Promise<number> {
+    const row = await db
+      .selectFrom('custom_dashboards')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
+  }
+
   /**
    * Look up the default layout (w/h) for a given panel type. Used by the
    * frontend "Add Panel" flow but exposed here so the registry stays the
