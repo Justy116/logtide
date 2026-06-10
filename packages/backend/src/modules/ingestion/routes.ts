@@ -282,6 +282,16 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
           type: 'object',
           properties: {
             received: { type: 'number' },
+            rejected: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  index: { type: 'number' },
+                  reason: { type: 'string' },
+                },
+              },
+            },
             timestamp: { type: 'string' },
           },
         },
@@ -340,10 +350,10 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Ingest all valid logs
       const result = await ingestionService.ingestLogs(validLogs, projectId);
-      const received = result.received;
 
       return {
-        received,
+        received: result.received,
+        ...(result.rejected.length > 0 && { rejected: result.rejected }),
         timestamp: new Date().toISOString(),
       };
     },
@@ -383,6 +393,16 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
           type: 'object',
           properties: {
             received: { type: 'number' },
+            rejected: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  index: { type: 'number' },
+                  reason: { type: 'string' },
+                },
+              },
+            },
             timestamp: { type: 'string' },
           },
         },
@@ -456,8 +476,11 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         const result = await ingestionService.ingestLogs(validLogs, projectId);
-        const received = result.received;
-        return { received, timestamp: new Date().toISOString() };
+        return {
+          received: result.received,
+          ...(result.rejected.length > 0 && { rejected: result.rejected }),
+          timestamp: new Date().toISOString(),
+        };
       }
 
       // Standard format: {"logs": [...]}
@@ -474,10 +497,10 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Ingest logs
       const result = await ingestionService.ingestLogs(logs, projectId);
-      const received = result.received;
 
       return {
-        received,
+        received: result.received,
+        ...(result.rejected.length > 0 && { rejected: result.rejected }),
         timestamp: new Date().toISOString(),
       };
     },
