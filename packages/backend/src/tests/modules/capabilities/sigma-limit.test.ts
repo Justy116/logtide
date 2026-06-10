@@ -172,6 +172,7 @@ describe('sigma.max_active_rules enforcement', () => {
 
     expect(res.statusCode).toBe(403);
     const body = JSON.parse(res.body);
+    expect(body.statusCode).toBe(403);
     expect(body.code).toBe('capability.sigma.max_active_rules.limit_reached');
   });
 
@@ -197,6 +198,7 @@ describe('sigma.max_active_rules enforcement', () => {
 
     expect(res.statusCode).toBe(403);
     const body = JSON.parse(res.body);
+    expect(body.statusCode).toBe(403);
     expect(body.code).toBe('capability.sigma.max_active_rules.limit_reached');
   });
 
@@ -260,6 +262,7 @@ describe('sigma.max_active_rules enforcement', () => {
 
     expect(res.statusCode).toBe(403);
     const body = JSON.parse(res.body);
+    expect(body.statusCode).toBe(403);
     expect(body.code).toBe('capability.sigma.max_active_rules.limit_reached');
 
     // No partial insert: count unchanged

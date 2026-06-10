@@ -128,7 +128,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         return reply.send(result);
       } catch (error) {
         if (error instanceof CapabilityError) {
-          return reply.status(403).send({ error: error.message, code: error.code });
+          throw error;
         }
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
@@ -320,19 +320,12 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
       if (body.enabled !== undefined) {
         if (body.enabled === true) {
           // Cap on enabled sigma rules (#214 follow-up, WS2)
-          try {
-            await context.runAsSystem('sigma:enable-limit-check', async () => {
-              await context.with({ organizationId: body.organizationId }, async () => {
-                const activeCount = await sigmaService.countActiveRules(body.organizationId);
-                await assertWithinLimit('sigma.max_active_rules', activeCount);
-              });
+          await context.runAsSystem('sigma:enable-limit-check', async () => {
+            await context.with({ organizationId: body.organizationId }, async () => {
+              const activeCount = await sigmaService.countActiveRules(body.organizationId);
+              await assertWithinLimit('sigma.max_active_rules', activeCount);
             });
-          } catch (err) {
-            if (err instanceof CapabilityError) {
-              return reply.code(403).send({ error: err.message, code: err.code });
-            }
-            throw err;
-          }
+          });
         }
 
         rule = await sigmaService.toggleSigmaRule(
@@ -567,7 +560,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         return reply.send(result);
       } catch (error) {
         if (error instanceof CapabilityError) {
-          return reply.status(403).send({ error: error.message, code: error.code });
+          throw error;
         }
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
