@@ -19,6 +19,7 @@
         PlatformTimeline,
         ActiveIssues,
         VersionCheckResult,
+        IngestionHealthStats,
     } from "$lib/api/admin";
     import {
         Activity,
@@ -56,6 +57,8 @@
     let platformTimeline = $state<PlatformTimeline | null>(null);
     let activeIssues = $state<ActiveIssues | null>(null);
     let versionCheck = $state<VersionCheckResult | null>(null);
+    let ingestionHealth = $state<IngestionHealthStats | null>(null);
+    let versionCheckFailed = $state(false);
 
     let loading = $state(true);
     let error = $state<string | null>(null);
@@ -112,7 +115,7 @@
         loading = true;
         error = null;
         try {
-            const [system, logs, perf, alerts, redis, health, timeline, issues, version] =
+            const [system, logs, perf, alerts, redis, health, timeline, issues, version, ingHealth] =
                 await Promise.all([
                     adminAPI.getSystemStats(),
                     adminAPI.getLogsStats(),
@@ -122,7 +125,8 @@
                     adminAPI.getHealthStats(),
                     adminAPI.getPlatformTimeline(24).catch(() => null),
                     adminAPI.getActiveIssues().catch(() => null),
-                    adminAPI.getVersionCheck().catch(() => null),
+                    adminAPI.getVersionCheck().catch(() => { versionCheckFailed = true; return null; }),
+                    adminAPI.getIngestionHealth().catch(() => null),
                 ]);
 
             systemStats = system;
@@ -134,6 +138,7 @@
             platformTimeline = timeline;
             activeIssues = issues;
             versionCheck = version;
+            ingestionHealth = ingHealth;
             lastRefreshed = new Date();
         } catch (e: any) {
             console.error("Error loading admin stats:", e);
@@ -244,7 +249,7 @@
 
     {#if $authStore.user?.is_admin}
         <!-- Version Check Banner -->
-        {#if versionCheck}
+        {#if versionCheck && (versionCheck.latestStable !== null || versionCheck.latestBeta !== null)}
             {@const targetRelease = versionCheck.channel === 'beta'
                 ? (versionCheck.latestBeta ?? versionCheck.latestStable)
                 : versionCheck.latestStable}
@@ -306,6 +311,31 @@
                                 </a>
                             {/if}
                         </div>
+                    </div>
+                </CardContent>
+            </Card>
+        {:else if versionCheck}
+            <Card>
+                <CardContent class="py-4">
+                    <div class="flex items-center gap-3">
+                        <div class="rounded-full bg-muted p-2">
+                            <CheckCircle2 class="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div>
+                            <span class="font-medium text-muted-foreground">Version check unavailable (could not reach GitHub).</span>
+                            <p class="text-xs text-muted-foreground mt-0.5">Current version: <span class="font-mono">v{versionCheck.currentVersion}</span></p>
+                        </div>
+                    </div>
+                </CardContent>
+            </Card>
+        {:else if versionCheckFailed}
+            <Card>
+                <CardContent class="py-4">
+                    <div class="flex items-center gap-3">
+                        <div class="rounded-full bg-muted p-2">
+                            <CheckCircle2 class="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <span class="font-medium text-muted-foreground">Version check unavailable.</span>
                     </div>
                 </CardContent>
             </Card>
@@ -447,6 +477,23 @@
                 </CardContent>
             </Card>
         </div>
+
+        <!-- Ingestion Health Card -->
+        {#if ingestionHealth}
+            {@const c = ingestionHealth.counters24h}
+            {@const hasIssues = c.piiRejected > 0 || c.detectionEnqueueFailed > 0 || c.exceptionEnqueueFailed > 0}
+            <Card class={hasIssues ? 'border-destructive/50 bg-destructive/5' : ''}>
+                <CardHeader>
+                    <CardTitle>Ingestion health (24h)</CardTitle>
+                </CardHeader>
+                <CardContent class="grid grid-cols-2 gap-2 text-sm">
+                    <div>PII rejections: <span class={c.piiRejected > 0 ? 'font-semibold text-destructive' : ''}>{c.piiRejected}</span></div>
+                    <div>Detection enqueue failures: <span class={c.detectionEnqueueFailed > 0 ? 'font-semibold text-destructive' : ''}>{c.detectionEnqueueFailed}</span></div>
+                    <div>Exception enqueue failures: <span class={c.exceptionEnqueueFailed > 0 ? 'font-semibold text-destructive' : ''}>{c.exceptionEnqueueFailed}</span></div>
+                    <div>Identifier failures: {c.identifierFailed}</div>
+                </CardContent>
+            </Card>
+        {/if}
 
         <!-- Section 2: Platform Activity Timeline -->
         <Card>

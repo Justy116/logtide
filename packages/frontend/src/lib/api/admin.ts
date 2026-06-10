@@ -376,6 +376,16 @@ export interface VersionCheckResult {
     checkedAt: string;
 }
 
+export interface IngestionHealthStats {
+    counters24h: {
+        piiRejected: number;
+        detectionEnqueueFailed: number;
+        exceptionEnqueueFailed: number;
+        identifierFailed: number;
+    };
+    enrichment: unknown;
+}
+
 // System Settings Interfaces
 export interface SystemSetting {
     key: string;
@@ -476,6 +486,10 @@ class AdminAPI {
 
     async getVersionCheck(): Promise<VersionCheckResult> {
         return this.fetch<VersionCheckResult>('/version-check');
+    }
+
+    async getIngestionHealth(): Promise<IngestionHealthStats> {
+        return this.fetch<IngestionHealthStats>('/stats/ingestion-health');
     }
 
     // User Management
