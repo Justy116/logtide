@@ -44,6 +44,10 @@ export class EnrichmentService {
     if (ipsumService.needsUpdate()) {
       console.log('[EnrichmentService] IPsum database needs update');
       results.ipsum = await ipsumService.downloadDatabase();
+      if (results.ipsum) {
+        // Successful reload ends the outage: re-arm the warn-once flag
+        this.warnedIpsumNotReady = false;
+      }
     }
 
     return results;
