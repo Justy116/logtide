@@ -38,7 +38,7 @@ describe('beforeIngest hook', () => {
       seen = { ...ctx, records: [...ctx.records] };
     });
 
-    const n = await ingestionService.ingestLogs(logs, projectId);
+    const n = (await ingestionService.ingestLogs(logs, projectId)).received;
     expect(n).toBe(2);
     expect(seen).not.toBeNull();
     expect(seen!.projectId).toBe(projectId);
@@ -67,7 +67,7 @@ describe('beforeIngest hook', () => {
       ctx.records = ctx.records.filter((r) => r.message !== 'drop-me');
     });
 
-    const n = await ingestionService.ingestLogs(logs, projectId);
+    const n = (await ingestionService.ingestLogs(logs, projectId)).received;
     expect(n).toBe(1);
 
     const rows = await db.selectFrom('logs').selectAll().where('project_id', '=', projectId).execute();
@@ -80,7 +80,7 @@ describe('beforeIngest hook', () => {
       ctx.records = [];
     });
 
-    const n = await ingestionService.ingestLogs(logs, projectId);
+    const n = (await ingestionService.ingestLogs(logs, projectId)).received;
     expect(n).toBe(0);
 
     const rows = await db.selectFrom('logs').selectAll().where('project_id', '=', projectId).execute();
@@ -107,7 +107,7 @@ describe('beforeIngest hook', () => {
       if (target) target.message = '[REDACTED]';
     });
 
-    const n = await ingestionService.ingestLogs(logs, projectId);
+    const n = (await ingestionService.ingestLogs(logs, projectId)).received;
     expect(n).toBe(2);
 
     const rows = await db.selectFrom('logs').selectAll().where('project_id', '=', projectId).execute();

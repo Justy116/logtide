@@ -28,7 +28,7 @@ describe('ingestion records usage metering', () => {
       { time: new Date(), service: 'api', level: 'warn', message: 'c' },
     ];
 
-    const inserted = await ingestionService.ingestLogs(logs, projectId);
+    const inserted = (await ingestionService.ingestLogs(logs, projectId)).received;
     expect(inserted).toBe(3);
 
     await meteringRecorder.flush();
