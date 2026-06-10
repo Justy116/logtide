@@ -16,6 +16,7 @@ import { context } from '@logtide/shared/context';
 import { hooks, HookExecutionError } from '../../hooks/index.js';
 import type { BeforeIngestContext } from '../../hooks/index.js';
 import { hub } from '@logtide/core';
+import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
 
 export interface IngestRejection {
   /** Index of the record in the submitted batch. */
@@ -79,8 +80,17 @@ export class IngestionService {
           identifiersByLog.set(i, identifiers);
         }
       } catch (err) {
-        // Don't fail ingestion if identifier extraction fails
+        // Don't fail ingestion if identifier extraction fails (enrichment, not safety)
         console.warn('[Ingestion] Failed to extract identifiers from log:', err);
+        if (organizationId) {
+          metering.record({
+            type: 'ingestion.identifier_failed',
+            quantity: 1,
+            organizationId,
+            projectId,
+            metadata: { stage: 'extract' },
+          });
+        }
       }
     }
 
@@ -112,11 +122,13 @@ export class IngestionService {
           organizationId,
           projectId,
         });
-        hub.captureLog('error', '[Ingestion] Rejected logs: PII masking failed', {
-          organizationId,
-          projectId,
-          rejectedCount: rejected.length,
-        });
+        if (isInternalLoggingEnabled()) {
+          hub.captureLog('error', '[Ingestion] Rejected logs: PII masking failed', {
+            organizationId,
+            projectId,
+            rejectedCount: rejected.length,
+          });
+        }
 
         if (logs.length === 0) {
           return { received: 0, rejected };
@@ -326,6 +338,12 @@ export class IngestionService {
       console.log(`[Ingestion] Stored ${totalIdentifiers} identifiers for ${identifiersByLog.size} logs`);
     } catch (error) {
       console.error('[Ingestion] Error storing identifiers:', error);
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('warn', '[Ingestion] Failed to store identifiers', {
+          projectId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       // Don't throw - ingestion should succeed even if identifier storage fails
     }
   }
@@ -358,14 +376,38 @@ export class IngestionService {
         time: log.time,
       }));
 
-      // Queue Sigma detection job
+      // Queue Sigma detection job. One immediate retry; a second failure is
+      // fail-open for a SIEM, so it must be loudly visible (WS1).
       const detectionQueue = createQueue('sigma-detection');
-
-      await detectionQueue.add('detect-logs', {
+      const jobPayload = {
         logs: logEntries,
         organizationId: project.organization_id,
         projectId,
-      });
+      };
+      try {
+        await detectionQueue.add('detect-logs', jobPayload);
+      } catch {
+        try {
+          await detectionQueue.add('detect-logs', jobPayload);
+        } catch (err) {
+          metering.record({
+            type: 'ingestion.detection_enqueue_failed',
+            quantity: logEntries.length,
+            organizationId: project.organization_id,
+            projectId,
+          });
+          if (isInternalLoggingEnabled()) {
+            hub.captureLog('error', '[Ingestion] Sigma detection enqueue failed after retry', {
+              organizationId: project.organization_id,
+              projectId,
+              logCount: logEntries.length,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          console.error('[Ingestion] Sigma detection enqueue failed after retry:', err);
+          return;
+        }
+      }
 
       console.log(`[Ingestion] Queued Sigma detection for ${logs.length} logs`);
     } catch (error) {
@@ -407,14 +449,38 @@ export class IngestionService {
         return;
       }
 
-      // Queue exception parsing job
+      // Queue exception parsing job. One immediate retry; second failure is
+      // loudly visible (WS1).
       const exceptionQueue = createQueue('exception-parsing');
-
-      await exceptionQueue.add('parse-exceptions', {
+      const exceptionPayload = {
         logs: errorLogs,
         organizationId: project.organization_id,
         projectId,
-      });
+      };
+      try {
+        await exceptionQueue.add('parse-exceptions', exceptionPayload);
+      } catch {
+        try {
+          await exceptionQueue.add('parse-exceptions', exceptionPayload);
+        } catch (err) {
+          metering.record({
+            type: 'ingestion.exception_enqueue_failed',
+            quantity: errorLogs.length,
+            organizationId: project.organization_id,
+            projectId,
+          });
+          if (isInternalLoggingEnabled()) {
+            hub.captureLog('error', '[Ingestion] Exception parsing enqueue failed after retry', {
+              organizationId: project.organization_id,
+              projectId,
+              logCount: errorLogs.length,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          console.error('[Ingestion] Exception parsing enqueue failed after retry:', err);
+          return;
+        }
+      }
 
       console.log(`[Ingestion] Queued exception parsing for ${errorLogs.length} error/critical logs`);
     } catch (error) {
