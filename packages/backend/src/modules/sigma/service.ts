@@ -205,6 +205,21 @@ export class SigmaService {
   }
 
   /**
+   * Get the enabled state of a rule (org-scoped). Returns undefined if not found.
+   */
+  async getRuleEnabledState(
+    id: string,
+    organizationId: string
+  ): Promise<{ enabled: boolean } | undefined> {
+    return db
+      .selectFrom('sigma_rules')
+      .select('enabled')
+      .where('id', '=', id)
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+  }
+
+  /**
    * Get Sigma rule by ID
    */
   async getSigmaRuleById(

@@ -319,13 +319,23 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
       // Update enabled status if provided
       if (body.enabled !== undefined) {
         if (body.enabled === true) {
-          // Cap on enabled sigma rules (#214 follow-up, WS2)
-          await context.runAsSystem('sigma:enable-limit-check', async () => {
-            await context.with({ organizationId: body.organizationId }, async () => {
-              const activeCount = await sigmaService.countActiveRules(body.organizationId);
-              await assertWithinLimit('sigma.max_active_rules', activeCount);
+          // Pre-fetch current state to avoid false positives on already-enabled rules
+          const existingRule = await sigmaService.getRuleEnabledState(
+            params.id,
+            body.organizationId
+          );
+          if (!existingRule) {
+            return reply.code(404).send({ error: 'Sigma rule not found' });
+          }
+          // Cap on enabled sigma rules - only check when actually transitioning disabled -> enabled
+          if (!existingRule.enabled) {
+            await context.runAsSystem('sigma:enable-limit-check', async () => {
+              await context.with({ organizationId: body.organizationId }, async () => {
+                const activeCount = await sigmaService.countActiveRules(body.organizationId);
+                await assertWithinLimit('sigma.max_active_rules', activeCount);
+              });
             });
-          });
+          }
         }
 
         rule = await sigmaService.toggleSigmaRule(

@@ -130,6 +130,14 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       if (!(await checkMembership(request.user.id, body.organizationId))) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
+
+      await context.runAsSystem('dashboards:create-limit-check', async () => {
+        await context.with({ organizationId: body.organizationId }, async () => {
+          const count = await customDashboardsService.countForOrg(body.organizationId);
+          await assertWithinLimit('dashboards.max_custom', count);
+        });
+      });
+
       const dashboard = await customDashboardsService.importYaml(
         body.yaml,
         body.organizationId,
@@ -137,6 +145,9 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       );
       return reply.status(201).send({ dashboard });
     } catch (e) {
+      if (e instanceof CapabilityError) {
+        throw e;
+      }
       if (e instanceof z.ZodError) {
         return reply
           .status(400)

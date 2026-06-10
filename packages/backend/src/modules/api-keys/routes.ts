@@ -6,7 +6,8 @@ import { apiKeysService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { projectsService } from '../projects/service.js';
 import { auditLogService } from '../audit-log/index.js';
-import { assertWithinLimit, CapabilityError } from '../../capabilities/index.js';
+import { assertWithinLimit } from '../../capabilities/index.js';
+import { CapabilityError } from '../../capabilities/errors.js';
 
 const createApiKeySchema = z.object({
   name: z.string().min(1, 'Name is required').max(100, 'Name too long'),

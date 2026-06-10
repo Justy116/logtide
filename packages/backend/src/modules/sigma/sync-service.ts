@@ -29,6 +29,12 @@ export interface SyncOptions {
   emailRecipients?: string[];
   webhookUrl?: string;
   onProgress?: (current: number, total: number, ruleName: string) => void;
+  /**
+   * What to do when the org's sigma.max_active_rules limit would be exceeded.
+   * 'abort' (default): throw CapabilityError before any insert (atomic, used by routes).
+   * 'skip-new': skip importing new rules, process only updates to existing rules.
+   */
+  onLimitExceeded?: 'abort' | 'skip-new';
 }
 
 export interface SyncResult {
@@ -36,6 +42,7 @@ export interface SyncResult {
   imported: number;
   failed: number;
   skipped: number;
+  skippedNewRules?: number;
   errors: Array<{ rule: string; error: string }>;
   warnings: string[];
   commitHash: string;
@@ -67,6 +74,7 @@ export class SigmaSyncService {
       emailRecipients = [],
       webhookUrl,
       onProgress,
+      onLimitExceeded = 'abort',
     } = options;
 
     console.log(`[SigmaSync] Starting sync for organization ${organizationId}`);
@@ -159,15 +167,39 @@ export class SigmaSyncService {
           .where('sigmahq_path', 'is not', null)
           .execute();
         const existingPathSet = new Set(existingPaths.map((r) => r.sigmahq_path as string));
-        const plannedCount = ruleFiles.filter((r) => !existingPathSet.has(r.path)).length;
+        const newRuleFiles = ruleFiles.filter((r) => !existingPathSet.has(r.path));
+        const plannedCount = newRuleFiles.length;
 
         if (plannedCount > 0) {
-          await context.runAsSystem('sigma:sync-limit-check', async () => {
-            await context.with({ organizationId }, async () => {
-              const activeCount = await this.sigmaService.countActiveRules(organizationId);
-              await assertWithinLimit('sigma.max_active_rules', activeCount, plannedCount);
+          let limitExceeded = false;
+          try {
+            await context.runAsSystem('sigma:sync-limit-check', async () => {
+              await context.with({ organizationId }, async () => {
+                const activeCount = await this.sigmaService.countActiveRules(organizationId);
+                await assertWithinLimit('sigma.max_active_rules', activeCount, plannedCount);
+              });
             });
-          });
+          } catch (err) {
+            if (err instanceof CapabilityError) {
+              if (onLimitExceeded === 'abort') {
+                throw err;
+              }
+              // skip-new: process only updates to already-imported rules
+              limitExceeded = true;
+            } else {
+              throw err;
+            }
+          }
+
+          if (limitExceeded) {
+            result.skippedNewRules = plannedCount;
+            result.warnings.push(
+              `sigma.max_active_rules limit reached, new rule imports skipped`
+            );
+            console.log(`[SigmaSync] Limit reached for org ${organizationId}: skipping ${plannedCount} new rules, processing updates only`);
+            // Filter ruleFiles down to only existing paths
+            ruleFiles = ruleFiles.filter((r) => existingPathSet.has(r.path));
+          }
         }
       }
 

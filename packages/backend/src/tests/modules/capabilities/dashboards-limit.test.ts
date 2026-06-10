@@ -124,6 +124,35 @@ describe('dashboards.max_custom enforcement', () => {
     expect(res.statusCode).toBe(201);
   });
 
+  // Case 3b: import-yaml also blocked at limit
+  it('blocks dashboard import-yaml when at the limit', async () => {
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'dashboards.max_custom', enabled: null, limit_value: 1 })
+      .execute();
+    capabilities.invalidate(orgId);
+
+    await insertDashboard(orgId, userId, 1);
+
+    const yaml = `
+name: YAML Import
+schema_version: 1
+panels: []
+`;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/dashboards/import-yaml',
+      headers: { Authorization: `Bearer ${token}` },
+      payload: { organizationId: orgId, yaml },
+    });
+
+    expect(res.statusCode).toBe(403);
+    const body = JSON.parse(res.body);
+    expect(body.statusCode).toBe(403);
+    expect(body.code).toBe('capability.dashboards.max_custom.limit_reached');
+  });
+
   // Case 4: org isolation => org A at limit does not block org B
   it('does not block org B when org A is at the limit', async () => {
     await db

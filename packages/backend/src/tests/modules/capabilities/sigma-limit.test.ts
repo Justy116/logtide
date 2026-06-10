@@ -3,6 +3,7 @@ import Fastify, { FastifyInstance } from 'fastify';
 import crypto from 'crypto';
 import { db } from '../../../database/index.js';
 import { sigmaRoutes } from '../../../modules/sigma/routes.js';
+import { sigmaSyncService } from '../../../modules/sigma/sync-service.js';
 import { contextPlugin } from '../../../context/index.js';
 import { capabilities } from '../../../capabilities/index.js';
 import { createTestContext } from '../../helpers/factories.js';
@@ -285,6 +286,92 @@ describe('sigma.max_active_rules enforcement', () => {
     });
 
     expect(res.statusCode).toBe(200);
+  });
+
+  // -------------------------------------------------------------------------
+  // Case 5b: re-enabling an already-enabled rule at cap returns 200, not 403
+  // -------------------------------------------------------------------------
+  it('allows re-enabling an already-enabled rule at the cap (no-op toggle)', async () => {
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'sigma.max_active_rules', enabled: null, limit_value: 1 })
+      .execute();
+    capabilities.invalidate(orgId);
+
+    const enabled = await insertEnabledRule(orgId, 1);
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/sigma/rules/${enabled.id}`,
+      headers: { Authorization: `Bearer ${token}` },
+      payload: { organizationId: orgId, enabled: true },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+
+  // -------------------------------------------------------------------------
+  // Case 5c: enabling a nonexistent rule at cap returns 404, not 403
+  // -------------------------------------------------------------------------
+  it('returns 404 for nonexistent rule id at cap (not 403)', async () => {
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'sigma.max_active_rules', enabled: null, limit_value: 1 })
+      .execute();
+    capabilities.invalidate(orgId);
+
+    await insertEnabledRule(orgId, 1);
+
+    const nonexistentId = crypto.randomUUID();
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/sigma/rules/${nonexistentId}`,
+      headers: { Authorization: `Bearer ${token}` },
+      payload: { organizationId: orgId, enabled: true },
+    });
+
+    expect(res.statusCode).toBe(404);
+  });
+
+  // -------------------------------------------------------------------------
+  // Case 5d: skip-new mode resolves without throw, skips new rules
+  // -------------------------------------------------------------------------
+  it('skip-new mode resolves without throwing and skips new rules at limit', async () => {
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'sigma.max_active_rules', enabled: null, limit_value: 3 })
+      .execute();
+    capabilities.invalidate(orgId);
+
+    await insertEnabledRule(orgId, 1);
+    await insertEnabledRule(orgId, 2);
+
+    const { sigmahqClient } = await import('../../../modules/sigma/github-client.js');
+    (sigmahqClient.fetchRulesByCategory as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { path: 'rules/linux/skiptest1.yml', name: 'skiptest1.yml', category: 'linux', downloadUrl: 'http://x/s1', sha: 'sha1' },
+      { path: 'rules/linux/skiptest2.yml', name: 'skiptest2.yml', category: 'linux', downloadUrl: 'http://x/s2', sha: 'sha2' },
+    ]);
+    (sigmahqClient.fetchRule as ReturnType<typeof vi.fn>).mockResolvedValue(makeYaml(20));
+
+    const countBefore = await db
+      .selectFrom('sigma_rules')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .executeTakeFirst();
+
+    const result = await sigmaSyncService.syncFromSigmaHQ({
+      organizationId: orgId,
+      selection: { categories: ['linux'] },
+      onLimitExceeded: 'skip-new',
+    });
+
+    expect(result.skippedNewRules).toBe(2);
+    expect(result.imported).toBe(0);
+
+    const countAfter = await db
+      .selectFrom('sigma_rules')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .executeTakeFirst();
+    expect(Number(countAfter?.count)).toBe(Number(countBefore?.count));
   });
 
   // -------------------------------------------------------------------------
