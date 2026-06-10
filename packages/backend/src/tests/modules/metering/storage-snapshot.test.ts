@@ -23,6 +23,13 @@ async function setRetentionDays(orgId: string, days: number) {
   await db.updateTable('organizations').set({ retention_days: days }).where('id', '=', orgId).execute();
 }
 
+// Ingestion must be timestamped strictly before the job captures its own `now`:
+// runOnce() aggregates with `time < to` (to = new Date() at job start), so an event
+// inserted at exactly `new Date()` is excluded whenever it lands in the same
+// millisecond as the job's now (a fast/loaded-machine race). Use a moment in the
+// recent past, still well inside the retention window.
+const recentlyIngested = () => new Date(Date.now() - 60_000);
+
 async function snapshotRows(orgId: string) {
   return db
     .selectFrom('metering_events')
@@ -100,7 +107,7 @@ describe('StorageSnapshotJob.runOnce', () => {
   it('isolates organizations', async () => {
     const otherCtx = await createTestContext();
     await setRetentionDays(orgId, 30);
-    await insertIngestedBytes(orgId, projectA, 700, new Date());
+    await insertIngestedBytes(orgId, projectA, 700, recentlyIngested());
 
     const job = new StorageSnapshotJob();
     await job.runOnce();
@@ -119,7 +126,7 @@ describe('StorageSnapshotJob.runOnce', () => {
     // metering_events has no FK to organizations (migration 045), so the event row survives the org delete.
 
     await setRetentionDays(orgId, 30);
-    await insertIngestedBytes(orgId, projectA, 800, new Date());
+    await insertIngestedBytes(orgId, projectA, 800, recentlyIngested());
 
     const job = new StorageSnapshotJob();
     await job.runOnce();
@@ -132,7 +139,7 @@ describe('StorageSnapshotJob.runOnce', () => {
 
   it('decays a project to zero when its data ages out of the retention window', async () => {
     await setRetentionDays(orgId, 30);
-    await insertIngestedBytes(orgId, projectA, 1000, new Date());
+    await insertIngestedBytes(orgId, projectA, 1000, recentlyIngested());
 
     const job = new StorageSnapshotJob();
     await job.runOnce();
@@ -154,7 +161,7 @@ describe('StorageSnapshotJob.runOnce', () => {
 
   it('stops recording zeros once the latest snapshot is already zero', async () => {
     await setRetentionDays(orgId, 30);
-    await insertIngestedBytes(orgId, projectA, 500, new Date());
+    await insertIngestedBytes(orgId, projectA, 500, recentlyIngested());
 
     const job = new StorageSnapshotJob();
     await job.runOnce();
