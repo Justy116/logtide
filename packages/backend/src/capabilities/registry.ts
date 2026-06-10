@@ -84,6 +84,16 @@ export const CAPABILITIES = {
     defaultLimit: null,
     description: 'Audit-log retention cap in days',
   },
+  'sigma.max_active_rules': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum enabled Sigma rules per organization',
+  },
+  'dashboards.max_custom': {
+    kind: 'limit',
+    defaultLimit: null,
+    description: 'Maximum custom dashboards per organization',
+  },
 
   // Consumption quotas (OSS-permissive: null = unlimited). signal maps to #212 metering types.
   'ingestion.max_bytes_monthly': {

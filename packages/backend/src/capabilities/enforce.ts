@@ -34,16 +34,20 @@ export async function assertCapability(capability: CapabilityName): Promise<void
 /**
  * Static numeric cap. Caller supplies the current count (a cheap COUNT(*)).
  * No-op when the limit is null (unlimited). Throws CapabilityError (403) when
- * currentCount >= limit. Reads the org from context.current().
+ * currentCount + adding > limit. Reads the org from context.current().
+ *
+ * @param adding - how many items the operation will create/enable; bulk
+ *   operations pass the batch size. Defaults to 1.
  */
 export async function assertWithinLimit(
   capability: CapabilityName,
-  currentCount: number
+  currentCount: number,
+  adding: number = 1
 ): Promise<void> {
   const orgId = currentOrgId();
   const limit = await capabilities.getLimit(orgId, capability);
   if (limit === null) return; // unlimited
-  if (currentCount >= limit) {
+  if (currentCount + adding > limit) {
     throw new CapabilityError(
       `capability.${capability}.limit_reached`,
       `Limit reached for '${capability}' (${currentCount}/${limit})`,
