@@ -10,11 +10,23 @@ import { correlationService, type IdentifierMatch } from '../correlation/service
 import { piiMaskingService } from '../pii-masking/service.js';
 import { projectsService } from '../projects/service.js';
 import { extractHostname } from './routes.js';
-import { recordLogIngestion } from '../metering/index.js';
+import { recordLogIngestion, metering } from '../metering/index.js';
 import { assertWithinUsageQuota } from '../../capabilities/index.js';
 import { context } from '@logtide/shared/context';
 import { hooks, HookExecutionError } from '../../hooks/index.js';
 import type { BeforeIngestContext } from '../../hooks/index.js';
+import { hub } from '@logtide/core';
+
+export interface IngestRejection {
+  /** Index of the record in the submitted batch. */
+  index: number;
+  reason: 'pii_masking_failed';
+}
+
+export interface IngestResult {
+  received: number;
+  rejected: IngestRejection[];
+}
 
 /**
  * Remove null characters (\u0000) that PostgreSQL doesn't support in text fields.
@@ -41,9 +53,9 @@ export class IngestionService {
   /**
    * Ingest logs in batch
    */
-  async ingestLogs(logs: LogInput[], projectId: string): Promise<number> {
+  async ingestLogs(logs: LogInput[], projectId: string): Promise<IngestResult> {
     if (logs.length === 0) {
-      return 0;
+      return { received: 0, rejected: [] };
     }
 
     // Get project to find organization_id for custom patterns
@@ -72,13 +84,43 @@ export class IngestionService {
       }
     }
 
-    // PII masking: apply before DB insert so sensitive data never touches disk
+    // PII masking: apply before DB insert so sensitive data never touches disk.
+    // Fail-closed (WS1): records whose masking fails are rejected, never stored.
+    const rejected: IngestRejection[] = [];
     if (organizationId) {
-      try {
-        await piiMaskingService.maskLogBatch(logs, organizationId, projectId);
-      } catch (err) {
-        // Don't fail ingestion if PII masking fails
-        console.warn('[Ingestion] PII masking failed, proceeding with unmasked data:', err);
+      const failedIdx = await piiMaskingService.maskLogBatch(logs, organizationId, projectId);
+      if (failedIdx.length > 0) {
+        const failedSet = new Set(failedIdx);
+        rejected.push(
+          ...failedIdx.map((index) => ({ index, reason: 'pii_masking_failed' as const }))
+        );
+
+        const keptLogs: LogInput[] = [];
+        const keptIdentifiers = new Map<number, IdentifierMatch[]>();
+        logs.forEach((log, i) => {
+          if (failedSet.has(i)) return;
+          const ids = identifiersByLog.get(i);
+          if (ids) keptIdentifiers.set(keptLogs.length, ids);
+          keptLogs.push(log);
+        });
+        logs = keptLogs;
+        identifiersByLog = keptIdentifiers;
+
+        metering.record({
+          type: 'ingestion.pii_rejected',
+          quantity: rejected.length,
+          organizationId,
+          projectId,
+        });
+        hub.captureLog('error', '[Ingestion] Rejected logs: PII masking failed', {
+          organizationId,
+          projectId,
+          rejectedCount: rejected.length,
+        });
+
+        if (logs.length === 0) {
+          return { received: 0, rejected };
+        }
       }
     }
 
@@ -143,7 +185,7 @@ export class IngestionService {
       }
 
       if (records.length === 0) {
-        return 0;
+        return { received: 0, rejected };
       }
 
       // Realign the original logs view and identifier indexes with the
@@ -244,7 +286,7 @@ export class IngestionService {
       });
     }
 
-    return insertedLogs.length;
+    return { received: insertedLogs.length, rejected };
   }
 
   /**

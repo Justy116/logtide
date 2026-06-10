@@ -991,8 +991,9 @@ describe('PiiMaskingService', () => {
             });
 
             const logs: any[] = [];
-            await service.maskLogBatch(logs, organizationId, projectId);
+            const failed = await service.maskLogBatch(logs, organizationId, projectId);
             expect(logs.length).toBe(0);
+            expect(failed).toEqual([]);
         });
 
         it('should handle log with no message', async () => {

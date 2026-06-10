@@ -339,7 +339,8 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Ingest all valid logs
-      const received = await ingestionService.ingestLogs(validLogs, projectId);
+      const result = await ingestionService.ingestLogs(validLogs, projectId);
+      const received = result.received;
 
       return {
         received,
@@ -454,7 +455,8 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
 
-        const received = await ingestionService.ingestLogs(validLogs, projectId);
+        const result = await ingestionService.ingestLogs(validLogs, projectId);
+        const received = result.received;
         return { received, timestamp: new Date().toISOString() };
       }
 
@@ -471,7 +473,8 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
       const { logs } = parseResult.data;
 
       // Ingest logs
-      const received = await ingestionService.ingestLogs(logs, projectId);
+      const result = await ingestionService.ingestLogs(logs, projectId);
+      const received = result.received;
 
       return {
         received,
