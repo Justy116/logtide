@@ -9,7 +9,12 @@ export type MeteringEventType =
   | 'logs.ingested.events'
   | 'spans.ingested'
   | 'metrics.cardinality'
-  | 'storage.snapshot';
+  | 'storage.snapshot'
+  // Ingestion health counters (WS1): not billed, surfaced in admin stats.
+  | 'ingestion.pii_rejected'
+  | 'ingestion.detection_enqueue_failed'
+  | 'ingestion.exception_enqueue_failed'
+  | 'ingestion.identifier_failed';
 
 export interface MeteringEvent {
   type: MeteringEventType;
