@@ -114,6 +114,7 @@
 
         loading = true;
         error = null;
+        versionCheckFailed = false;
         try {
             const [system, logs, perf, alerts, redis, health, timeline, issues, version, ingHealth] =
                 await Promise.all([
