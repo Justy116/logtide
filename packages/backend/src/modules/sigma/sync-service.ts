@@ -10,6 +10,10 @@ import { SigmaConverter } from './converter.js';
 import { MITREMapper } from './mitre-mapper.js';
 import { db } from '../../database/connection.js';
 import { sql } from 'kysely';
+import { context } from '@logtide/shared/context';
+import { assertWithinLimit } from '../../capabilities/index.js';
+import { CapabilityError } from '../../capabilities/errors.js';
+import { SigmaService } from './service.js';
 
 export interface SyncOptions {
   organizationId: string;
@@ -47,6 +51,8 @@ export interface SyncStatus {
 }
 
 export class SigmaSyncService {
+  private readonly sigmaService = new SigmaService();
+
   /**
    * Sync rules from SigmaHQ repository
    */
@@ -142,6 +148,28 @@ export class SigmaSyncService {
       }
 
       console.log(`[SigmaSync] Found ${ruleFiles.length} rules to process`);
+
+      // Pre-check the whole batch so a partial sync never applies (WS2)
+      // Count only rules that don't already exist (new inserts will be enabled=true by default).
+      if (ruleFiles.length > 0) {
+        const existingPaths = await db
+          .selectFrom('sigma_rules')
+          .select('sigmahq_path')
+          .where('organization_id', '=', organizationId)
+          .where('sigmahq_path', 'is not', null)
+          .execute();
+        const existingPathSet = new Set(existingPaths.map((r) => r.sigmahq_path as string));
+        const plannedCount = ruleFiles.filter((r) => !existingPathSet.has(r.path)).length;
+
+        if (plannedCount > 0) {
+          await context.runAsSystem('sigma:sync-limit-check', async () => {
+            await context.with({ organizationId }, async () => {
+              const activeCount = await this.sigmaService.countActiveRules(organizationId);
+              await assertWithinLimit('sigma.max_active_rules', activeCount, plannedCount);
+            });
+          });
+        }
+      }
 
       // Process each rule
       for (let i = 0; i < ruleFiles.length; i++) {
@@ -315,6 +343,10 @@ export class SigmaSyncService {
 
       return result;
     } catch (error) {
+      // Let CapabilityError propagate so the route handler can return 403.
+      if (error instanceof CapabilityError) {
+        throw error;
+      }
       console.error('[SigmaSync] Sync failed:', error);
       result.success = false;
       result.errors.push({

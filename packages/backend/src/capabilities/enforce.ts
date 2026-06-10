@@ -48,9 +48,12 @@ export async function assertWithinLimit(
   const limit = await capabilities.getLimit(orgId, capability);
   if (limit === null) return; // unlimited
   if (currentCount + adding > limit) {
+    const detail = adding > 1
+      ? `(${currentCount}+${adding}/${limit})`
+      : `(${currentCount}/${limit})`;
     throw new CapabilityError(
       `capability.${capability}.limit_reached`,
-      `Limit reached for '${capability}' (${currentCount}/${limit})`,
+      `Limit reached for '${capability}' ${detail}`,
       capability
     );
   }

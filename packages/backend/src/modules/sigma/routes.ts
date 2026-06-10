@@ -7,6 +7,9 @@ import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { notificationChannelsService } from '../notification-channels/index.js';
 import { auditLogService } from '../audit-log/service.js';
+import { context } from '@logtide/shared/context';
+import { assertWithinLimit } from '../../capabilities/index.js';
+import { CapabilityError } from '../../capabilities/errors.js';
 
 const sigmaService = new SigmaService();
 const organizationsService = new OrganizationsService();
@@ -90,6 +93,14 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
           });
         }
 
+        // Cap on enabled sigma rules (#214 follow-up, WS2)
+        await context.runAsSystem('sigma:import-limit-check', async () => {
+          await context.with({ organizationId: body.organizationId }, async () => {
+            const activeCount = await sigmaService.countActiveRules(body.organizationId);
+            await assertWithinLimit('sigma.max_active_rules', activeCount);
+          });
+        });
+
         const result = await sigmaService.importSigmaRule(importData);
 
         // Associate channels with the sigma rule if import was successful
@@ -116,6 +127,9 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
 
         return reply.send(result);
       } catch (error) {
+        if (error instanceof CapabilityError) {
+          return reply.status(403).send({ error: error.message, code: error.code });
+        }
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
@@ -304,6 +318,23 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
 
       // Update enabled status if provided
       if (body.enabled !== undefined) {
+        if (body.enabled === true) {
+          // Cap on enabled sigma rules (#214 follow-up, WS2)
+          try {
+            await context.runAsSystem('sigma:enable-limit-check', async () => {
+              await context.with({ organizationId: body.organizationId }, async () => {
+                const activeCount = await sigmaService.countActiveRules(body.organizationId);
+                await assertWithinLimit('sigma.max_active_rules', activeCount);
+              });
+            });
+          } catch (err) {
+            if (err instanceof CapabilityError) {
+              return reply.code(403).send({ error: err.message, code: err.code });
+            }
+            throw err;
+          }
+        }
+
         rule = await sigmaService.toggleSigmaRule(
           params.id,
           body.organizationId,
@@ -535,6 +566,9 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
 
         return reply.send(result);
       } catch (error) {
+        if (error instanceof CapabilityError) {
+          return reply.status(403).send({ error: error.message, code: error.code });
+        }
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',

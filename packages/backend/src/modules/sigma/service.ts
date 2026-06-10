@@ -294,6 +294,17 @@ export class SigmaService {
     } as unknown as SigmaRuleRecord;
   }
 
+  /** Count enabled sigma rules for an organization (capability limit input). */
+  async countActiveRules(organizationId: string): Promise<number> {
+    const row = await db
+      .selectFrom('sigma_rules')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('organization_id', '=', organizationId)
+      .where('enabled', '=', true)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
+  }
+
   /**
    * Delete Sigma rule (and optionally its associated alert rule)
    */
