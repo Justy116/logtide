@@ -881,6 +881,41 @@ export interface OrganizationDefaultChannelsTable {
 }
 
 // ============================================================================
+// OUTBOUND WEBHOOK DELIVERY TABLES (#218)
+// ============================================================================
+
+export interface WebhookDeliveriesTable {
+  id: Generated<string>;
+  organization_id: string;
+  event_type: string;
+  event_id: string;
+  url: string;
+  status: Generated<string>; // 'pending' | 'delivered' | 'failed' | 'dead'
+  attempt_count: Generated<number>;
+  max_attempts: Generated<number>;
+  next_attempt_at: ColumnType<Date | null, Date | null, Date | null>;
+  last_error: string | null;
+  metadata: ColumnType<
+    Record<string, unknown> | null,
+    Record<string, unknown> | null,
+    Record<string, unknown> | null
+  >;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface WebhookDeliveryAttemptsTable {
+  id: Generated<string>;
+  delivery_id: string;
+  attempt_number: number;
+  status_code: number | null;
+  duration_ms: number | null;
+  response_excerpt: string | null;
+  error: string | null;
+  created_at: Generated<Timestamp>;
+}
+
+// ============================================================================
 // PII MASKING TABLES
 // ============================================================================
 
@@ -1155,4 +1190,7 @@ export interface Database {
   metering_events: MeteringEventsTable;
   // Per-organization feature entitlements (#214)
   organization_entitlements: OrganizationEntitlementsTable;
+  // Outbound webhook delivery (#218)
+  webhook_deliveries: WebhookDeliveriesTable;
+  webhook_delivery_attempts: WebhookDeliveryAttemptsTable;
 }

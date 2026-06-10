@@ -8,11 +8,19 @@ import {
 import { alertsService } from '../../../modules/alerts/service.js';
 import { processAlertNotification, AlertNotificationData } from '../../../queue/jobs/alert-notification.js';
 
+// Mock webhookDispatcher so webhook enqueues don't hit real HTTP
+const { enqueueMock } = vi.hoisted(() => ({ enqueueMock: vi.fn() }));
+vi.mock('../../../modules/webhooks/index.js', () => ({
+    webhookDispatcher: { enqueue: enqueueMock },
+}));
+
 describe('Alert Worker Reliability', () => {
     let originalFetch: typeof global.fetch;
 
     beforeEach(async () => {
         originalFetch = global.fetch;
+        enqueueMock.mockReset();
+        enqueueMock.mockResolvedValue({ deliveryId: 'del-1' });
 
         await db.deleteFrom('logs').execute();
         await db.deleteFrom('alert_history').execute();
@@ -117,14 +125,14 @@ describe('Alert Worker Reliability', () => {
                 .returningAll()
                 .executeTakeFirstOrThrow();
 
-            // Create a webhook notification channel with invalid URL
+            // Create a webhook notification channel
             const [channel] = await db
                 .insertInto('notification_channels')
                 .values({
                     organization_id: organization.id,
-                    name: 'Failed Webhook Channel',
+                    name: 'Webhook Channel',
                     type: 'webhook',
-                    config: { url: 'http://localhost:99999/nonexistent' },
+                    config: { url: 'https://example.com/alert-hook' },
                     enabled: true,
                 })
                 .returningAll()
@@ -150,24 +158,31 @@ describe('Alert Worker Reliability', () => {
             const triggered = await alertsService.checkAlertRules();
             expect(triggered).toHaveLength(1);
 
-            // Process notification - the function records errors internally
-            // and may or may not throw depending on whether all notifications fail
-            try {
-                await processAlertNotification({ data: triggered[0] });
-            } catch (e) {
-                // Expected if webhook is the only notification method and it fails
-            }
+            // Process notification - with async webhook dispatch, the consumer job
+            // always completes without throwing even if the eventual HTTP delivery fails.
+            // The actual HTTP call (and any retry/error) happens inside the dispatcher
+            // worker, not here.
+            await expect(
+                processAlertNotification({ data: triggered[0] })
+            ).resolves.not.toThrow();
 
-            // Verify error was recorded in history
+            // The dispatcher should have been asked to enqueue the webhook
+            expect(enqueueMock).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    url: 'https://example.com/alert-hook',
+                    organizationId: organization.id,
+                    eventType: 'alert',
+                })
+            );
+
+            // History should be marked as notified (no synchronous error)
             const history = await db
                 .selectFrom('alert_history')
                 .selectAll()
                 .where('id', '=', triggered[0].historyId)
                 .executeTakeFirst();
 
-            // The alert should have an error recorded because webhook failed
-            expect(history?.error).toBeTruthy();
-            expect(history?.error).toContain('Webhook failed');
+            expect(history?.notified).toBe(true);
         });
     });
 

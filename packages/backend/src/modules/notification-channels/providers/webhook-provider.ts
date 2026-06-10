@@ -5,9 +5,7 @@
 
 import type { NotificationProvider, NotificationContext, DeliveryResult } from './interface.js';
 import type { WebhookChannelConfig, ChannelConfig } from '@logtide/shared';
-import { safeFetch, SsrfBlockedError } from '../../../utils/ssrf-guard.js';
-import { config } from '../../../config/index.js';
-import { hooks, HookRejectionError } from '../../../hooks/index.js';
+import { deliverOnce } from '../../webhooks/index.js';
 
 export class WebhookProvider implements NotificationProvider {
   readonly type = 'webhook' as const;
@@ -19,98 +17,40 @@ export class WebhookProvider implements NotificationProvider {
 
     const webhookConfig = channelConfig as WebhookChannelConfig;
 
-    try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'User-Agent': 'LogTide/1.0',
-        ...(webhookConfig.headers || {}),
-      };
-
-      // Add authentication if configured
-      if (webhookConfig.auth) {
-        if (webhookConfig.auth.type === 'bearer' && webhookConfig.auth.token) {
-          headers['Authorization'] = `Bearer ${webhookConfig.auth.token}`;
-        } else if (
-          webhookConfig.auth.type === 'basic' &&
-          webhookConfig.auth.username &&
-          webhookConfig.auth.password
-        ) {
-          const credentials = Buffer.from(
-            `${webhookConfig.auth.username}:${webhookConfig.auth.password}`
-          ).toString('base64');
-          headers['Authorization'] = `Basic ${credentials}`;
-        }
+    // Build auth headers, then hand off to the shared deliverOnce primitive
+    // (#218): it runs the beforeWebhookDispatch hook, applies the SSRF guard,
+    // and signs the body. This keeps the synchronous DeliveryResult contract
+    // the "Test Channel" button relies on while centralizing delivery.
+    const headers: Record<string, string> = { ...(webhookConfig.headers || {}) };
+    if (webhookConfig.auth) {
+      if (webhookConfig.auth.type === 'bearer' && webhookConfig.auth.token) {
+        headers['Authorization'] = `Bearer ${webhookConfig.auth.token}`;
+      } else if (
+        webhookConfig.auth.type === 'basic' &&
+        webhookConfig.auth.username &&
+        webhookConfig.auth.password
+      ) {
+        const credentials = Buffer.from(
+          `${webhookConfig.auth.username}:${webhookConfig.auth.password}`
+        ).toString('base64');
+        headers['Authorization'] = `Basic ${credentials}`;
       }
-
-      const payload = this.buildPayload(context);
-
-      // Lifecycle hook (#216): last interception point before the outbound
-      // call. headers/body are mutable; url stays readonly (safeFetch still
-      // SSRF-validates regardless).
-      if (hooks.hasHandlers('beforeWebhookDispatch')) {
-        let targetHost: string;
-        try {
-          targetHost = new URL(webhookConfig.url).hostname;
-        } catch {
-          return { success: false, error: 'Invalid webhook configuration' };
-        }
-        try {
-          await hooks.run('beforeWebhookDispatch', {
-            organizationId: context.organizationId || null,
-            channelId: context.channelId,
-            url: webhookConfig.url,
-            targetHost,
-            headers,
-            body: payload,
-          });
-        } catch (e) {
-          if (e instanceof HookRejectionError) {
-            return { success: false, error: `Webhook dispatch rejected: ${e.message}` };
-          }
-          return { success: false, error: 'Webhook dispatch blocked: hook failed' };
-        }
-      }
-
-      // safeFetch validates the URL (and every redirect hop) against the SSRF
-      // guard before connecting. Private/internal targets are rejected unless
-      // MONITOR_ALLOW_PRIVATE_TARGETS is set for self-hosted deployments.
-      const response = await safeFetch(
-        webhookConfig.url,
-        {
-          method: webhookConfig.method || 'POST',
-          headers,
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(10000), // 10s timeout
-        },
-        { allowPrivate: config.MONITOR_ALLOW_PRIVATE_TARGETS }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        console.error(`[WebhookProvider] HTTP ${response.status}: ${errorText}`);
-        return {
-          success: false,
-          error: `HTTP ${response.status}: ${response.statusText}`,
-        };
-      }
-
-      console.log(`[WebhookProvider] Sent to ${webhookConfig.url}`);
-
-      return {
-        success: true,
-        metadata: {
-          statusCode: response.status,
-          url: webhookConfig.url,
-        },
-      };
-    } catch (error) {
-      if (error instanceof SsrfBlockedError) {
-        return { success: false, error: 'Webhook URLs pointing to private/internal addresses are not allowed' };
-      }
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`[WebhookProvider] Failed: ${errorMessage}`);
-      return { success: false, error: errorMessage };
     }
+
+    const result = await deliverOnce({
+      url: webhookConfig.url,
+      body: this.buildPayload(context),
+      organizationId: context.organizationId ?? null,
+      eventType: context.eventType,
+      method: webhookConfig.method,
+      headers,
+      channelId: context.channelId,
+    });
+
+    if (result.success) {
+      return { success: true, metadata: { statusCode: result.statusCode, url: webhookConfig.url } };
+    }
+    return { success: false, error: result.error };
   }
 
   validateConfig(config: unknown): config is WebhookChannelConfig {

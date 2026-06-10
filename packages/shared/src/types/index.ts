@@ -13,6 +13,9 @@ export * from './detection-pack.js';
 // Re-export notification channel types
 export * from './notification-channel.js';
 
+// Re-export webhook delivery types
+export * from './webhook-delivery.js';
+
 // Re-export custom dashboard types
 export * from './dashboard.js';
 export * from './dashboard-migrations.js';
