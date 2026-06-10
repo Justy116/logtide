@@ -54,6 +54,7 @@ describe('Admin Routes', () => {
 
     beforeEach(async () => {
         // Clean up in correct order
+        await db.deleteFrom('metering_events').execute();
         await db.deleteFrom('logs').execute();
         await db.deleteFrom('alert_history').execute();
         await db.deleteFrom('sigma_rules').execute();
@@ -798,6 +799,50 @@ describe('Admin Routes', () => {
             });
 
             expect(response.statusCode).toBe(403);
+        });
+    });
+
+    describe('GET /stats/ingestion-health', () => {
+        it('should return 401 without auth token', async () => {
+            const response = await app.inject({
+                method: 'GET',
+                url: '/api/v1/admin/stats/ingestion-health',
+            });
+            expect(response.statusCode).toBe(401);
+        });
+
+        it('should return 403 for non-admin user', async () => {
+            const response = await app.inject({
+                method: 'GET',
+                url: '/api/v1/admin/stats/ingestion-health',
+                headers: { authorization: `Bearer ${userToken}` },
+            });
+            expect(response.statusCode).toBe(403);
+        });
+
+        it('should aggregate 24h ingestion health counters', async () => {
+            const now = new Date();
+            const twoDaysAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+            await db.insertInto('metering_events').values([
+                { time: now, organization_id: testOrg.id, project_id: testProject.id, type: 'ingestion.pii_rejected', quantity: 3 },
+                { time: now, organization_id: testOrg.id, project_id: testProject.id, type: 'ingestion.pii_rejected', quantity: 2 },
+                { time: now, organization_id: testOrg.id, project_id: testProject.id, type: 'ingestion.detection_enqueue_failed', quantity: 7 },
+                { time: twoDaysAgo, organization_id: testOrg.id, project_id: testProject.id, type: 'ingestion.pii_rejected', quantity: 100 },
+            ]).execute();
+
+            const response = await app.inject({
+                method: 'GET',
+                url: '/api/v1/admin/stats/ingestion-health',
+                headers: { authorization: `Bearer ${adminToken}` },
+            });
+
+            expect(response.statusCode).toBe(200);
+            const body = JSON.parse(response.body);
+            expect(body.counters24h.piiRejected).toBe(5);
+            expect(body.counters24h.detectionEnqueueFailed).toBe(7);
+            expect(body.counters24h.exceptionEnqueueFailed).toBe(0);
+            expect(body.counters24h.identifierFailed).toBe(0);
+            expect(body.enrichment).toBeDefined();
         });
     });
 

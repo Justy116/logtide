@@ -3,6 +3,8 @@ import { ipsumService } from './ipsum-service.js';
 import type { IpReputationData, GeoIpData } from './types';
 
 export class EnrichmentService {
+  private warnedIpsumNotReady = false;
+
   /**
    * Initialize the enrichment service
    * This should be called at application startup
@@ -21,6 +23,7 @@ export class EnrichmentService {
     // Initialize IPsum database (downloads from GitHub if needed)
     const ipsumReady = await ipsumService.initialize();
     if (ipsumReady) {
+      this.warnedIpsumNotReady = false;
       console.log('[EnrichmentService] IPsum ready');
     } else {
       console.warn('[EnrichmentService] IPsum not available - check network connection');
@@ -52,7 +55,10 @@ export class EnrichmentService {
    */
   checkIpReputation(ip: string): IpReputationData | null {
     if (!ipsumService.ready()) {
-      console.warn('[EnrichmentService] IPsum not ready');
+      if (!this.warnedIpsumNotReady) {
+        this.warnedIpsumNotReady = true;
+        console.warn('[EnrichmentService] IPsum not ready - IP reputation checks disabled until reload');
+      }
       return null;
     }
 

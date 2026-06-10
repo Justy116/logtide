@@ -5,6 +5,7 @@ import { GLOBAL_SCOPE } from '@logtide/reservoir';
 import { getConnection, isRedisAvailable } from '../../queue/connection.js';
 import { CacheManager, type CacheStats, isCacheEnabled } from '../../utils/cache.js';
 import { settingsService, type UpdateChannel } from '../settings/service.js';
+import { enrichmentService } from '../siem/enrichment-service.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -1216,6 +1217,41 @@ export class AdminService {
                 overall: 'down',
             };
         }
+    }
+
+    /**
+     * Ingestion health counters (WS1): fail-closed PII rejections and
+     * enqueue failures over the last 24h, plus SIEM enrichment availability.
+     */
+    async getIngestionHealthStats() {
+        const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const rows = await db
+            .selectFrom('metering_events')
+            .select((eb) => ['type' as const, eb.fn.sum<number>('quantity').as('total')])
+            .where('time', '>=', since)
+            .where('type', 'in', [
+                'ingestion.pii_rejected',
+                'ingestion.detection_enqueue_failed',
+                'ingestion.exception_enqueue_failed',
+                'ingestion.identifier_failed',
+            ])
+            .groupBy('type')
+            .execute();
+
+        const byType: Record<string, number> = {};
+        for (const row of rows) {
+            byType[row.type] = Number(row.total);
+        }
+
+        return {
+            counters24h: {
+                piiRejected: byType['ingestion.pii_rejected'] ?? 0,
+                detectionEnqueueFailed: byType['ingestion.detection_enqueue_failed'] ?? 0,
+                exceptionEnqueueFailed: byType['ingestion.exception_enqueue_failed'] ?? 0,
+                identifierFailed: byType['ingestion.identifier_failed'] ?? 0,
+            },
+            enrichment: enrichmentService.getStatus(),
+        };
     }
 
     /**

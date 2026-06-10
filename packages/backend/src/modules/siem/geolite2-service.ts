@@ -28,6 +28,7 @@ class GeoLite2Service {
   private reader: ReaderModel | null = null;
   private lastUpdate: Date | null = null;
   private isUpdating = false;
+  private warnedNotLoaded = false;
 
   /**
    * Initialize the GeoLite2 database
@@ -68,6 +69,7 @@ class GeoLite2Service {
 
       this.reader = await Reader.open(GEOLITE2_DB_PATH);
       this.lastUpdate = fs.statSync(GEOLITE2_DB_PATH).mtime;
+      this.warnedNotLoaded = false;
       console.log('[GeoLite2] Database loaded successfully');
       console.log('[GeoLite2] Last update:', this.lastUpdate.toISOString());
       return true;
@@ -165,7 +167,10 @@ class GeoLite2Service {
    */
   lookup(ip: string): GeoLite2Data | null {
     if (!this.reader) {
-      console.warn('[GeoLite2] Database not loaded');
+      if (!this.warnedNotLoaded) {
+        this.warnedNotLoaded = true;
+        console.warn('[GeoLite2] Database not loaded - geo enrichment disabled until reload');
+      }
       return null;
     }
 
