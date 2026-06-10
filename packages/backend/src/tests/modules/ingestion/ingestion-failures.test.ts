@@ -1,14 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // vi.hoisted ensures the mock factory runs before any module import
-const { addMock, createQueueMock } = vi.hoisted(() => {
+const { addMock, exceptionAddMock, createQueueMock } = vi.hoisted(() => {
   const addMock = vi.fn();
+  const exceptionAddMock = vi.fn().mockResolvedValue({});
   const createQueueMock = vi.fn((name: string) => {
     if (name === 'sigma-detection') return { add: addMock };
+    if (name === 'exception-parsing') return { add: exceptionAddMock };
     // All other queues succeed silently
     return { add: vi.fn().mockResolvedValue({}) };
   });
-  return { addMock, createQueueMock };
+  return { addMock, exceptionAddMock, createQueueMock };
 });
 
 vi.mock('../../../queue/connection.js', () => ({
@@ -17,6 +19,7 @@ vi.mock('../../../queue/connection.js', () => ({
 
 import { ingestionService } from '../../../modules/ingestion/service.js';
 import { metering } from '../../../modules/metering/index.js';
+import { correlationService } from '../../../modules/correlation/service.js';
 import { createTestContext } from '../../helpers/factories.js';
 import { db } from '../../../database/index.js';
 
@@ -42,6 +45,8 @@ describe('ingestion enqueue failure visibility', () => {
     projectId = ctx.project.id;
 
     addMock.mockReset();
+    exceptionAddMock.mockReset();
+    exceptionAddMock.mockResolvedValue({});
     createQueueMock.mockClear();
   });
 
@@ -86,6 +91,46 @@ describe('ingestion enqueue failure visibility', () => {
     expect(addMock).toHaveBeenCalledTimes(2);
     expect(recordSpy).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'ingestion.detection_enqueue_failed' })
+    );
+  });
+
+  it('retries the exception enqueue once and records a counter when both attempts fail', async () => {
+    // sigma queue succeeds (undefined resolve), exception queue fails twice
+    addMock.mockResolvedValue({} as any);
+    exceptionAddMock.mockRejectedValue(new Error('redis down'));
+    const recordSpy = vi.spyOn(metering, 'record').mockImplementation(() => {});
+
+    const result = await ingestionService.ingestLogs(
+      [{ time: new Date(), service: 'svc', level: 'error', message: 'boom' }],
+      projectId
+    );
+
+    expect(result.received).toBe(1);
+    await new Promise((r) => setTimeout(r, 100));
+
+    // exception-parsing add called twice: first attempt + one retry
+    expect(exceptionAddMock).toHaveBeenCalledTimes(2);
+    expect(recordSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'ingestion.exception_enqueue_failed', quantity: 1 })
+    );
+  });
+
+  it('records identifier_failed when identifier extraction throws', async () => {
+    addMock.mockResolvedValue({} as any);
+    vi.spyOn(correlationService, 'extractIdentifiersAsync').mockRejectedValue(
+      new Error('pattern compile error')
+    );
+    const recordSpy = vi.spyOn(metering, 'record').mockImplementation(() => {});
+
+    const result = await ingestionService.ingestLogs(
+      [{ time: new Date(), service: 'svc', level: 'info', message: 'hello' }],
+      projectId
+    );
+
+    // Extraction failure is enrichment-only; ingestion still succeeds
+    expect(result.received).toBe(1);
+    expect(recordSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'ingestion.identifier_failed', quantity: 1 })
     );
   });
 });
