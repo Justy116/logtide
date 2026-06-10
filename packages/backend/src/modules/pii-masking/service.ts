@@ -335,32 +335,46 @@ export class PiiMaskingService {
   // -------------------------------------------------------------------------
 
   /**
-   * Mask a batch of logs in-place.
-   * Call this BEFORE creating dbLogs so all downstream consumers get masked data.
+   * Mask a batch of logs in place.
+   * Returns the indices of records whose masking FAILED. Callers must treat
+   * those records as unmasked and must not persist them (fail-closed).
+   * If rule compilation itself fails, every index is returned.
    */
   async maskLogBatch(
     logs: LogInput[],
     organizationId: string,
     projectId: string
-  ): Promise<void> {
-    const ruleSet = await this.getCompiledRules(organizationId, projectId);
+  ): Promise<number[]> {
+    let ruleSet: CompiledRuleSet;
+    try {
+      ruleSet = await this.getCompiledRules(organizationId, projectId);
+    } catch (err) {
+      console.error('[PII] Failed to compile masking rules, failing batch closed:', err);
+      return logs.map((_, i) => i);
+    }
 
     // Fast path: no enabled rules
     if (ruleSet.contentRules.length === 0 && ruleSet.fieldRules.length === 0) {
-      return;
+      return [];
     }
 
-    for (const log of logs) {
-      // Mask message with content rules
-      if (log.message) {
-        log.message = this.maskText(log.message, ruleSet);
-      }
-
-      // Mask metadata recursively (field name rules + content rules)
-      if (log.metadata && typeof log.metadata === 'object') {
-        this.maskObject(log.metadata as Record<string, unknown>, ruleSet, '', false);
+    const failed: number[] = [];
+    for (let i = 0; i < logs.length; i++) {
+      const log = logs[i];
+      try {
+        // Mask message with content rules
+        if (log.message) {
+          log.message = this.maskText(log.message, ruleSet);
+        }
+        // Mask metadata recursively (field name rules + content rules)
+        if (log.metadata && typeof log.metadata === 'object') {
+          this.maskObject(log.metadata as Record<string, unknown>, ruleSet, '', false);
+        }
+      } catch {
+        failed.push(i);
       }
     }
+    return failed;
   }
 
   /**

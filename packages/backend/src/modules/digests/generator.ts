@@ -267,9 +267,10 @@ export class DigestGeneratorService {
     } else {
       content += ` Log Volume\n`;
       content += `\n`;
-      content += `Total logs: ${stats.currentPeriodCount.toLocaleString()}\n`;
+      // Fixed locale: digest content must not depend on the server's locale
+      content += `Total logs: ${stats.currentPeriodCount.toLocaleString('en-US')}\n`;
       content += `Trend: ${stats.trend}\n`;
-      content += `Previous period: ${stats.previousPeriodCount.toLocaleString()}\n`;
+      content += `Previous period: ${stats.previousPeriodCount.toLocaleString('en-US')}\n`;
     }
 
     content += `\n`;

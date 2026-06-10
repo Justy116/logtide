@@ -376,6 +376,26 @@ export interface VersionCheckResult {
     checkedAt: string;
 }
 
+export interface EnrichmentSourceStatus {
+    configured: boolean;
+    ready: boolean;
+    lastUpdate: string | null;
+    source: string;
+}
+
+export interface IngestionHealthStats {
+    counters24h: {
+        piiRejected: number;
+        detectionEnqueueFailed: number;
+        exceptionEnqueueFailed: number;
+        identifierFailed: number;
+    };
+    enrichment: {
+        ipReputation: EnrichmentSourceStatus & { totalIps: number };
+        geoIp: EnrichmentSourceStatus;
+    };
+}
+
 // System Settings Interfaces
 export interface SystemSetting {
     key: string;
@@ -476,6 +496,10 @@ class AdminAPI {
 
     async getVersionCheck(): Promise<VersionCheckResult> {
         return this.fetch<VersionCheckResult>('/version-check');
+    }
+
+    async getIngestionHealth(): Promise<IngestionHealthStats> {
+        return this.fetch<IngestionHealthStats>('/stats/ingestion-health');
     }
 
     // User Management

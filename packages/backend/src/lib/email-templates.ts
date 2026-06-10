@@ -339,14 +339,14 @@ export function generateAlertEmail(data: AlertEmailData): { html: string; text: 
         ${subtitle(`Unusual log volume detected compared to baseline.`)}
         ${timestamp()}
         ${alertBox(
-          `Current rate: <strong>${Math.round(bm.current_value).toLocaleString()}</strong> logs/hr &mdash; Baseline: <strong>${Math.round(bm.baseline_value).toLocaleString()}</strong> logs/hr &mdash; <strong>${bm.deviation_ratio}x</strong> above normal`,
+          `Current rate: <strong>${Math.round(bm.current_value).toLocaleString('en-US')}</strong> logs/hr &mdash; Baseline: <strong>${Math.round(bm.baseline_value).toLocaleString('en-US')}</strong> logs/hr &mdash; <strong>${bm.deviation_ratio}x</strong> above normal`,
           'warning'
         )}
         ${infoBox([
           { label: 'Rule Name', value: data.ruleName },
           { label: 'Baseline Method', value: baselineLabel },
-          { label: 'Current Rate', value: `${Math.round(bm.current_value).toLocaleString()} logs/hr` },
-          { label: 'Baseline Rate', value: `${Math.round(bm.baseline_value).toLocaleString()} logs/hr` },
+          { label: 'Current Rate', value: `${Math.round(bm.current_value).toLocaleString('en-US')} logs/hr` },
+          { label: 'Baseline Rate', value: `${Math.round(bm.baseline_value).toLocaleString('en-US')} logs/hr` },
           { label: 'Deviation', value: `${bm.deviation_ratio}x` },
           ...(data.service ? [{ label: 'Service Filter', value: data.service, isCode: true }] : []),
           ...(data.organizationName ? [{ label: 'Organization', value: data.organizationName }] : []),
@@ -363,8 +363,8 @@ ${'='.repeat(50)}
 
 Log volume is ${bm.deviation_ratio}x above the baseline.
 
-Current Rate: ${Math.round(bm.current_value).toLocaleString()} logs/hr
-Baseline (${baselineLabel}): ${Math.round(bm.baseline_value).toLocaleString()} logs/hr
+Current Rate: ${Math.round(bm.current_value).toLocaleString('en-US')} logs/hr
+Baseline (${baselineLabel}): ${Math.round(bm.baseline_value).toLocaleString('en-US')} logs/hr
 Deviation: ${bm.deviation_ratio}x above normal
 
 DETAILS
@@ -394,7 +394,7 @@ Manage notifications: ${frontendUrl}/dashboard/settings/channels
       ${subtitle(`Your alert threshold was exceeded.`)}
       ${timestamp()}
       ${alertBox(
-        `<strong>${data.logCount.toLocaleString()}</strong> logs matched in the last <strong>${data.timeWindow}</strong> minute${data.timeWindow > 1 ? 's' : ''}, exceeding your threshold of <strong>${data.threshold.toLocaleString()}</strong>.`,
+        `<strong>${data.logCount.toLocaleString('en-US')}</strong> logs matched in the last <strong>${data.timeWindow}</strong> minute${data.timeWindow > 1 ? 's' : ''}, exceeding your threshold of <strong>${data.threshold.toLocaleString('en-US')}</strong>.`,
         'error'
       )}
       ${infoBox([
@@ -413,7 +413,7 @@ Manage notifications: ${frontendUrl}/dashboard/settings/channels
 ALERT TRIGGERED: ${data.ruleName}
 ${'='.repeat(50)}
 
-${data.logCount.toLocaleString()} logs matched in the last ${data.timeWindow} minute${data.timeWindow > 1 ? 's' : ''}, exceeding your threshold of ${data.threshold.toLocaleString()}.
+${data.logCount.toLocaleString('en-US')} logs matched in the last ${data.timeWindow} minute${data.timeWindow > 1 ? 's' : ''}, exceeding your threshold of ${data.threshold.toLocaleString('en-US')}.
 
 DETAILS
 -------

@@ -48,7 +48,7 @@ describe('ingestion hard-block on usage quota', () => {
   ];
 
   it('ingests normally when no quota is set (default unlimited)', async () => {
-    const n = await asOrg(orgId, () => ingestionService.ingestLogs(logs, projectId));
+    const n = (await asOrg(orgId, () => ingestionService.ingestLogs(logs, projectId))).received;
     expect(n).toBe(2);
   });
 
@@ -79,7 +79,7 @@ describe('ingestion hard-block on usage quota', () => {
   it('does not block when no org is in context (fail-open developer guard)', async () => {
     // Without an org context, the helper would throw a developer error; ingestion
     // guards this by only asserting when organizationId is present (see wiring).
-    const n = await ingestionService.ingestLogs(logs, projectId);
+    const n = (await ingestionService.ingestLogs(logs, projectId)).received;
     expect(n).toBe(2);
   });
 });

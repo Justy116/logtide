@@ -172,6 +172,27 @@ export async function adminRoutes(fastify: FastifyInstance) {
         }
     );
 
+    // GET /api/v1/admin/stats/ingestion-health - Ingestion health counters (24h)
+    fastify.get(
+        '/stats/ingestion-health',
+        {
+            config: {
+                rateLimit: rateLimitConfig,
+            },
+        },
+        async (_request, reply) => {
+            try {
+                const stats = await adminService.getIngestionHealthStats();
+                return reply.send(stats);
+            } catch (error) {
+                console.error('Error getting ingestion health stats:', error);
+                return reply.status(500).send({
+                    error: 'Failed to retrieve ingestion health statistics',
+                });
+            }
+        }
+    );
+
     // GET /api/v1/admin/users - List all users with pagination and search
     fastify.get(
         '/users',

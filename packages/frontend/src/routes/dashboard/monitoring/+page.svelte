@@ -365,6 +365,8 @@
   }
 
   let statusIncidents = $state<StatusIncident[]>([]);
+  let statusIncidentsError = $state<string | null>(null);
+  let maintenancesError = $state<string | null>(null);
   let showIncidentForm = $state(false);
   let incidentTitle = $state('');
   let incidentSeverity = $state('minor');
@@ -394,13 +396,15 @@
 
   async function loadIncidents() {
     if (!org || !projectId) return;
+    statusIncidentsError = null;
     try {
       const res = await apiRequest(`/status-incidents?organizationId=${org.id}&projectId=${projectId}`);
-      if (res.ok) {
-        const data = await res.json();
-        statusIncidents = data.incidents;
-      }
-    } catch {}
+      if (!res.ok) throw new Error(`Failed to load incidents (${res.status})`);
+      const data = await res.json();
+      statusIncidents = data.incidents;
+    } catch (err) {
+      statusIncidentsError = err instanceof Error ? err.message : 'Failed to load incidents';
+    }
   }
 
   async function createIncident(e: Event) {
@@ -478,13 +482,15 @@
 
   async function loadMaintenances() {
     if (!org || !projectId) return;
+    maintenancesError = null;
     try {
       const res = await apiRequest(`/maintenances?organizationId=${org.id}&projectId=${projectId}`);
-      if (res.ok) {
-        const data = await res.json();
-        maintenances = data.maintenances;
-      }
-    } catch {}
+      if (!res.ok) throw new Error(`Failed to load maintenances (${res.status})`);
+      const data = await res.json();
+      maintenances = data.maintenances;
+    } catch (err) {
+      maintenancesError = err instanceof Error ? err.message : 'Failed to load maintenances';
+    }
   }
 
   async function createMaintenance(e: Event) {
@@ -1049,6 +1055,12 @@
         </Dialog.Content>
       </Dialog.Root>
 
+      {#if statusIncidentsError}
+        <div class="rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+          {statusIncidentsError}
+        </div>
+      {/if}
+
       {#if statusIncidents.length === 0}
         <div class="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-12 text-center">
           <AlertTriangle class="h-8 w-8 text-muted-foreground" />
@@ -1164,6 +1176,12 @@
           </form>
         </Dialog.Content>
       </Dialog.Root>
+
+      {#if maintenancesError}
+        <div class="rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+          {maintenancesError}
+        </div>
+      {/if}
 
       {#if maintenances.length === 0}
         <div class="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-12 text-center">

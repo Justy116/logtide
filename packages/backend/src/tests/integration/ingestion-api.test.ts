@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { vi } from 'vitest';
 import request from 'supertest';
 import { build } from '../../server.js';
 import { createTestApiKey } from '../helpers/index.js';
 import { db } from '../../database/index.js';
+import { piiMaskingService } from '../../modules/pii-masking/service.js';
 
 describe('Ingestion API', () => {
     let app: any;
@@ -179,6 +181,27 @@ describe('Ingestion API', () => {
                 .expect(200);
 
             expect(response.body.received).toBe(100);
+        });
+
+        it('reports rejected records when PII masking fails', async () => {
+            const spy = vi.spyOn(piiMaskingService, 'maskLogBatch').mockResolvedValue([0]);
+            try {
+                const response = await request(app.server)
+                    .post('/api/v1/ingest')
+                    .set('x-api-key', apiKey)
+                    .send({
+                        logs: [
+                            {time: new Date().toISOString(), service: 'svc', level: 'info', message: 'bad'},
+                            {time: new Date().toISOString(), service: 'svc', level: 'info', message: 'good'},
+                        ],
+                    })
+                    .expect(200);
+
+                expect(response.body.received).toBe(1);
+                expect(response.body.rejected).toEqual([{index: 0, reason: 'pii_masking_failed'}]);
+            } finally {
+                spy.mockRestore();
+            }
         });
     });
 
