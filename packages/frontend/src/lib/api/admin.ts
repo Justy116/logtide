@@ -376,6 +376,13 @@ export interface VersionCheckResult {
     checkedAt: string;
 }
 
+export interface EnrichmentSourceStatus {
+    configured: boolean;
+    ready: boolean;
+    lastUpdate: string | null;
+    source: string;
+}
+
 export interface IngestionHealthStats {
     counters24h: {
         piiRejected: number;
@@ -383,7 +390,10 @@ export interface IngestionHealthStats {
         exceptionEnqueueFailed: number;
         identifierFailed: number;
     };
-    enrichment: unknown;
+    enrichment: {
+        ipReputation: EnrichmentSourceStatus & { totalIps: number };
+        geoIp: EnrichmentSourceStatus;
+    };
 }
 
 // System Settings Interfaces

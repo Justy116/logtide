@@ -327,17 +327,21 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Process all logs
       const validLogs = [];
+      // rejected[].index refers to positions in the submitted batch, so track
+      // each valid log's original position (validation can drop entries).
+      const originalIndexes: number[] = [];
       const errors = [];
 
-      for (const logData of rawLogs) {
-        const log = normalizeLogData(logData);
+      for (let i = 0; i < rawLogs.length; i++) {
+        const log = normalizeLogData(rawLogs[i]);
 
         const parseResult = logSchema.safeParse(log);
 
         if (parseResult.success) {
           validLogs.push(parseResult.data);
+          originalIndexes.push(i);
         } else {
-          errors.push({ log: logData, error: parseResult.error.format() });
+          errors.push({ log: rawLogs[i], error: parseResult.error.format() });
         }
       }
 
@@ -350,10 +354,11 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Ingest all valid logs
       const result = await ingestionService.ingestLogs(validLogs, projectId);
+      const rejected = result.rejected.map((r) => ({ ...r, index: originalIndexes[r.index] }));
 
       return {
         received: result.received,
-        ...(result.rejected.length > 0 && { rejected: result.rejected }),
+        ...(rejected.length > 0 && { rejected }),
         timestamp: new Date().toISOString(),
       };
     },

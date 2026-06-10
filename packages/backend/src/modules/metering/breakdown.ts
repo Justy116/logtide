@@ -85,12 +85,14 @@ export async function getUsageBreakdown(params: UsageBreakdownParams): Promise<U
 
   // Volume per metering signal type (all counter types, so future spans/metrics surface too).
   // storage.snapshot is a gauge, not a counter: excluded from summed breakdowns.
+  // ingestion.* health counters (WS1) are operational signals, not usage: hidden from tenants.
   const typeRows = await sql<{ type: string; quantity: number | string }>`
     SELECT type, SUM(quantity)::float8 AS quantity
     FROM metering_events
     WHERE organization_id = ${organizationId}
       AND time >= ${from} AND time < ${to}
       AND type <> 'storage.snapshot'
+      AND type NOT LIKE 'ingestion.%'
     GROUP BY type
     ORDER BY type`.execute(db);
   const byType: TypeUsage[] = typeRows.rows.map((r) => ({
