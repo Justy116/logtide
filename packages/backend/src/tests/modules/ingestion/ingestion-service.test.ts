@@ -145,51 +145,64 @@ describe('IngestionService', () => {
             const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
             const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
-            // Create old log
             await db.insertInto('logs').values({
-                project_id: projectId,
-                service: 'test',
-                level: 'info',
-                message: 'Old log',
-                time: twoHoursAgo,
+                project_id: projectId, service: 'test', level: 'info',
+                message: 'Old log', time: twoHoursAgo,
             }).execute();
-
-            // Create recent log
             await db.insertInto('logs').values({
-                project_id: projectId,
-                service: 'test',
-                level: 'info',
-                message: 'Recent log',
-                time: now,
+                project_id: projectId, service: 'test', level: 'info',
+                message: 'Recent log', time: now,
             }).execute();
 
             const stats = await ingestionService.getStats(projectId, oneHourAgo);
 
-            // Note: Due to a bug in the service (missing query reassignment),
-            // the filter may not be applied. This test documents the expected behavior.
-            expect(stats.total).toBeGreaterThanOrEqual(0);
+            expect(stats.total).toBe(1);
+            expect(stats.by_level.info).toBe(1);
         });
 
         it('should filter by to date', async () => {
             const now = new Date();
+            const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+            const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
-            await createTestLog({ projectId, level: 'info' });
+            await db.insertInto('logs').values({
+                project_id: projectId, service: 'test', level: 'info',
+                message: 'Old log', time: twoHoursAgo,
+            }).execute();
+            await db.insertInto('logs').values({
+                project_id: projectId, service: 'test', level: 'info',
+                message: 'Recent log', time: now,
+            }).execute();
 
-            const stats = await ingestionService.getStats(projectId, undefined, now);
+            const stats = await ingestionService.getStats(projectId, undefined, oneHourAgo);
 
-            expect(stats.total).toBeGreaterThanOrEqual(0);
+            expect(stats.total).toBe(1);
+            expect(stats.by_level.info).toBe(1);
         });
 
         it('should filter by both from and to dates', async () => {
             const now = new Date();
+            const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+            const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
             const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
-            await createTestLog({ projectId, level: 'info' });
+            await db.insertInto('logs').values({
+                project_id: projectId, service: 'test', level: 'info',
+                message: 'Too old', time: threeHoursAgo,
+            }).execute();
+            await db.insertInto('logs').values({
+                project_id: projectId, service: 'test', level: 'error',
+                message: 'In window', time: twoHoursAgo,
+            }).execute();
+            await db.insertInto('logs').values({
+                project_id: projectId, service: 'test', level: 'info',
+                message: 'Too new', time: now,
+            }).execute();
 
-            const stats = await ingestionService.getStats(projectId, twoHoursAgo, now);
+            const stats = await ingestionService.getStats(projectId, new Date(twoHoursAgo.getTime() - 1000), oneHourAgo);
 
-            expect(stats).toHaveProperty('total');
-            expect(stats).toHaveProperty('by_level');
+            expect(stats.total).toBe(1);
+            expect(stats.by_level.error).toBe(1);
         });
 
         it('should return empty stats for project with no logs', async () => {
