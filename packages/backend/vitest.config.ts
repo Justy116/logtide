@@ -32,7 +32,6 @@ export default defineConfig({
                 // Exclude hard-to-test infrastructure files
                 'src/queue/adapters/*.ts',
                 'src/queue/index.ts',
-                'src/modules/custom-dashboards/panel-data-service.ts',
             ],
             thresholds: {
                 lines: 80,
