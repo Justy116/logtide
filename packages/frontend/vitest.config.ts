@@ -1,15 +1,22 @@
 import { defineConfig } from 'vitest/config';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { svelteTesting } from '@testing-library/svelte/vite';
 
-// Note: svelte plugin is intentionally omitted here.
-// The current test suite covers pure TypeScript utilities only (trace-tree.ts etc.).
-// Component tests will revisit this config and add the svelte plugin when needed (WS5).
 export default defineConfig({
+  plugins: [
+    svelte({ hot: false }),
+    svelteTesting(),
+  ],
   test: {
     globals: true,
     environment: 'jsdom',
     include: ['src/**/*.test.ts'],
+    setupFiles: ['./src/test-setup.ts'],
     alias: {
       $lib: new URL('./src/lib', import.meta.url).pathname,
     },
+  },
+  resolve: {
+    conditions: ['browser'],
   },
 });
