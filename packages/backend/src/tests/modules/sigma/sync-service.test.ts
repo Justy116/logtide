@@ -44,6 +44,7 @@ detection:
 describe('SigmaSyncService - extra methods', () => {
   let service: SigmaSyncService;
   let orgId: string;
+  let otherOrgId: string;
 
   beforeEach(async () => {
     service = new SigmaSyncService();
@@ -51,6 +52,8 @@ describe('SigmaSyncService - extra methods', () => {
     await db.deleteFrom('alert_rules').execute();
     const ctx = await createTestContext();
     orgId = ctx.organization.id;
+    const otherCtx = await createTestContext();
+    otherOrgId = otherCtx.organization.id;
   });
 
   afterEach(() => {
@@ -133,29 +136,72 @@ describe('SigmaSyncService - extra methods', () => {
   });
 
   // -------------------------------------------------------------------------
-  // BUG DOCUMENTATION: searchByMITRETechnique, searchByMITRETactic, searchByTag
-  // use `text[] @> ::jsonb` which PostgreSQL rejects with
-  // "operator does not exist: text[] @> jsonb".
-  // The columns (mitre_techniques, mitre_tactics, tags) are TEXT[], not jsonb.
-  // Fix: use `= ANY(...)` or remove the `::jsonb` cast for text array containment.
-  // Tests below cover the lines to count coverage, and assert the current broken behavior.
+  // MITRE / tag search (regression: these used a text[] @> ::jsonb cast that
+  // postgres rejected, so the search endpoints 500ed until WS5 fixed the SQL)
   // -------------------------------------------------------------------------
 
-  describe('searchByMITRETechnique (buggy - documents text[]@>jsonb error)', () => {
-    it('throws postgres operator error for text[] @> jsonb', async () => {
-      await expect(service.searchByMITRETechnique(orgId, 'T1059')).rejects.toThrow();
+  describe('searchByMITRETechnique', () => {
+    it('returns rules tagged with the technique, org scoped', async () => {
+      await db.insertInto('sigma_rules').values({
+        organization_id: orgId,
+        title: 'Technique Rule',
+        logsource: {},
+        detection: {},
+        conversion_status: 'success',
+        mitre_techniques: ['T1059', 'T1027'],
+      }).execute();
+      await db.insertInto('sigma_rules').values({
+        organization_id: orgId,
+        title: 'Other Rule',
+        logsource: {},
+        detection: {},
+        conversion_status: 'success',
+        mitre_techniques: ['T1110'],
+      }).execute();
+
+      const rules = await service.searchByMITRETechnique(orgId, 'T1059');
+      expect(rules).toHaveLength(1);
+      expect(rules[0].title).toBe('Technique Rule');
+
+      const none = await service.searchByMITRETechnique(otherOrgId, 'T1059');
+      expect(none).toHaveLength(0);
     });
   });
 
-  describe('searchByMITRETactic (buggy - documents text[]@>jsonb error)', () => {
-    it('throws postgres operator error for text[] @> jsonb', async () => {
-      await expect(service.searchByMITRETactic(orgId, 'execution')).rejects.toThrow();
+  describe('searchByMITRETactic', () => {
+    it('returns rules tagged with the tactic', async () => {
+      await db.insertInto('sigma_rules').values({
+        organization_id: orgId,
+        title: 'Tactic Rule',
+        logsource: {},
+        detection: {},
+        conversion_status: 'success',
+        mitre_tactics: ['execution'],
+      }).execute();
+
+      const rules = await service.searchByMITRETactic(orgId, 'execution');
+      expect(rules).toHaveLength(1);
+      expect(rules[0].title).toBe('Tactic Rule');
     });
   });
 
-  describe('searchByTag (buggy - documents text[]@>jsonb error)', () => {
-    it('throws postgres operator error for text[] @> jsonb', async () => {
-      await expect(service.searchByTag(orgId, 'attack.execution')).rejects.toThrow();
+  describe('searchByTag', () => {
+    it('returns rules carrying the tag', async () => {
+      await db.insertInto('sigma_rules').values({
+        organization_id: orgId,
+        title: 'Tagged Rule',
+        logsource: {},
+        detection: {},
+        conversion_status: 'success',
+        tags: ['attack.execution', 'attack.t1059'],
+      }).execute();
+
+      const rules = await service.searchByTag(orgId, 'attack.execution');
+      expect(rules).toHaveLength(1);
+      expect(rules[0].title).toBe('Tagged Rule');
+
+      const none = await service.searchByTag(orgId, 'attack.persistence');
+      expect(none).toHaveLength(0);
     });
   });
 

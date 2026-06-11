@@ -440,7 +440,7 @@ export class SigmaSyncService {
       .selectFrom('sigma_rules')
       .selectAll()
       .where('organization_id', '=', organizationId)
-      .where(sql<boolean>`mitre_techniques @> ${sql.literal(JSON.stringify([techniqueId]))}::jsonb`)
+      .where(sql<boolean>`${sql.ref('mitre_techniques')} @> ARRAY[${techniqueId}]::text[]`)
       .execute();
 
     return rules;
@@ -457,7 +457,7 @@ export class SigmaSyncService {
       .selectFrom('sigma_rules')
       .selectAll()
       .where('organization_id', '=', organizationId)
-      .where(sql<boolean>`mitre_tactics @> ${sql.literal(JSON.stringify([tacticName]))}::jsonb`)
+      .where(sql<boolean>`${sql.ref('mitre_tactics')} @> ARRAY[${tacticName}]::text[]`)
       .execute();
 
     return rules;
@@ -471,7 +471,7 @@ export class SigmaSyncService {
       .selectFrom('sigma_rules')
       .selectAll()
       .where('organization_id', '=', organizationId)
-      .where(sql<boolean>`tags @> ${sql.literal(JSON.stringify([tag]))}::jsonb`)
+      .where(sql<boolean>`${sql.ref('tags')} @> ARRAY[${tag}]::text[]`)
       .execute();
 
     return rules;
