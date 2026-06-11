@@ -6,7 +6,7 @@ Contract reference for operators and downstream distributions. Last updated 2026
 
 ## What hooks are (and are not)
 
-Lifecycle hooks are a small, intentional set of four named extension points inside the backend. They are not a general event bus, not an async event emitter, and not a plugin system. Each phase is a specific moment in a specific code path where a registered handler may observe, mutate, or reject an operation.
+Lifecycle hooks are a small, intentional set of named extension points inside the backend. They are not a general event bus, not an async event emitter, and not a plugin system. Each phase is a specific moment in a specific code path where a registered handler may observe an operation (after phases) or observe, mutate, and reject it (before phases).
 
 Nothing is registered by default. In an OSS deployment with no external modules and no downstream bootstrap code, `hasHandlers` returns false for every phase, and the hook path is skipped entirely. There is no overhead.
 
@@ -16,6 +16,9 @@ Nothing is registered by default. In an OSS deployment with no external modules 
 | `beforeQuery` | At the top of `QueryService.queryLogs`, after request parsing and access checks in the route, before the cache key is built. | `QueryService.queryLogs` in `modules/query/service.ts`. Covers only the main log query path; stats, histogram, trace and context endpoints are not covered in v1 (see limitations). |
 | `beforeAlertEvaluation` | Once per rule, inside the alert evaluation loop, before `checkRule` is called. | `AlertsService.checkAlertRules` in `modules/alerts/service.ts`. |
 | `beforeWebhookDispatch` | Immediately before the outbound `safeFetch` call, after headers and payload are fully assembled. | `WebhookProvider.send` in `modules/notification-channels/providers/webhook-provider.ts` (notification channel path) AND `sendWebhookNotification` in `queue/jobs/alert-notification.ts` (legacy alert-rule `webhook_url` path). Both paths are covered. |
+| `afterIngest` | After the reservoir write completes successfully (after `reservoir.ingestReturning` returns). | `IngestionService.ingestLogs` in `modules/ingestion/service.ts`. Covers both HTTP and OTLP ingest paths. |
+| `afterAlertTriggered` | After an alert trigger has been persisted to alert history, before notification jobs are enqueued. | `AlertsService.checkAlertRules` in `modules/alerts/service.ts`. |
+| `afterWebhookDispatch` | After each webhook delivery attempt completes, on both the queued and synchronous dispatch paths. | `WebhookProvider.send` (notification channel path) AND `sendWebhookNotification` (legacy alert-rule path). |
 
 ---
 
@@ -118,6 +121,96 @@ export interface BeforeWebhookDispatchContext {
 
 ---
 
+## After-phase contexts
+
+After-phase handlers are fire-and-forget observers. They cannot mutate or reject: all context fields are `readonly`, and there is no mutable surface. Throwing from an after-phase handler is caught by the registry, logged with `console.warn`, and discarded. The operation that triggered the hook has already completed; the error does not affect its outcome.
+
+The `hasHandlers` guard applies to after phases the same as before phases. When no handlers are registered, the hook path is skipped at zero overhead.
+
+After-phase handlers are registered identically to before-phase handlers: via `hooks.register()` in code, or via `HOOKS_MODULES` for container deployments. The same module can register both before and after handlers.
+
+### `AfterIngestContext`
+
+```ts
+export interface AfterIngestContext {
+  readonly organizationId: string | null;
+  readonly projectId: string;
+  readonly acceptedCount: number;
+  readonly rejectedCount: number;
+  readonly rejectionReasons: readonly string[];
+}
+```
+
+Fires after `reservoir.ingestReturning` completes successfully. Covers both the HTTP ingest (`POST /api/v1/logs`) and OTLP log ingest paths. Carries counts only; log content is not available at this point.
+
+| Field | Notes |
+| --- | --- |
+| `organizationId` | Null when the project's organization cannot be resolved (same as `BeforeIngestContext`). |
+| `projectId` | Always set. |
+| `acceptedCount` | Number of records written to the reservoir. |
+| `rejectedCount` | Number of records dropped (e.g. by a `beforeIngest` filter or upstream validation). |
+| `rejectionReasons` | Readonly array of reason strings. May be empty. |
+
+### `AfterAlertTriggeredContext`
+
+```ts
+export interface AfterAlertTriggeredContext {
+  readonly organizationId: string;
+  readonly projectId: string | null;
+  readonly ruleId: string;
+  readonly ruleName: string;
+  readonly historyId: string;
+  readonly logCount: number;
+  readonly baselineMetadata: Readonly<Record<string, unknown>> | null;
+}
+```
+
+Fires after an alert trigger is persisted to alert history, before notification jobs are enqueued. This is a good place to emit metrics or audit events for alert activity.
+
+| Field | Notes |
+| --- | --- |
+| `organizationId` | Always set (alert rules are org-scoped). |
+| `projectId` | Null for org-wide rules without a project filter. |
+| `ruleId` | UUID of the alert rule that fired. |
+| `ruleName` | Display name of the rule. |
+| `historyId` | UUID of the new alert history record. |
+| `logCount` | Number of matching log events that triggered the rule. |
+| `baselineMetadata` | Non-null for anomaly/rate-of-change rules; contains baseline and deviation stats. Null for plain threshold rules. |
+
+### `AfterWebhookDispatchContext`
+
+```ts
+export interface AfterWebhookDispatchContext {
+  readonly organizationId: string | null;
+  readonly channelId?: string;
+  readonly ruleId?: string;
+  readonly eventType: string;
+  readonly url: string;
+  readonly success: boolean;
+  readonly statusCode: number | null;
+  readonly durationMs: number;
+  readonly error: string | null;
+  readonly retryable: boolean;
+}
+```
+
+Fires after each webhook delivery attempt completes, on both the queued (notification channel) and synchronous (legacy alert-rule `webhook_url`) dispatch paths. Useful for delivery metrics and audit logging.
+
+| Field | Notes |
+| --- | --- |
+| `organizationId` | Null when the channel has no org context. |
+| `channelId` | Present on the notification-channel path. |
+| `ruleId` | Present on the legacy alert-rule path. |
+| `eventType` | The webhook event type string (e.g. `alert.triggered`). |
+| `url` | The validated webhook URL that was called. |
+| `success` | `true` if the attempt received a 2xx response. |
+| `statusCode` | HTTP response status code, or `null` if the request never completed (timeout, network error). |
+| `durationMs` | Round-trip time for this attempt in milliseconds. |
+| `error` | Error message string if `success` is `false`, otherwise `null`. |
+| `retryable` | `true` if the failure is eligible for a retry attempt (5xx, 429, timeout). |
+
+---
+
 ## Execution guarantees
 
 Handlers registered for a phase run sequentially in registration order. The phase is not parallelized. Each handler awaits the previous one before the next starts, so a later handler sees any mutations made by an earlier one.
@@ -142,7 +235,9 @@ export class HookRejectionError extends Error {
 }
 ```
 
-A handler throws `HookRejectionError` to abort the operation intentionally. The registry detects it with `instanceof HookRejectionError` and propagates it as-is; it is not wrapped. The effect depends on the phase:
+A handler throws `HookRejectionError` to abort the operation intentionally. This applies to before phases only. After phases are fire-and-forget: any thrown error (including `HookRejectionError`) is caught, logged with `console.warn`, and silently discarded. The operation has already completed and cannot be cancelled.
+
+For before phases, the registry detects `HookRejectionError` with `instanceof HookRejectionError` and propagates it as-is; it is not wrapped. The effect depends on the phase:
 
 | Phase | Effect of `HookRejectionError` |
 |---|---|
@@ -251,3 +346,5 @@ Throwing `HookRejectionError` from an external module surfaces a clean 4xx with 
 - `eventCount` and `byteSize` on `BeforeIngestContext` are pre-hook snapshots. They are not recomputed after `records` is mutated, filtered or replaced. If you need the post-mutation count, use `ctx.records.length` directly.
 - No timeout is enforced on handlers. This is intentional in v1 to avoid surprising registered handlers; it may be added in a future version with an opt-in per-handler budget.
 - There is no hook for OTLP trace or metric ingestion paths in v1.
+- After-phase errors are logged with `console.warn` and never surfaced to the caller. If an after-phase handler performs I/O (metrics, audit writes, etc.) it is responsible for its own error handling and timeouts; failures are invisible to the requester.
+- There is no `afterQuery` phase in v1.
