@@ -14,11 +14,15 @@ vi.mock('nodemailer', () => ({
   },
 }));
 
-// Mock webhookDispatcher
+// Mock webhookDispatcher; buildEnvelope is kept real so the envelope shape tests work.
 const { enqueueMock } = vi.hoisted(() => ({ enqueueMock: vi.fn() }));
-vi.mock('../../modules/webhooks/index.js', () => ({
-  webhookDispatcher: { enqueue: enqueueMock },
-}));
+vi.mock('../../modules/webhooks/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../modules/webhooks/index.js')>();
+  return {
+    ...actual,
+    webhookDispatcher: { enqueue: enqueueMock },
+  };
+});
 
 describe('Error Notification Job', () => {
   let testOrganization: any;
@@ -273,11 +277,14 @@ describe('Error Notification Job', () => {
       expect(enqueueMock).toHaveBeenCalledWith(
         expect.objectContaining({
           url: 'https://example.com/error-hook',
-          eventType: 'error',
+          eventType: 'error.detected',
           payload: expect.objectContaining({
-            event_type: 'error',
-            exception_type: 'TypeError',
-            is_new: true,
+            type: 'error.detected',
+            version: 1,
+            data: expect.objectContaining({
+              exception_type: 'TypeError',
+              is_new: true,
+            }),
           }),
         })
       );
@@ -325,7 +332,7 @@ describe('Error Notification Job', () => {
       expect(enqueueMock).toHaveBeenCalledWith(
         expect.objectContaining({
           url: 'https://example.com/default-error',
-          eventType: 'error',
+          eventType: 'error.detected',
         })
       );
     });

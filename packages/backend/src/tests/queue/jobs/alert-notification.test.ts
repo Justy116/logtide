@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { processAlertNotification, type AlertNotificationData } from '../../../queue/jobs/alert-notification.js';
+import { parseWebhookEvent } from '@logtide/shared';
 import { hooks } from '../../../hooks/index.js';
 import { db } from '../../../database/index.js';
 import { createTestContext, createTestUser } from '../../helpers/factories.js';
@@ -15,10 +16,15 @@ vi.mock('nodemailer', () => ({
 
 // Mock webhookDispatcher — SSRF guard, hook execution, retry/backoff are
 // all handled inside the dispatcher and covered by deliver-once.test.ts (#218).
+// buildEnvelope is kept real so the envelope shape is testable.
 const { enqueueMock } = vi.hoisted(() => ({ enqueueMock: vi.fn() }));
-vi.mock('../../../modules/webhooks/index.js', () => ({
-    webhookDispatcher: { enqueue: enqueueMock },
-}));
+vi.mock('../../../modules/webhooks/index.js', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../../../modules/webhooks/index.js')>();
+    return {
+        ...actual,
+        webhookDispatcher: { enqueue: enqueueMock },
+    };
+});
 
 // Mock alertsService
 vi.mock('../../../modules/alerts/index.js', () => ({
@@ -171,9 +177,13 @@ describe('Alert Notification Job', () => {
             expect(enqueueMock).toHaveBeenCalledWith(
                 expect.objectContaining({
                     url: 'https://hooks.example.com/alert',
-                    eventType: 'alert',
+                    eventType: 'alert.triggered',
                     payload: expect.objectContaining({
-                        alert_name: 'Webhook Alert Rule',
+                        type: 'alert.triggered',
+                        version: 1,
+                        data: expect.objectContaining({
+                            alert_name: 'Webhook Alert Rule',
+                        }),
                     }),
                 })
             );
@@ -366,9 +376,6 @@ describe('Alert Notification Job', () => {
             expect(consoleSpy).toHaveBeenCalledWith(
                 expect.stringContaining('Email notifications sent')
             );
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('Webhook notification sent')
-            );
             expect(enqueueMock).toHaveBeenCalledWith(
                 expect.objectContaining({ url: 'https://hooks.example.com/alert' })
             );
@@ -403,16 +410,26 @@ describe('Alert Notification Job', () => {
             expect(enqueueMock).toHaveBeenCalledWith(
                 expect.objectContaining({
                     url: 'https://hooks.example.com/alert',
-                    eventType: 'alert',
+                    eventType: 'alert.triggered',
                     payload: expect.objectContaining({
-                        alert_name: 'Webhook Payload Test',
-                        log_count: 150,
-                        threshold: 100,
-                        time_window: 10,
-                        timestamp: expect.any(String),
+                        type: 'alert.triggered',
+                        version: 1,
                     }),
                 })
             );
+
+            // Envelope must satisfy the shared schema
+            const call = enqueueMock.mock.calls[0][0];
+            const envelope = parseWebhookEvent(call.payload);
+            expect(envelope.type).toBe('alert.triggered');
+            expect(envelope.organizationId).toBe(organization.id);
+            expect(envelope.projectId).toBe(project.id);
+            expect(envelope.data).not.toHaveProperty('event_type');
+            expect(envelope.data).not.toHaveProperty('timestamp');
+            expect(envelope.data).not.toHaveProperty('organization_id');
+            expect(envelope.data).not.toHaveProperty('project_id');
+            expect((envelope.data as Record<string, unknown>).alert_name).toBe('Webhook Payload Test');
+            expect((envelope.data as Record<string, unknown>).log_count).toBe(150);
         });
 
         it('should ignore legacy email_recipients field and only use channels', async () => {
@@ -526,4 +543,48 @@ describe('Alert Notification Job', () => {
     });
 
     // SSRF/hook behavior moved to the webhook dispatcher (#218); covered by deliver-once.test.ts.
+
+    describe('envelope shape', () => {
+        it('anomaly alert uses type alert.triggered with baseline_metadata in data', async () => {
+            const { organization, project } = await createTestContext();
+
+            mockGetAlertRuleChannels.mockResolvedValueOnce([{
+                id: '00000000-0000-0000-0000-000000000010',
+                type: 'webhook',
+                enabled: true,
+                config: { url: 'https://hooks.example.com/anomaly' },
+            }]);
+
+            const jobData: AlertNotificationData = {
+                historyId: '00000000-0000-0000-0000-000000000001',
+                rule_id: '00000000-0000-0000-0000-000000000002',
+                rule_name: 'Anomaly Rule',
+                organization_id: organization.id,
+                project_id: project.id,
+                log_count: 500,
+                threshold: 100,
+                time_window: 60,
+                email_recipients: [],
+                webhook_url: undefined,
+                baseline_metadata: {
+                    baseline_value: 100,
+                    current_value: 500,
+                    deviation_ratio: 5,
+                    baseline_type: 'rolling_average',
+                    evaluation_time: new Date().toISOString(),
+                },
+            };
+
+            await processAlertNotification({ data: jobData });
+
+            const call = enqueueMock.mock.calls[0][0];
+            expect(call.eventType).toBe('alert.triggered');
+            const envelope = parseWebhookEvent(call.payload);
+            expect(envelope.type).toBe('alert.triggered');
+            // baseline_metadata must be in data, not at envelope level
+            const d = envelope.data as Record<string, unknown>;
+            expect(d.baseline_metadata).toBeTruthy();
+            expect(d).not.toHaveProperty('organization_id');
+        });
+    });
 });

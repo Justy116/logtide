@@ -4,8 +4,32 @@
  */
 
 import type { NotificationProvider, NotificationContext, DeliveryResult } from './interface.js';
-import type { WebhookChannelConfig, ChannelConfig } from '@logtide/shared';
-import { deliverOnce } from '../../webhooks/index.js';
+import type { WebhookChannelConfig, ChannelConfig, WebhookEventType } from '@logtide/shared';
+import { deliverOnce, buildEnvelope } from '../../webhooks/index.js';
+import type { NotificationEventType } from '@logtide/shared';
+
+// Nil UUID used as organizationId sentinel for channel test deliveries where
+// no real org context is available (test() method passes organizationId='test').
+const TEST_ORG_SENTINEL = '00000000-0000-0000-0000-000000000000';
+
+/** Map a NotificationEventType to a WebhookEventType for the envelope. */
+function toEnvelopeType(eventType: NotificationEventType | string): WebhookEventType {
+  switch (eventType) {
+    case 'alert':
+    case 'anomaly':
+    case 'sigma':
+      return 'alert.triggered';
+    case 'error':
+      return 'error.detected';
+    case 'monitoring':
+      return 'monitor.status_changed';
+    case 'incident':
+      return 'incident.created';
+    default:
+      // Unknown or test events fall back to channel.test
+      return 'channel.test';
+  }
+}
 
 export class WebhookProvider implements NotificationProvider {
   readonly type = 'webhook' as const;
@@ -37,11 +61,26 @@ export class WebhookProvider implements NotificationProvider {
       }
     }
 
+    const envelopeType = toEnvelopeType(context.eventType);
+    // Use a nil UUID sentinel when organizationId is not a real UUID (e.g. the
+    // 'test' string passed by the test() method for channel test deliveries).
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      context.organizationId
+    );
+    const organizationId = isUuid ? context.organizationId : TEST_ORG_SENTINEL;
+
+    const envelope = buildEnvelope({
+      type: envelopeType,
+      organizationId,
+      projectId: null,
+      data: this.buildData(context),
+    });
+
     const result = await deliverOnce({
       url: webhookConfig.url,
-      body: this.buildPayload(context),
+      body: envelope,
       organizationId: context.organizationId ?? null,
-      eventType: context.eventType,
+      eventType: envelopeType,
       method: webhookConfig.method,
       headers,
       channelId: context.channelId,
@@ -68,7 +107,9 @@ export class WebhookProvider implements NotificationProvider {
       {
         organizationId: 'test',
         organizationName: 'Test Organization',
-        eventType: 'alert',
+        // 'test' is not in NotificationEventType; cast to trigger the default
+        // branch in toEnvelopeType which maps to 'channel.test'.
+        eventType: 'test' as NotificationEventType,
         title: 'Test Notification',
         message: 'This is a test notification from LogTide to verify your webhook configuration.',
         severity: 'informational',
@@ -77,9 +118,9 @@ export class WebhookProvider implements NotificationProvider {
     );
   }
 
-  private buildPayload(context: NotificationContext): Record<string, unknown> {
+  /** Build the per-type data object (minus event_type/timestamp which move to the envelope). */
+  private buildData(context: NotificationContext): Record<string, unknown> {
     return {
-      event_type: context.eventType,
       title: context.title,
       message: context.message,
       severity: context.severity || 'informational',
@@ -88,7 +129,6 @@ export class WebhookProvider implements NotificationProvider {
         name: context.organizationName,
       },
       link: context.link,
-      timestamp: new Date().toISOString(),
       metadata: context.metadata || {},
     };
   }
