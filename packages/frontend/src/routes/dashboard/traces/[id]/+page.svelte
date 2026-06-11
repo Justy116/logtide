@@ -3,6 +3,7 @@
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { tracesAPI, type TraceRecord, type SpanRecord } from "$lib/api/traces";
+  import { buildSpanTree, flattenTree, getSpanColor, getSpanLeft, getSpanWidth, type SpanNode } from "$lib/utils/trace-tree";
   import { copyToClipboard } from "$lib/utils/clipboard";
   import Button from "$lib/components/ui/button/button.svelte";
   import {
@@ -27,11 +28,6 @@
   import FileText from "@lucide/svelte/icons/file-text";
   import { layoutStore } from "$lib/stores/layout";
 
-  interface SpanNode extends SpanRecord {
-    children: SpanNode[];
-    depth: number;
-  }
-
   let traceId = $derived(page.params.id);
   let projectId = $derived(page.url.searchParams.get("projectId") || "");
 
@@ -42,6 +38,7 @@
   let selectedSpan = $state<SpanRecord | null>(null);
   let expandedSpans = $state<Set<string>>(new Set());
   let copiedTraceId = $state(false);
+  let copiedSpanId = $state(false);
   let maxWidthClass = $state("max-w-7xl");
   let containerPadding = $state("px-6 py-8");
 
@@ -92,53 +89,7 @@
     }
   }
 
-  function buildSpanTree(spans: SpanRecord[]): SpanNode[] {
-    const spanMap = new Map<string, SpanNode>();
-    const rootSpans: SpanNode[] = [];
-
-    for (const span of spans) {
-      spanMap.set(span.span_id, { ...span, children: [], depth: 0 });
-    }
-
-    for (const span of spans) {
-      const node = spanMap.get(span.span_id)!;
-      if (span.parent_span_id && spanMap.has(span.parent_span_id)) {
-        const parent = spanMap.get(span.parent_span_id)!;
-        node.depth = parent.depth + 1;
-        parent.children.push(node);
-      } else {
-        rootSpans.push(node);
-      }
-    }
-
-    const sortByTime = (a: SpanNode, b: SpanNode) =>
-      new Date(a.start_time).getTime() - new Date(b.start_time).getTime();
-
-    rootSpans.sort(sortByTime);
-
-    function sortChildren(nodes: SpanNode[]) {
-      nodes.sort(sortByTime);
-      for (const node of nodes) {
-        sortChildren(node.children);
-      }
-    }
-
-    sortChildren(rootSpans);
-
-    return rootSpans;
-  }
-
-  function flattenTree(nodes: SpanNode[], result: SpanNode[] = []): SpanNode[] {
-    for (const node of nodes) {
-      result.push(node);
-      if (expandedSpans.has(node.span_id)) {
-        flattenTree(node.children, result);
-      }
-    }
-    return result;
-  }
-
-  let flattenedSpans = $derived(flattenTree(spanTree));
+  let flattenedSpans = $derived(flattenTree(spanTree, expandedSpans));
 
   function toggleSpan(spanId: string) {
     const newSet = new Set(expandedSpans);
@@ -169,46 +120,19 @@
     return `${(ms / 60000).toFixed(2)}m`;
   }
 
-  function getSpanColor(span: SpanRecord): string {
-    if (span.status_code === "ERROR") {
-      return "bg-red-500";
-    }
-
-    const colors = [
-      "bg-blue-500",
-      "bg-green-500",
-      "bg-purple-500",
-      "bg-orange-500",
-      "bg-cyan-500",
-      "bg-pink-500",
-      "bg-yellow-500",
-      "bg-indigo-500",
-    ];
-
-    const hash = span.service_name.split("").reduce((a, b) => {
-      a = ((a << 5) - a) + b.charCodeAt(0);
-      return a & a;
-    }, 0);
-
-    return colors[Math.abs(hash) % colors.length];
-  }
-
-  function getSpanLeft(span: SpanRecord): number {
-    if (traceDuration === 0) return 0;
-    const spanStart = new Date(span.start_time).getTime();
-    return ((spanStart - traceStartTime) / traceDuration) * 100;
-  }
-
-  function getSpanWidth(span: SpanRecord): number {
-    if (traceDuration === 0) return 100;
-    return Math.max((span.duration_ms / traceDuration) * 100, 0.5);
-  }
-
   async function copyTraceId() {
     const success = await copyToClipboard(traceId);
     if (success) {
       copiedTraceId = true;
       setTimeout(() => copiedTraceId = false, 2000);
+    }
+  }
+
+  async function copySpanId(spanId: string) {
+    const success = await copyToClipboard(spanId);
+    if (success) {
+      copiedSpanId = true;
+      setTimeout(() => copiedSpanId = false, 2000);
     }
   }
 
@@ -383,7 +307,7 @@
               <div class="space-y-1">
                 {#each flattenedSpans as span}
                   {@const hasChildren = spanTree.length > 0 &&
-                    flattenTree(spanTree).find(s => s.span_id === span.span_id)?.children?.length > 0}
+                    flattenTree(spanTree, expandedSpans).find(s => s.span_id === span.span_id)?.children?.length > 0}
                   <div
                     class="flex items-center hover:bg-muted/50 rounded cursor-pointer py-1"
                     role="button"
@@ -428,12 +352,12 @@
                       <div class="absolute inset-0 bg-muted/30 rounded"></div>
                       <div
                         class="absolute h-full rounded {getSpanColor(span)} opacity-80"
-                        style="left: {getSpanLeft(span)}%; width: {getSpanWidth(span)}%"
+                        style="left: {getSpanLeft(span, traceStartTime, traceDuration)}%; width: {getSpanWidth(span, traceDuration)}%"
                         title="{span.operation_name}: {formatDuration(span.duration_ms)}"
                       ></div>
                       <div
                         class="absolute top-1/2 -translate-y-1/2 text-xs font-mono whitespace-nowrap"
-                        style="left: calc({getSpanLeft(span)}% + {getSpanWidth(span)}% + 8px)"
+                        style="left: calc({getSpanLeft(span, traceStartTime, traceDuration)}% + {getSpanWidth(span, traceDuration)}% + 8px)"
                       >
                         {formatDuration(span.duration_ms)}
                       </div>
@@ -469,7 +393,21 @@
                 <div class="space-y-4">
                   <div>
                     <h4 class="text-sm font-medium text-muted-foreground mb-1">Span ID</h4>
-                    <p class="font-mono text-sm">{selectedSpan.span_id}</p>
+                    <div class="flex items-center gap-2">
+                      <p class="font-mono text-sm">{selectedSpan.span_id}</p>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onclick={() => copySpanId(selectedSpan!.span_id)}
+                        class="h-6 w-6 p-0"
+                      >
+                        {#if copiedSpanId}
+                          <Check class="w-4 h-4 text-green-500" />
+                        {:else}
+                          <Copy class="w-4 h-4" />
+                        {/if}
+                      </Button>
+                    </div>
                   </div>
                   {#if selectedSpan.parent_span_id}
                     <div>
