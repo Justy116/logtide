@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { db } from '../../../database/index.js';
 import { createTestUser, createTestOrganization, createTestProject } from '../../helpers/factories.js';
+import { parseWebhookEvent } from '@logtide/shared';
 
 // Mock queue connection BEFORE importing anything that uses it
 vi.mock('../../../queue/connection.js', () => ({
@@ -14,6 +15,16 @@ vi.mock('../../../queue/connection.js', () => ({
   })),
   getConnection: () => null,
 }));
+
+// Mock webhookDispatcher; buildEnvelope is kept real so envelope shape is testable.
+const { errorEnqueueMock } = vi.hoisted(() => ({ errorEnqueueMock: vi.fn() }));
+vi.mock('../../../modules/webhooks/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../modules/webhooks/index.js')>();
+  return {
+    ...actual,
+    webhookDispatcher: { enqueue: errorEnqueueMock },
+  };
+});
 
 // Mock the config module
 vi.mock('../../../config/index.js', () => ({
@@ -50,9 +61,10 @@ vi.mock('../../../modules/notifications/service.js', () => ({
 }));
 
 // Mock the notification channels service
+const mockGetErrorGroupChannels = vi.fn().mockResolvedValue([]);
 vi.mock('../../../modules/notification-channels/index.js', () => ({
   notificationChannelsService: {
-    getErrorGroupChannels: vi.fn().mockResolvedValue([]),
+    getErrorGroupChannels: (...args: unknown[]) => mockGetErrorGroupChannels(...args),
     getOrganizationDefaults: vi.fn().mockResolvedValue([]),
   },
 }));
@@ -102,6 +114,8 @@ async function createTestErrorGroup(overrides: {
 describe('Error Notification Job', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    errorEnqueueMock.mockReset().mockResolvedValue({ deliveryId: 'del-1' });
+    mockGetErrorGroupChannels.mockReset().mockResolvedValue([]);
   });
 
   describe('processErrorNotification', () => {
@@ -671,9 +685,81 @@ describe('Error Notification Job', () => {
   });
 });
 
+describe('Error webhook envelope', () => {
+  beforeEach(() => {
+    errorEnqueueMock.mockReset().mockResolvedValue({ deliveryId: 'del-1' });
+    mockGetErrorGroupChannels.mockReset().mockResolvedValue([]);
+  });
+
+  it('enqueues an error.detected envelope with project in data', async () => {
+    const owner = await createTestUser({ name: 'Owner User' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Envelope Org' });
+    const project = await createTestProject({ organizationId: org.id, userId: owner.id });
+
+    mockGetErrorGroupChannels.mockResolvedValueOnce([{
+      id: '00000000-0000-0000-0000-000000000030',
+      type: 'webhook',
+      enabled: true,
+      config: { url: 'https://hooks.example.com/error' },
+    }]);
+
+    // Create a real error group so the notification slot can be claimed
+    const errorGroup = await import('../../../database/index.js').then(({ db }) =>
+      db.insertInto('error_groups').values({
+        organization_id: org.id,
+        project_id: project.id,
+        fingerprint: `fp-envelope-${Date.now()}`,
+        exception_type: 'EnvelopeError',
+        exception_message: 'envelope test',
+        language: 'nodejs',
+        status: 'open',
+        occurrence_count: 1,
+        first_seen: new Date(),
+        last_seen: new Date(),
+        affected_services: ['svc'],
+        sample_log_id: null,
+      }).returningAll().executeTakeFirstOrThrow()
+    );
+
+    const job = {
+      data: {
+        exceptionId: 'exc-env-1',
+        organizationId: org.id,
+        projectId: project.id,
+        fingerprint: errorGroup.fingerprint,
+        exceptionType: 'EnvelopeError',
+        exceptionMessage: 'envelope test',
+        language: 'nodejs' as const,
+        service: 'api',
+        isNewErrorGroup: true,
+      } as ErrorNotificationJobData,
+    } as Job<ErrorNotificationJobData>;
+
+    await processErrorNotification(job);
+
+    expect(errorEnqueueMock).toHaveBeenCalledTimes(1);
+    const call = errorEnqueueMock.mock.calls[0][0];
+    expect(call.eventType).toBe('error.detected');
+    const envelope = parseWebhookEvent(call.payload);
+    expect(envelope.type).toBe('error.detected');
+    expect(envelope.organizationId).toBe(org.id);
+    expect(envelope.projectId).toBe(project.id);
+    const d = envelope.data as Record<string, unknown>;
+    expect(d).not.toHaveProperty('event_type');
+    expect(d).not.toHaveProperty('timestamp');
+    // organization object STAYS in data
+    expect(d.organization).toBeTruthy();
+    expect((d.organization as Record<string, unknown>).id).toBe(org.id);
+    // project object STAYS in data
+    expect(d.project).toBeTruthy();
+    expect(d.is_new).toBe(true);
+  });
+});
+
   describe('Notification throttling', () => {
     beforeEach(() => {
       vi.clearAllMocks();
+      mockGetErrorGroupChannels.mockResolvedValue([]);
     });
 
     function buildJob(

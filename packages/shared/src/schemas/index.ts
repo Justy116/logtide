@@ -70,3 +70,4 @@ export type IngestRequest = z.infer<typeof ingestRequestSchema>;
 export type AlertRuleInput = z.infer<typeof alertRuleSchema>;
 
 export * from './metadata-filter.js';
+export * from './webhook-events.js';

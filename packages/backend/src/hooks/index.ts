@@ -5,6 +5,8 @@ export { loadExternalHooks } from './loader.js';
 export type { HookModuleHelpers } from './loader.js';
 export type {
   HookPhase,
+  BeforeHookPhase,
+  AfterHookPhase,
   HookHandler,
   HookContextMap,
   IngestLogRecord,
@@ -12,4 +14,7 @@ export type {
   BeforeQueryContext,
   BeforeAlertEvaluationContext,
   BeforeWebhookDispatchContext,
+  AfterIngestContext,
+  AfterAlertTriggeredContext,
+  AfterWebhookDispatchContext,
 } from './types.js';

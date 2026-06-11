@@ -20,6 +20,24 @@ const RESPONSE_EXCERPT_MAX = 500;
 export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnceResult> {
   const started = Date.now();
 
+  /** Fire afterWebhookDispatch fire-and-forget. Covers 5 of the 6 return paths (the
+   *  invalid-URL early return intentionally skips it: no delivery attempt was made). */
+  function fireAfterDispatch(result: DeliverOnceResult): void {
+    if (!hooks.hasHandlers('afterWebhookDispatch')) return;
+    void hooks.runAfter('afterWebhookDispatch', {
+      organizationId: params.organizationId ?? null,
+      channelId: params.channelId,
+      ruleId: params.ruleId,
+      eventType: params.eventType,
+      url: params.url,
+      success: result.success,
+      statusCode: result.statusCode ?? null,
+      durationMs: result.durationMs,
+      error: result.error ?? null,
+      retryable: result.retryable,
+    });
+  }
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'User-Agent': 'LogTide/1.0',
@@ -48,7 +66,9 @@ export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnc
       });
     } catch (e) {
       const msg = e instanceof HookRejectionError ? `rejected: ${e.message}` : 'blocked: hook failed';
-      return { success: false, durationMs: Date.now() - started, error: `Webhook dispatch ${msg}`, retryable: false };
+      const result: DeliverOnceResult = { success: false, durationMs: Date.now() - started, error: `Webhook dispatch ${msg}`, retryable: false };
+      fireAfterDispatch(result);
+      return result;
     }
   }
 
@@ -58,6 +78,9 @@ export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnc
     const unix = Math.floor(Date.now() / 1000);
     Object.assign(headers, buildSignatureHeaders(params.signingSecret, bodyString, unix));
   }
+  // Always advertise the envelope version so receivers can version-check without
+  // parsing the body. Placed after hook mutation so it cannot be silently overwritten.
+  headers['X-Logtide-Event-Version'] = '1';
 
   try {
     const response = await safeFetch(
@@ -73,10 +96,12 @@ export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnc
 
     const durationMs = Date.now() - started;
     if (response.ok) {
-      return { success: true, statusCode: response.status, durationMs, retryable: false };
+      const result: DeliverOnceResult = { success: true, statusCode: response.status, durationMs, retryable: false };
+      fireAfterDispatch(result);
+      return result;
     }
     const excerpt = (await response.text().catch(() => '')).slice(0, RESPONSE_EXCERPT_MAX);
-    return {
+    const result: DeliverOnceResult = {
       success: false,
       statusCode: response.status,
       durationMs,
@@ -84,23 +109,29 @@ export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnc
       error: `HTTP ${response.status} ${response.statusText}`,
       retryable: response.status >= 500 || response.status === 429,
     };
+    fireAfterDispatch(result);
+    return result;
   } catch (e) {
     const durationMs = Date.now() - started;
     if (e instanceof SsrfBlockedError) {
-      return {
+      const result: DeliverOnceResult = {
         success: false,
         durationMs,
         error: 'Webhook URLs pointing to private/internal addresses are not allowed',
         retryable: false,
       };
+      fireAfterDispatch(result);
+      return result;
     }
     // Network errors and timeouts (AbortError) are transient.
-    return {
+    const result: DeliverOnceResult = {
       success: false,
       durationMs,
       error: e instanceof Error ? e.message : 'Unknown error',
       retryable: true,
     };
+    fireAfterDispatch(result);
+    return result;
   }
 }
 
@@ -109,6 +140,18 @@ const webhookQueue = createQueue<WebhookDeliveryJobData>(WEBHOOK_DELIVERY_QUEUE)
 
 function deriveEventId(params: EnqueueParams): string {
   if (params.eventId) return params.eventId;
+  // When the payload is a webhook envelope its id is already globally unique
+  // and stable; use it directly so the jobKey deduplicates on the envelope id.
+  // Fall back to a content hash for non-envelope payloads.
+  if (
+    params.payload !== null &&
+    typeof params.payload === 'object' &&
+    'id' in params.payload &&
+    typeof (params.payload as Record<string, unknown>).id === 'string' &&
+    ((params.payload as Record<string, unknown>).id as string).startsWith('evt_')
+  ) {
+    return (params.payload as Record<string, unknown>).id as string;
+  }
   return createHash('sha256')
     .update(`${params.url}\n${JSON.stringify(params.payload ?? {})}`)
     .digest('hex')

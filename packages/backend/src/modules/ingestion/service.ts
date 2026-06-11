@@ -131,6 +131,15 @@ export class IngestionService {
         }
 
         if (logs.length === 0) {
+          if (hooks.hasHandlers('afterIngest')) {
+            void hooks.runAfter('afterIngest', {
+              organizationId: organizationId ?? null,
+              projectId,
+              acceptedCount: 0,
+              rejectedCount: rejected.length,
+              rejectionReasons: [...new Set(rejected.map((r) => r.reason))],
+            });
+          }
           return { received: 0, rejected };
         }
       }
@@ -197,6 +206,15 @@ export class IngestionService {
       }
 
       if (records.length === 0) {
+        if (hooks.hasHandlers('afterIngest')) {
+          void hooks.runAfter('afterIngest', {
+            organizationId: organizationId ?? null,
+            projectId,
+            acceptedCount: 0,
+            rejectedCount: rejected.length,
+            rejectionReasons: [...new Set(rejected.map((r) => r.reason))],
+          });
+        }
         return { received: 0, rejected };
       }
 
@@ -295,6 +313,16 @@ export class IngestionService {
         eventCount: insertedLogs.length,
         organizationId,
         projectId,
+      });
+    }
+
+    if (hooks.hasHandlers('afterIngest')) {
+      void hooks.runAfter('afterIngest', {
+        organizationId: organizationId ?? null,
+        projectId,
+        acceptedCount: insertedLogs.length,
+        rejectedCount: rejected.length,
+        rejectionReasons: [...new Set(rejected.map((r) => r.reason))],
       });
     }
 

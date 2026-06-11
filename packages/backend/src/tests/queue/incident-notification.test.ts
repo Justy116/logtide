@@ -16,10 +16,15 @@ vi.mock('nodemailer', () => ({
 
 // Mock webhookDispatcher — SSRF guard, hook execution, retry/backoff are
 // all handled inside the dispatcher and covered by deliver-once.test.ts (#218).
+// buildEnvelope is kept real so envelope-shape assertions work.
 const { enqueueMock } = vi.hoisted(() => ({ enqueueMock: vi.fn() }));
-vi.mock('../../modules/webhooks/index.js', () => ({
-  webhookDispatcher: { enqueue: enqueueMock },
-}));
+vi.mock('../../modules/webhooks/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../modules/webhooks/index.js')>();
+  return {
+    ...actual,
+    webhookDispatcher: { enqueue: enqueueMock },
+  };
+});
 
 describe('Incident Notification Job', () => {
   let testOrganization: any;
@@ -205,14 +210,17 @@ describe('Incident Notification Job', () => {
 
       await processIncidentNotification(job);
 
-      // Should enqueue webhook via dispatcher
+      // Should enqueue webhook via dispatcher with envelope
       expect(enqueueMock).toHaveBeenCalledWith(
         expect.objectContaining({
           url: 'https://example.com/incident-hook',
-          eventType: 'incident',
+          eventType: 'incident.created',
           payload: expect.objectContaining({
-            event_type: 'incident',
-            title: 'Test Incident',
+            type: 'incident.created',
+            version: 1,
+            data: expect.objectContaining({
+              title: 'Test Incident',
+            }),
           }),
         })
       );
@@ -256,7 +264,7 @@ describe('Incident Notification Job', () => {
       expect(enqueueMock).toHaveBeenCalledWith(
         expect.objectContaining({
           url: 'https://example.com/default-hook',
-          eventType: 'incident',
+          eventType: 'incident.created',
         })
       );
     });

@@ -420,6 +420,18 @@ export class AlertsService {
         .returning(['id'])
         .executeTakeFirstOrThrow();
 
+      if (hooks.hasHandlers('afterAlertTriggered')) {
+        void hooks.runAfter('afterAlertTriggered', {
+          organizationId: rule.organization_id,
+          projectId: rule.project_id ?? null,
+          ruleId: rule.id,
+          ruleName: rule.name,
+          historyId: historyRecord.id,
+          logCount: count,
+          baselineMetadata: null,
+        });
+      }
+
       return {
         historyId: historyRecord.id,
         rule_id: rule.id,
@@ -547,6 +559,18 @@ export class AlertsService {
       })
       .returning(['id'])
       .executeTakeFirstOrThrow();
+
+    if (hooks.hasHandlers('afterAlertTriggered')) {
+      void hooks.runAfter('afterAlertTriggered', {
+        organizationId: rule.organization_id,
+        projectId: rule.project_id ?? null,
+        ruleId: rule.id,
+        ruleName: rule.name,
+        historyId: historyRecord.id,
+        logCount: currentValue,
+        baselineMetadata: baselineMetadata as unknown as Record<string, unknown>,
+      });
+    }
 
     return {
       historyId: historyRecord.id,

@@ -11,7 +11,21 @@ export type HookPhase =
   | 'beforeIngest'
   | 'beforeQuery'
   | 'beforeAlertEvaluation'
+  | 'beforeWebhookDispatch'
+  | 'afterIngest'
+  | 'afterAlertTriggered'
+  | 'afterWebhookDispatch';
+
+export type BeforeHookPhase =
+  | 'beforeIngest'
+  | 'beforeQuery'
+  | 'beforeAlertEvaluation'
   | 'beforeWebhookDispatch';
+
+export type AfterHookPhase =
+  | 'afterIngest'
+  | 'afterAlertTriggered'
+  | 'afterWebhookDispatch';
 
 /**
  * The reservoir-bound log record shape built by IngestionService.ingestLogs
@@ -75,11 +89,48 @@ export interface BeforeWebhookDispatchContext {
   body: Record<string, unknown>;
 }
 
+/** Fired after a batch finishes ingestion. No log content: counts only. */
+export interface AfterIngestContext {
+  readonly organizationId: string | null;
+  readonly projectId: string;
+  readonly acceptedCount: number;
+  readonly rejectedCount: number;
+  readonly rejectionReasons: readonly string[];
+}
+
+/** Fired after an alert trigger is persisted, before notification outcomes. */
+export interface AfterAlertTriggeredContext {
+  readonly organizationId: string;
+  readonly projectId: string | null;
+  readonly ruleId: string;
+  readonly ruleName: string;
+  readonly historyId: string;
+  readonly logCount: number;
+  readonly baselineMetadata: Readonly<Record<string, unknown>> | null;
+}
+
+/** Fired after each webhook delivery attempt completes (queued and sync paths). */
+export interface AfterWebhookDispatchContext {
+  readonly organizationId: string | null;
+  readonly channelId?: string;
+  readonly ruleId?: string;
+  readonly eventType: string;
+  readonly url: string;
+  readonly success: boolean;
+  readonly statusCode: number | null;
+  readonly durationMs: number;
+  readonly error: string | null;
+  readonly retryable: boolean;
+}
+
 export type HookContextMap = {
   beforeIngest: BeforeIngestContext;
   beforeQuery: BeforeQueryContext;
   beforeAlertEvaluation: BeforeAlertEvaluationContext;
   beforeWebhookDispatch: BeforeWebhookDispatchContext;
+  afterIngest: AfterIngestContext;
+  afterAlertTriggered: AfterAlertTriggeredContext;
+  afterWebhookDispatch: AfterWebhookDispatchContext;
 };
 
 export type HookHandler<P extends HookPhase> = (

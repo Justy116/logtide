@@ -12,6 +12,15 @@ import { processAlertNotification, AlertNotificationData } from '../../../queue/
 const { enqueueMock } = vi.hoisted(() => ({ enqueueMock: vi.fn() }));
 vi.mock('../../../modules/webhooks/index.js', () => ({
     webhookDispatcher: { enqueue: enqueueMock },
+    buildEnvelope: (params: any) => ({
+        id: `evt_test-${Date.now()}`,
+        type: params.type,
+        version: 1,
+        occurredAt: new Date().toISOString(),
+        organizationId: params.organizationId,
+        projectId: params.projectId ?? null,
+        data: params.data,
+    }),
 }));
 
 describe('Alert Worker Reliability', () => {
@@ -171,7 +180,7 @@ describe('Alert Worker Reliability', () => {
                 expect.objectContaining({
                     url: 'https://example.com/alert-hook',
                     organizationId: organization.id,
-                    eventType: 'alert',
+                    eventType: 'alert.triggered',
                 })
             );
 

@@ -5,7 +5,7 @@ import { db } from '../../database/connection.js';
 import nodemailer from 'nodemailer';
 import { config } from '../../config/index.js';
 import { generateAlertEmail, getFrontendUrl } from '../../lib/email-templates.js';
-import { webhookDispatcher } from '../../modules/webhooks/index.js';
+import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
 import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
 export interface AlertNotificationData {
@@ -221,29 +221,37 @@ async function sendWebhookNotification(data: AlertNotificationData, channelId?: 
 
   const frontendUrl = getFrontendUrl();
 
-  // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
-  // retry/backoff, DLQ, delivery logging, and the beforeWebhookDispatch hook
-  // (#216) all live in one place now. Same payload as before, no regression.
-  await webhookDispatcher.enqueue({
-    url: data.webhook_url,
+  // Wrap in the unified envelope (WS3). Both plain threshold and anomaly
+  // (rate-of-change) alerts use type 'alert.triggered'; anomaly is
+  // distinguished by data.baseline_metadata !== null.
+  // organization_id/project_id move to the envelope; event_type/timestamp
+  // are superseded by envelope.type/occurredAt.
+  const envelope = buildEnvelope({
+    type: 'alert.triggered',
     organizationId: data.organization_id,
-    eventType: data.baseline_metadata ? 'anomaly' : 'alert',
-    eventId: `${data.historyId || data.rule_id}:${data.webhook_url}`,
-    channelId,
-    ruleId: data.rule_id,
-    metadata: { ruleName: data.rule_name },
-    payload: {
-      event_type: data.baseline_metadata ? 'anomaly' : 'alert',
+    projectId: data.project_id ?? null,
+    data: {
       alert_name: data.rule_name,
       log_count: data.log_count,
       threshold: data.threshold,
       time_window: data.time_window,
-      organization_id: data.organization_id,
-      project_id: data.project_id,
       baseline_metadata: data.baseline_metadata || null,
       link: `${frontendUrl}/dashboard/alerts`,
-      timestamp: new Date().toISOString(),
     },
+  });
+
+  // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
+  // retry/backoff, DLQ, delivery logging, and the beforeWebhookDispatch hook
+  // (#216) all live in one place now.
+  await webhookDispatcher.enqueue({
+    url: data.webhook_url,
+    organizationId: data.organization_id,
+    eventType: 'alert.triggered',
+    eventId: `${data.historyId || data.rule_id}:${data.webhook_url}`,
+    channelId,
+    ruleId: data.rule_id,
+    metadata: { ruleName: data.rule_name },
+    payload: envelope,
   });
 }
 

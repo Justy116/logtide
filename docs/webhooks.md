@@ -33,6 +33,145 @@ function verify(secret, headers, rawBody) {
 
 Verify against the **raw** request body (before JSON parsing), since any reserialization can change the bytes and break the signature. Reject deliveries whose timestamp is older than your tolerance (e.g. 5 minutes) to prevent replay.
 
+## Event envelope
+
+Every delivery body is a JSON object with a top-level envelope. The `data` field carries the event-specific payload.
+
+```json
+{
+  "id": "evt_4b3e1a2c-8f7d-4e6b-9c0a-1d2e3f4a5b6c",
+  "type": "alert.triggered",
+  "version": 1,
+  "occurredAt": "2026-06-11T14:32:07.841Z",
+  "organizationId": "9f8e7d6c-5b4a-3c2d-1e0f-a1b2c3d4e5f6",
+  "projectId": "3a4b5c6d-7e8f-9a0b-1c2d-3e4f5a6b7c8d",
+  "data": {
+    "alert_name": "Error rate spike",
+    "log_count": 142,
+    "threshold": 50,
+    "time_window": 300,
+    "baseline_metadata": null,
+    "link": "https://app.logtide.dev/alerts/history/abc123"
+  }
+}
+```
+
+### Envelope fields
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `string` | Stable delivery id with prefix `evt_` followed by a UUID. Doubles as the dedup `eventId` when the producer does not supply one. |
+| `type` | `string` | Event type (see table below). |
+| `version` | `number` | Schema version. Currently always `1`. The `X-Logtide-Event-Version: 1` header carries the same value for quick routing without parsing the body. |
+| `occurredAt` | `string` | ISO 8601 timestamp of when the event occurred. |
+| `organizationId` | `string (UUID)` | Organization that owns the event. |
+| `projectId` | `string (UUID) \| null` | Project scope. `null` for org-wide events (e.g. some alert rules without a project filter). |
+| `data` | `object` | Event-specific payload. See per-type fields below. |
+
+### Event types
+
+| Type | Description |
+| --- | --- |
+| `alert.triggered` | An alert rule or anomaly detection fired. Anomaly detections carry a non-null `data.baseline_metadata` object. |
+| `incident.created` | A new security incident was created (typically from a Sigma rule detection). |
+| `error.detected` | An exception group crossed its notification threshold. |
+| `monitor.status_changed` | An uptime monitor changed status (e.g. up → down). |
+| `channel.test` | A test delivery sent when verifying a notification channel. |
+
+### Per-type `data` fields
+
+**`alert.triggered`**
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `alert_name` | yes | `string` | Name of the alert rule. |
+| `log_count` | yes | `number` | Number of matching log events in the evaluation window. |
+| `threshold` | yes | `number` | Configured threshold value. |
+| `time_window` | yes | `number` | Evaluation window in seconds. |
+| `baseline_metadata` | yes | `object \| null` | Non-null for anomaly/rate-of-change detections. Contains `baseline_value`, `current_value`, `deviation_ratio`, `baseline_type`, and `evaluation_time`. |
+| `link` | yes | `string` | URL to the alert history entry in the LogTide dashboard. |
+
+**`incident.created`**
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `title` | yes | `string` | Incident title. |
+| `message` | yes | `string` | Human-readable summary. |
+| `severity` | yes | `string` | `critical`, `high`, `medium`, `low`, or `informational`. |
+| `organization` | yes | `{ id, name }` | Organization reference. |
+| `incident_id` | yes | `string` | Incident UUID. |
+| `affected_services` | no | `string[]` | Services involved, if known. |
+| `link` | yes | `string` | URL to the incident detail page. |
+
+**`error.detected`**
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `title` | yes | `string` | Short error title. |
+| `message` | yes | `string` | Exception message or summary. |
+| `severity` | yes | `string` | Severity level. |
+| `organization` | yes | `{ id, name }` | Organization reference. |
+| `project` | yes | `{ id, name }` | Project reference; `id` may be `null` if the error has no project scope. |
+| `error_group_id` | yes | `string` | Stable id for the error group (dedup key). |
+| `exception_type` | no | `string \| null` | Exception class name (e.g. `TypeError`). |
+| `language` | no | `string \| null` | Runtime language reported by the SDK. |
+| `service` | no | `string \| null` | Service name. |
+| `is_new` | yes | `boolean` | `true` the first time this error group fires. |
+| `link` | yes | `string` | URL to the error detail page. |
+
+**`monitor.status_changed`**
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `monitor_id` | yes | `string` | Monitor UUID. |
+| `monitor_name` | yes | `string` | Human-readable monitor name. |
+| `status` | yes | `string` | New status (e.g. `down`, `up`, `degraded`). |
+| `severity` | yes | `string` | Severity of the status change. |
+| `title` | yes | `string` | Short notification title. |
+| `message` | yes | `string` | Full notification body. |
+| `organization` | yes | `{ id, name }` | Organization reference. |
+| `target` | no | `string` | Monitored URL or host. |
+| `error_code` | no | `string \| null` | HTTP status code or error code from the check. |
+| `response_time_ms` | no | `number \| null` | Last response time in milliseconds. |
+| `consecutive_failures` | no | `number` | How many checks in a row have failed. |
+| `downtime_duration` | no | `string \| null` | Human-readable duration of the current downtime. |
+| `link` | yes | `string` | URL to the monitor detail page. |
+
+**`channel.test`**
+
+| Field | Required | Type | Notes |
+| --- | --- | --- | --- |
+| `title` | yes | `string` | Test notification title. |
+| `message` | yes | `string` | Test notification body. |
+| `severity` | no | `string` | Optional severity label. |
+| `organization` | no | `{ id, name }` | Organization reference, if available. |
+| `link` | no | `string` | Optional dashboard link. |
+| `metadata` | no | `Record<string, unknown>` | Arbitrary key/value pairs. |
+
+### Historical replays
+
+Deliveries created before the envelope change that are manually replayed re-send their stored pre-envelope payload while still carrying the `X-Logtide-Event-Version` header; receivers should treat the header as advisory for replayed historical deliveries.
+
+### Signature covers the envelope
+
+The HMAC signature (see "Verifying webhook signatures" below) covers the serialized envelope as the raw request body. The existing verification snippet is valid for envelope payloads without any changes. The `X-Logtide-Event-Version: 1` header lets you route by version before parsing.
+
+### Zod schemas from `@logtide/shared`
+
+```ts
+import { webhookEnvelopeSchema, parseWebhookEvent } from '@logtide/shared';
+
+// Parse envelope only (data field is Record<string, unknown>)
+const envelope = webhookEnvelopeSchema.parse(body);
+
+// Parse envelope AND validate the per-type data schema
+const envelope = parseWebhookEvent(body);
+```
+
+`parseWebhookEvent` throws a Zod `ZodError` if either the envelope shape or the per-type `data` fields are invalid.
+
+---
+
 ## SSRF protection
 
 Outbound targets are resolved and validated before each request; loopback, private, link-local (including cloud metadata), CGNAT, multicast, and reserved IPv4/IPv6 ranges are rejected, and every redirect hop is revalidated. Self-hosted deployments that need to reach internal endpoints can opt in with `MONITOR_ALLOW_PRIVATE_TARGETS=true`.
