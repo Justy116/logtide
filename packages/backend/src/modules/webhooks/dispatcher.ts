@@ -58,6 +58,9 @@ export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnc
     const unix = Math.floor(Date.now() / 1000);
     Object.assign(headers, buildSignatureHeaders(params.signingSecret, bodyString, unix));
   }
+  // Always advertise the envelope version so receivers can version-check without
+  // parsing the body. Placed after hook mutation so it cannot be silently overwritten.
+  headers['X-Logtide-Event-Version'] = '1';
 
   try {
     const response = await safeFetch(
@@ -109,6 +112,18 @@ const webhookQueue = createQueue<WebhookDeliveryJobData>(WEBHOOK_DELIVERY_QUEUE)
 
 function deriveEventId(params: EnqueueParams): string {
   if (params.eventId) return params.eventId;
+  // When the payload is a webhook envelope its id is already globally unique
+  // and stable; use it directly so the jobKey deduplicates on the envelope id.
+  // Fall back to a content hash for non-envelope payloads.
+  if (
+    params.payload !== null &&
+    typeof params.payload === 'object' &&
+    'id' in params.payload &&
+    typeof (params.payload as Record<string, unknown>).id === 'string' &&
+    ((params.payload as Record<string, unknown>).id as string).startsWith('evt_')
+  ) {
+    return (params.payload as Record<string, unknown>).id as string;
+  }
   return createHash('sha256')
     .update(`${params.url}\n${JSON.stringify(params.payload ?? {})}`)
     .digest('hex')
