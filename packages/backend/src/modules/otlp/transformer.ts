@@ -125,7 +125,7 @@ export function transformOtlpToLogTide(
 
   for (const resourceLog of request.resourceLogs ?? []) {
     const serviceName = extractServiceName(resourceLog.resource?.attributes);
-    const resourceMetadata = attributesToRecord(resourceLog.resource?.attributes);
+    const resourceAttrs = attributesToRecord(resourceLog.resource?.attributes);
 
     for (const scopeLog of resourceLog.scopeLogs ?? []) {
       const scopeMetadata = scopeLog.scope
@@ -139,7 +139,8 @@ export function transformOtlpToLogTide(
         const transformed = transformLogRecord(
           logRecord,
           serviceName,
-          { ...resourceMetadata, ...scopeMetadata }
+          scopeMetadata,
+          resourceAttrs
         );
         logs.push(transformed);
       }
@@ -151,13 +152,32 @@ export function transformOtlpToLogTide(
 
 /**
  * Transform a single OTLP LogRecord to LogTide format.
+ *
+ * Metadata assembly order:
+ *   1. scope keys  (otel.scope.name / otel.scope.version) - flat
+ *   2. log record attributes                              - flat
+ *   3. severity fields                                    - flat
+ *   4. otel.body (structured bodies only)                - flat key
+ *   5. resource attrs under 'resource'                   - always wins
+ *
+ * Step 5 intentionally overwrites any log attribute also named 'resource'.
+ * That edge case is spec-sanctioned: the namespaced resource object must
+ * always be reachable at metadata.resource regardless of log attr names.
+ *
+ * For callers that pre-assemble baseMetadata (e.g. tests), pass an empty
+ * resourceAttrs and embed resource data directly in baseMetadata.
  */
 export function transformLogRecord(
   record: OtlpLogRecord,
   serviceName: string,
-  baseMetadata: Record<string, unknown>
+  baseMetadata: Record<string, unknown>,
+  resourceAttrs: Record<string, unknown> = {}
 ): TransformedLog {
   const logMetadata = attributesToRecord(record.attributes);
+
+  // Decode structured body to preserve original structure alongside message.
+  // String/int/double/bool bodies use message only (no otel.body noise).
+  const structuredBody = extractStructuredBody(record.body);
 
   return {
     time: nanosToIso(record.timeUnixNano ?? record.observedTimeUnixNano),
@@ -174,6 +194,11 @@ export function transformLogRecord(
       ...(record.severityText && {
         'otel.severity_text': record.severityText,
       }),
+      // Structured body preserved as decoded value (absent for simple types)
+      ...(structuredBody !== undefined && { 'otel.body': structuredBody }),
+      // Resource attrs namespaced last so metadata.resource is always the
+      // resource attrs object even if a log attr was named 'resource'.
+      ...(Object.keys(resourceAttrs).length > 0 && { resource: resourceAttrs }),
     },
     trace_id: normalizeTraceId(record.traceId),
     span_id: record.spanId || undefined,
@@ -298,6 +323,33 @@ export function extractMessage(body?: OtlpAnyValue): string {
   }
 
   return '';
+}
+
+/**
+ * Decode a structured OTLP body value to a plain JS value.
+ *
+ * Returns the decoded value only for arrayValue and kvlistValue bodies.
+ * Returns undefined for all other body types so callers can skip adding
+ * 'otel.body' to metadata when the body is a simple scalar.
+ */
+export function extractStructuredBody(
+  body?: OtlpAnyValue
+): unknown[] | Record<string, unknown> | undefined {
+  if (!body) return undefined;
+
+  if (body.arrayValue?.values) {
+    return body.arrayValue.values.map(anyValueToJs) as unknown[];
+  }
+
+  if (body.kvlistValue?.values) {
+    const obj: Record<string, unknown> = {};
+    for (const kv of body.kvlistValue.values) {
+      obj[kv.key] = anyValueToJs(kv.value);
+    }
+    return obj;
+  }
+
+  return undefined;
 }
 
 /**
