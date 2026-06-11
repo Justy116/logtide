@@ -33,7 +33,6 @@ export default defineConfig({
                 'src/modules/query/websocket.ts',
                 'src/queue/adapters/*.ts',
                 'src/queue/index.ts',
-                'src/modules/monitoring/checker.ts',
                 'src/modules/custom-dashboards/panel-data-service.ts',
             ],
             thresholds: {
