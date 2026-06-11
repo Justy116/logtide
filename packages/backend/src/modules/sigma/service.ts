@@ -205,6 +205,21 @@ export class SigmaService {
   }
 
   /**
+   * Get the enabled state of a rule (org-scoped). Returns undefined if not found.
+   */
+  async getRuleEnabledState(
+    id: string,
+    organizationId: string
+  ): Promise<{ enabled: boolean } | undefined> {
+    return db
+      .selectFrom('sigma_rules')
+      .select('enabled')
+      .where('id', '=', id)
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+  }
+
+  /**
    * Get Sigma rule by ID
    */
   async getSigmaRuleById(
@@ -292,6 +307,17 @@ export class SigmaService {
       createdAt: record.created_at,
       updatedAt: record.updated_at,
     } as unknown as SigmaRuleRecord;
+  }
+
+  /** Count enabled sigma rules for an organization (capability limit input). */
+  async countActiveRules(organizationId: string): Promise<number> {
+    const row = await db
+      .selectFrom('sigma_rules')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('organization_id', '=', organizationId)
+      .where('enabled', '=', true)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
   }
 
   /**

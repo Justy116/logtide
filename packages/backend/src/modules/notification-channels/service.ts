@@ -65,6 +65,16 @@ export class NotificationChannelsService {
     return this.mapChannel(channel);
   }
 
+  /** Count notification channels for an organization (capability limit input). */
+  async countChannels(organizationId: string): Promise<number> {
+    const row = await db
+      .selectFrom('notification_channels')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
+  }
+
   /**
    * Get all channels for an organization
    */

@@ -8,6 +8,9 @@ import { notificationChannelsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import type { NotificationEventType } from '@logtide/shared';
+import { context } from '@logtide/shared/context';
+import { assertWithinLimit } from '../../capabilities/index.js';
+import { CapabilityError } from '../../capabilities/errors.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -169,6 +172,13 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: 'Only admins can create notification channels' });
       }
 
+      await context.runAsSystem('channels:create-limit-check', async () => {
+        await context.with({ organizationId }, async () => {
+          const count = await notificationChannelsService.countChannels(organizationId);
+          await assertWithinLimit('notifications.max_channels', count);
+        });
+      });
+
       const channel = await notificationChannelsService.createChannel(
         organizationId,
         body,
@@ -177,6 +187,9 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
 
       return reply.status(201).send({ channel });
     } catch (error) {
+      if (error instanceof CapabilityError) {
+        throw error;
+      }
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Validation error', details: error.errors });
       }

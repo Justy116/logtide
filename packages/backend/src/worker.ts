@@ -616,6 +616,7 @@ async function syncSigmaRules() {
           const result = await sigmaSyncService.syncFromSigmaHQ({
             organizationId: org.organization_id,
             autoCreateAlerts: true,
+            onLimitExceeded: 'skip-new',
           });
 
           console.log(`[Worker] SigmaHQ sync for org ${org.organization_id}: ${result.imported} imported, ${result.skipped} skipped, ${result.failed} failed`);

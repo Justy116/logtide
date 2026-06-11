@@ -106,3 +106,54 @@ describe('enforcement helpers (boolean + static limit)', () => {
     await expect(assertWithinLimit('alerts.max_rules', 1)).rejects.toThrow();
   });
 });
+
+describe('assertWithinLimit bulk adding', () => {
+  let orgId: string;
+
+  beforeEach(async () => {
+    await db.deleteFrom('organization_entitlements').execute();
+    const ctx = await createTestContext();
+    orgId = ctx.organization.id;
+    capabilities.invalidate(orgId);
+  });
+
+  it('passes when currentCount + adding stays within the limit', async () => {
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'sigma.max_active_rules', enabled: null, limit_value: 10 })
+      .execute();
+    capabilities.invalidate(orgId);
+
+    await asOrg(orgId, async () => {
+      await expect(assertWithinLimit('sigma.max_active_rules', 5, 5)).resolves.toBeUndefined();
+    });
+  });
+
+  it('throws when currentCount + adding exceeds the limit', async () => {
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'sigma.max_active_rules', enabled: null, limit_value: 10 })
+      .execute();
+    capabilities.invalidate(orgId);
+
+    await asOrg(orgId, async () => {
+      await expect(assertWithinLimit('sigma.max_active_rules', 5, 6)).rejects.toMatchObject({
+        statusCode: 403,
+        code: 'capability.sigma.max_active_rules.limit_reached',
+      });
+    });
+  });
+
+  it('default adding=1 preserves existing semantics', async () => {
+    await db
+      .insertInto('organization_entitlements')
+      .values({ organization_id: orgId, capability: 'sigma.max_active_rules', enabled: null, limit_value: 3 })
+      .execute();
+    capabilities.invalidate(orgId);
+
+    await asOrg(orgId, async () => {
+      await expect(assertWithinLimit('sigma.max_active_rules', 3)).rejects.toMatchObject({ statusCode: 403 });
+      await expect(assertWithinLimit('sigma.max_active_rules', 2)).resolves.toBeUndefined();
+    });
+  });
+});

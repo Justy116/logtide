@@ -55,6 +55,17 @@ export class ApiKeysService {
     return `lp_${crypto.randomBytes(32).toString('hex')}`;
   }
 
+  /** Count api keys across all projects of an organization (capability limit input). */
+  async countKeysForOrg(organizationId: string): Promise<number> {
+    const row = await db
+      .selectFrom('api_keys')
+      .innerJoin('projects', 'projects.id', 'api_keys.project_id')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('projects.organization_id', '=', organizationId)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
+  }
+
   /**
    * Create a new API key for a project
    */
