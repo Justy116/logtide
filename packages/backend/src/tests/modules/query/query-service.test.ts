@@ -399,7 +399,13 @@ describe('QueryService', () => {
             const now = new Date();
             const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-            await createTestLog({ projectId, service: 'api' });
+            // Use an explicit time safely inside [yesterday, now] so the log
+            // can't land just past the upper bound due to insert timing
+            await createTestLog({
+                projectId,
+                service: 'api',
+                time: new Date(now.getTime() - 60 * 1000),
+            });
 
             const result = await queryService.getTopServices(
                 projectId,
