@@ -30,7 +30,6 @@ export default defineConfig({
                 '**/*.config.*',
                 '**/types.ts',
                 // Exclude hard-to-test infrastructure files
-                'src/modules/query/websocket.ts',
                 'src/queue/adapters/*.ts',
                 'src/queue/index.ts',
                 'src/modules/custom-dashboards/panel-data-service.ts',
