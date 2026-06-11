@@ -8,7 +8,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "svelte-kit sync && vitest run",
     "test:e2e": "cross-env E2E=true playwright test",
     "test:e2e:headed": "cross-env E2E=true playwright test --headed",
     "test:e2e:debug": "cross-env E2E=true playwright test --debug",
