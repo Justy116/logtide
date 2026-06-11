@@ -12,7 +12,11 @@ vi.mock('../../../utils/ssrf-guard.js', async () => {
   return { ...actual, safeFetch: safeFetchMock };
 });
 
-const hooksMock = vi.hoisted(() => ({ hasHandlers: vi.fn(() => false), run: vi.fn() }));
+const hooksMock = vi.hoisted(() => ({
+  hasHandlers: vi.fn(() => false),
+  run: vi.fn(),
+  runAfter: vi.fn(() => Promise.resolve()),
+}));
 vi.mock('../../../hooks/index.js', async () => {
   const actual = await vi.importActual<typeof import('../../../hooks/index.js')>(
     '../../../hooks/index.js'
@@ -28,6 +32,8 @@ beforeEach(() => {
   safeFetchMock.mockReset();
   hooksMock.hasHandlers.mockReturnValue(false);
   hooksMock.run.mockReset();
+  hooksMock.runAfter.mockClear();
+  hooksMock.runAfter.mockResolvedValue(undefined);
 });
 afterEach(() => vi.restoreAllMocks());
 
