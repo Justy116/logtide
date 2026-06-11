@@ -80,10 +80,10 @@ export class EmailProvider implements NotificationProvider {
     );
   }
 
-  async test(channelConfig: ChannelConfig): Promise<DeliveryResult> {
+  async test(channelConfig: ChannelConfig, organizationId: string): Promise<DeliveryResult> {
     return this.send(
       {
-        organizationId: 'test',
+        organizationId,
         organizationName: 'Test Organization',
         eventType: 'alert',
         title: 'Test Notification',

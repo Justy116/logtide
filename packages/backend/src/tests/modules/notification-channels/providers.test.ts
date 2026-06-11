@@ -361,7 +361,8 @@ describe('WebhookProvider', () => {
       });
       global.fetch = mockFetch;
 
-      const result = await provider.test({ url: 'https://example.com/webhook' });
+      const testOrgId = '11111111-1111-1111-1111-111111111111';
+      const result = await provider.test({ url: 'https://example.com/webhook' }, testOrgId);
 
       expect(result.success).toBe(true);
 
@@ -372,6 +373,10 @@ describe('WebhookProvider', () => {
       expect(body.version).toBe(1);
       expect(body.data.title).toBe('Test Notification');
       expect(body.data.organization.name).toBe('Test Organization');
+      // real org id must flow into the envelope
+      expect(body.organizationId).toBe(testOrgId);
+      // schema-lock: parseWebhookEvent must accept the full envelope
+      expect(() => parseWebhookEvent(body)).not.toThrow();
     });
   });
 });

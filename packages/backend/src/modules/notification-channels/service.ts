@@ -182,7 +182,7 @@ export class NotificationChannelsService {
       throw new Error(`Provider not found for type: ${channel.type}`);
     }
 
-    return provider.test(channel.config);
+    return provider.test(channel.config, organizationId);
   }
 
   // ============================================================================

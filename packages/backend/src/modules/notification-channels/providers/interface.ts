@@ -29,7 +29,7 @@ export interface NotificationProvider {
   /**
    * Test channel connectivity (for "Test Channel" button)
    */
-  test(config: ChannelConfig): Promise<DeliveryResult>;
+  test(config: ChannelConfig, organizationId: string): Promise<DeliveryResult>;
 }
 
 // Re-export types for convenience

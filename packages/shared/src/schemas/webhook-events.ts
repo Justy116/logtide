@@ -77,14 +77,12 @@ export const incidentCreatedDataSchema = z
   })
   .passthrough();
 
-// channel.test uses the WebhookProvider generic payload where organizationId can be
-// a non-uuid string (e.g. 'test' from the test() method) so organization.id is z.string()
 export const channelNotificationDataSchema = z
   .object({
     title: z.string(),
     message: z.string(),
     severity: z.string().optional(),
-    organization: z.object({ id: z.string(), name: z.string() }).optional(),
+    organization: z.object({ id: z.string().uuid(), name: z.string() }).optional(),
     link: z.string().optional(),
     metadata: z.record(z.unknown()).optional(),
   })
