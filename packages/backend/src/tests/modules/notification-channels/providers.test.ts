@@ -183,8 +183,8 @@ describe('WebhookProvider', () => {
       expect(options.headers['Content-Type']).toBe('application/json');
 
       const body = JSON.parse(options.body);
-      // body is now a webhook envelope
-      expect(body.type).toBe('alert.triggered');
+      // body is now a webhook envelope; non-test sends use channel.notification
+      expect(body.type).toBe('channel.notification');
       expect(body.version).toBe(1);
       expect(body.id).toMatch(/^evt_/);
       expect(body.data.title).toBe('Test Alert');

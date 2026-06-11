@@ -8,23 +8,19 @@ import type { WebhookChannelConfig, ChannelConfig, WebhookEventType } from '@log
 import { deliverOnce, buildEnvelope } from '../../webhooks/index.js';
 import type { NotificationEventType } from '@logtide/shared';
 
-/** Map a NotificationEventType to a WebhookEventType for the envelope. */
+/** Map a NotificationEventType to a WebhookEventType for the envelope.
+ *
+ * The provider's generic buildData output satisfies channelNotificationDataSchema
+ * but not the stricter per-event schemas (alert.triggered requires log_count etc.).
+ * Queue jobs that send type-specific events build their own envelopes and bypass
+ * this provider path entirely; here we use channel.notification for all non-test
+ * sends so parseWebhookEvent never throws for receivers.
+ */
 function toEnvelopeType(eventType: NotificationEventType | string): WebhookEventType {
-  switch (eventType) {
-    case 'alert':
-    case 'anomaly':
-    case 'sigma':
-      return 'alert.triggered';
-    case 'error':
-      return 'error.detected';
-    case 'monitoring':
-      return 'monitor.status_changed';
-    case 'incident':
-      return 'incident.created';
-    default:
-      // Unknown or test events fall back to channel.test
-      return 'channel.test';
+  if (eventType === 'test') {
+    return 'channel.test';
   }
+  return 'channel.notification';
 }
 
 export class WebhookProvider implements NotificationProvider {

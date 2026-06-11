@@ -148,6 +148,10 @@ Every delivery body is a JSON object with a top-level envelope. The `data` field
 | `link` | no | `string` | Optional dashboard link. |
 | `metadata` | no | `Record<string, unknown>` | Arbitrary key/value pairs. |
 
+### Historical replays
+
+Deliveries created before the envelope change that are manually replayed re-send their stored pre-envelope payload while still carrying the `X-Logtide-Event-Version` header; receivers should treat the header as advisory for replayed historical deliveries.
+
 ### Signature covers the envelope
 
 The HMAC signature (see "Verifying webhook signatures" below) covers the serialized envelope as the raw request body. The existing verification snippet is valid for envelope payloads without any changes. The `X-Logtide-Event-Version: 1` header lets you route by version before parsing.

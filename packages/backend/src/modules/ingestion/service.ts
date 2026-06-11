@@ -206,6 +206,15 @@ export class IngestionService {
       }
 
       if (records.length === 0) {
+        if (hooks.hasHandlers('afterIngest')) {
+          void hooks.runAfter('afterIngest', {
+            organizationId: organizationId ?? null,
+            projectId,
+            acceptedCount: 0,
+            rejectedCount: rejected.length,
+            rejectionReasons: [...new Set(rejected.map((r) => r.reason))],
+          });
+        }
         return { received: 0, rejected };
       }
 

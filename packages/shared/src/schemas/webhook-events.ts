@@ -6,6 +6,9 @@ export const webhookEventTypeSchema = z.enum([
   'error.detected',
   'monitor.status_changed',
   'channel.test',
+  // Generic notification deliveries through notification channels.
+  // Type-specific events (alert.triggered, etc.) use their own types via the queue jobs.
+  'channel.notification',
 ]);
 export type WebhookEventType = z.infer<typeof webhookEventTypeSchema>;
 
@@ -105,6 +108,7 @@ export const WEBHOOK_EVENT_DATA_SCHEMAS = {
   'error.detected': errorDetectedDataSchema,
   'monitor.status_changed': monitorStatusChangedDataSchema,
   'channel.test': channelNotificationDataSchema,
+  'channel.notification': channelNotificationDataSchema,
 } as const;
 
 /** Parse an envelope AND validate its per-type data schema. */

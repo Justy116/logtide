@@ -137,4 +137,32 @@ describe('afterIngest hook (integration)', () => {
     expect(result.received).toBe(0);
     expect(fired).toBe(false);
   });
+
+  it('fires afterIngest (acceptedCount 0) when beforeIngest filters all records', async () => {
+    const logs: LogInput[] = [
+      { time: new Date(), service: 'api', level: 'info', message: 'filter-me' },
+      { time: new Date(), service: 'api', level: 'info', message: 'filter-me-too' },
+    ];
+
+    hooks.register('beforeIngest', async (ctx) => {
+      ctx.records = [];
+    });
+
+    let captured: AfterIngestContext | null = null;
+    hooks.register('afterIngest', async (ctx) => {
+      captured = { ...ctx };
+    });
+
+    const result = await ingestionService.ingestLogs(logs, projectId);
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(result.received).toBe(0);
+    expect(captured).not.toBeNull();
+    expect(captured!.acceptedCount).toBe(0);
+    expect(captured!.rejectedCount).toBe(0);
+    expect(captured!.rejectionReasons).toEqual([]);
+    expect(captured!.projectId).toBe(projectId);
+    expect(captured!.organizationId).toBe(orgId);
+  });
 });

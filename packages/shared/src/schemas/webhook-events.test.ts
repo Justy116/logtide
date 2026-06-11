@@ -315,6 +315,47 @@ describe('channelNotificationDataSchema', () => {
   });
 });
 
+describe('channel.notification round-trip', () => {
+  it('parseWebhookEvent accepts a channel.notification envelope', () => {
+    const envelope = {
+      id: EVT_ID,
+      type: 'channel.notification',
+      version: 1 as const,
+      occurredAt: '2026-06-11T10:00:00.000Z',
+      organizationId: ORG_ID,
+      projectId: null,
+      data: {
+        title: 'Alert fired',
+        message: 'Error rate exceeded threshold',
+        severity: 'high',
+        organization: { id: ORG_ID, name: 'Acme Corp' },
+        link: 'https://app.logtide.dev/dashboard/alerts',
+        metadata: { rule_id: 'abc123' },
+      },
+    };
+    const result = parseWebhookEvent(envelope);
+    expect(result.type).toBe('channel.notification');
+    expect(result.data).toMatchObject({ title: 'Alert fired', severity: 'high' });
+  });
+
+  it('parseWebhookEvent accepts channel.notification with minimal data', () => {
+    const envelope = {
+      id: EVT_ID,
+      type: 'channel.notification',
+      version: 1 as const,
+      occurredAt: '2026-06-11T10:00:00.000Z',
+      organizationId: ORG_ID,
+      projectId: PROJ_ID,
+      data: {
+        title: 'Test',
+        message: 'Hello',
+      },
+    };
+    const result = parseWebhookEvent(envelope);
+    expect(result.type).toBe('channel.notification');
+  });
+});
+
 describe('parseWebhookEvent', () => {
   it('narrows data for alert.triggered', () => {
     const envelope = {

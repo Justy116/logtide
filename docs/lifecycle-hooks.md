@@ -16,9 +16,9 @@ Nothing is registered by default. In an OSS deployment with no external modules 
 | `beforeQuery` | At the top of `QueryService.queryLogs`, after request parsing and access checks in the route, before the cache key is built. | `QueryService.queryLogs` in `modules/query/service.ts`. Covers only the main log query path; stats, histogram, trace and context endpoints are not covered in v1 (see limitations). |
 | `beforeAlertEvaluation` | Once per rule, inside the alert evaluation loop, before `checkRule` is called. | `AlertsService.checkAlertRules` in `modules/alerts/service.ts`. |
 | `beforeWebhookDispatch` | Immediately before the outbound `safeFetch` call, after headers and payload are fully assembled. | `WebhookProvider.send` in `modules/notification-channels/providers/webhook-provider.ts` (notification channel path) AND `sendWebhookNotification` in `queue/jobs/alert-notification.ts` (legacy alert-rule `webhook_url` path). Both paths are covered. |
-| `afterIngest` | After the reservoir write completes successfully (after `reservoir.ingestReturning` returns). | `IngestionService.ingestLogs` in `modules/ingestion/service.ts`. Covers both HTTP and OTLP ingest paths. |
+| `afterIngest` | After the batch finishes processing, including paths where nothing was written (all records rejected or hook-filtered). | `IngestionService.ingestLogs` in `modules/ingestion/service.ts`. Covers both HTTP and OTLP ingest paths. |
 | `afterAlertTriggered` | After an alert trigger has been persisted to alert history, before notification jobs are enqueued. | `AlertsService.checkAlertRules` in `modules/alerts/service.ts`. |
-| `afterWebhookDispatch` | After each webhook delivery attempt completes, on both the queued and synchronous dispatch paths. | `WebhookProvider.send` (notification channel path) AND `sendWebhookNotification` (legacy alert-rule path). |
+| `afterWebhookDispatch` | After each webhook delivery attempt completes, on both the queued and synchronous dispatch paths. | Inside `deliverOnce` in `modules/webhooks/dispatcher.ts`. Covers every dispatcher delivery: queued deliveries from the webhook-delivery job (alert, error, monitor, incident events and replays) and synchronous deliveries from the notification-channel provider (including channel tests). |
 
 ---
 
@@ -141,15 +141,15 @@ export interface AfterIngestContext {
 }
 ```
 
-Fires after `reservoir.ingestReturning` completes successfully. Covers both the HTTP ingest (`POST /api/v1/logs`) and OTLP log ingest paths. Carries counts only; log content is not available at this point.
+Fires when the batch finishes processing, including paths where nothing was written (all records rejected by ingestion-side checks or filtered by a beforeIngest handler). Covers both the HTTP ingest (`POST /api/v1/logs`) and OTLP log ingest paths. Carries counts only; log content is not available at this point.
 
 | Field | Notes |
 | --- | --- |
 | `organizationId` | Null when the project's organization cannot be resolved (same as `BeforeIngestContext`). |
 | `projectId` | Always set. |
 | `acceptedCount` | Number of records written to the reservoir. |
-| `rejectedCount` | Number of records dropped (e.g. by a `beforeIngest` filter or upstream validation). |
-| `rejectionReasons` | Readonly array of reason strings. May be empty. |
+| `rejectedCount` | Number of records dropped by ingestion-side checks (currently: PII masking failures). Records filtered by beforeIngest handlers are not counted here; operators control those handlers and can track counts inside them. |
+| `rejectionReasons` | Readonly array of reason strings for ingestion-side rejections. May be empty. Records filtered by beforeIngest handlers do not contribute to this array. |
 
 ### `AfterAlertTriggeredContext`
 
@@ -194,7 +194,7 @@ export interface AfterWebhookDispatchContext {
 }
 ```
 
-Fires after each webhook delivery attempt completes, on both the queued (notification channel) and synchronous (legacy alert-rule `webhook_url`) dispatch paths. Useful for delivery metrics and audit logging.
+Fires inside `deliverOnce` after each webhook delivery attempt completes. Covers every dispatcher delivery: queued deliveries from the webhook-delivery job (alert, error, monitor, incident events and replays) and synchronous deliveries from the notification-channel provider (including channel tests). Useful for delivery metrics and audit logging.
 
 | Field | Notes |
 | --- | --- |

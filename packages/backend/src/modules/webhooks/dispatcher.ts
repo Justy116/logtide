@@ -20,7 +20,8 @@ const RESPONSE_EXCERPT_MAX = 500;
 export async function deliverOnce(params: DeliverOnceParams): Promise<DeliverOnceResult> {
   const started = Date.now();
 
-  /** Fire afterWebhookDispatch fire-and-forget. Deduplicates the 4 return paths. */
+  /** Fire afterWebhookDispatch fire-and-forget. Covers 5 of the 6 return paths (the
+   *  invalid-URL early return intentionally skips it: no delivery attempt was made). */
   function fireAfterDispatch(result: DeliverOnceResult): void {
     if (!hooks.hasHandlers('afterWebhookDispatch')) return;
     void hooks.runAfter('afterWebhookDispatch', {
