@@ -4,6 +4,7 @@ import { retentionService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { requireAdmin } from '../admin/middleware.js';
 import { auditLogService } from '../audit-log/index.js';
+import { db } from '../../database/index.js';
 
 // Validation schemas
 const updateRetentionSchema = z
@@ -100,14 +101,11 @@ export async function retentionRoutes(fastify: FastifyInstance) {
         const [status, org] = await Promise.all([
           retentionService.getOrganizationRetentionStatus(id),
           // Fetch audit_retention_days alongside (not in getOrganizationRetentionStatus to stay backward-compat)
-          (async () => {
-            const { db } = await import('../../database/index.js');
-            return db
-              .selectFrom('organizations')
-              .select('audit_retention_days')
-              .where('id', '=', id)
-              .executeTakeFirst();
-          })(),
+          db
+            .selectFrom('organizations')
+            .select('audit_retention_days')
+            .where('id', '=', id)
+            .executeTakeFirst(),
         ]);
         return reply.send({ ...status, auditRetentionDays: org?.audit_retention_days ?? null });
       } catch (error: any) {
