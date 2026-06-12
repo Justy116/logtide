@@ -52,20 +52,12 @@ export async function sessionsRoutes(fastify: FastifyInstance) {
         offset: Number(offset),
       });
 
-      if (request.user?.id) {
-        auditLogService.log({
-          organizationId: null,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'list_sessions',
-          category: 'log_access',
-          resourceType: 'project',
-          resourceId: projectId,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { from, to, hasErrors, service },
-        });
-      }
+      void auditLogService.record({
+        action: 'data.sessions_listed',
+        target: { type: 'project', id: projectId },
+        metadata: { from, to, hasErrors, service },
+        organizationId: null,
+      }, { buffered: true });
 
       return result;
     },
@@ -104,20 +96,12 @@ export async function sessionsRoutes(fastify: FastifyInstance) {
         limit: Number(limit),
       });
 
-      if (request.user?.id) {
-        auditLogService.log({
-          organizationId: null,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'view_session_events',
-          category: 'log_access',
-          resourceType: 'session',
-          resourceId: sessionId,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { projectId, limit },
-        });
-      }
+      void auditLogService.record({
+        action: 'data.session_events_viewed',
+        target: { type: 'session', id: sessionId },
+        metadata: { projectId, limit },
+        organizationId: null,
+      }, { buffered: true });
 
       return { events };
     },
