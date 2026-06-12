@@ -194,6 +194,7 @@ export interface OrganizationDetails {
     name: string;
     slug: string;
     retentionDays: number;
+    auditRetentionDays: number | null;
     created_at: string;
     updated_at: string;
     members: Array<{
@@ -668,7 +669,10 @@ class AdminAPI {
         return response.json();
     }
 
-    async updateOrganizationRetention(orgId: string, retentionDays: number): Promise<{ message: string; success: boolean; retentionDays: number }> {
+    async updateOrganizationRetention(
+        orgId: string,
+        opts: { retentionDays?: number; auditRetentionDays?: number | null }
+    ): Promise<{ message: string; success: boolean; retentionDays: number }> {
         const auth = get(authStore);
         const token = auth.token;
 
@@ -683,7 +687,7 @@ class AdminAPI {
                 'Content-Type': 'application/json',
                 Authorization: `Bearer ${token}`,
             },
-            body: JSON.stringify({ retentionDays }),
+            body: JSON.stringify(opts),
         });
 
         if (!response.ok) {
