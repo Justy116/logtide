@@ -1,24 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { db } from '../../../database/index.js';
 import { AuditLogService } from '../../../modules/audit-log/service.js';
-import type { AuditLogEntry } from '../../../modules/audit-log/service.js';
+import { categoryFor } from '../../../modules/audit-log/actions.js';
 import { createTestUser, createTestOrganization } from '../../helpers/factories.js';
 import { context } from '@logtide/shared/context';
-
-function makeEntry(overrides: Partial<AuditLogEntry> = {}): AuditLogEntry {
-  return {
-    organizationId: overrides.organizationId ?? null,
-    userId: overrides.userId ?? null,
-    userEmail: overrides.userEmail ?? null,
-    action: overrides.action ?? 'test_action',
-    category: overrides.category ?? 'config_change',
-    resourceType: overrides.resourceType ?? null,
-    resourceId: overrides.resourceId ?? null,
-    ipAddress: overrides.ipAddress ?? null,
-    userAgent: overrides.userAgent ?? null,
-    metadata: overrides.metadata ?? null,
-  };
-}
 
 describe('AuditLogService', () => {
   let service: AuditLogService;
@@ -73,15 +58,12 @@ describe('AuditLogService', () => {
       .executeTakeFirstOrThrow();
   }
 
-  describe('log() and flush()', () => {
+  describe('record({ buffered: true }) and flush()', () => {
     it('should buffer entries and flush them to DB on shutdown', async () => {
-      service.log(makeEntry({
-        organizationId: orgId,
-        userId,
-        userEmail,
-        action: 'create_project',
-        category: 'config_change',
-      }));
+      await service.record(
+        { action: 'org.updated', organizationId: orgId, actor: { type: 'user', id: userId, label: userEmail } },
+        { buffered: true },
+      );
 
       // Before shutdown, nothing in DB
       const before = await db
@@ -102,11 +84,10 @@ describe('AuditLogService', () => {
 
     it('should flush multiple entries at once', async () => {
       for (let i = 0; i < 5; i++) {
-        service.log(makeEntry({
-          organizationId: orgId,
-          action: `action_${i}`,
-          category: 'config_change',
-        }));
+        await service.record(
+          { action: 'project.updated', organizationId: orgId },
+          { buffered: true },
+        );
       }
 
       await service.shutdown();
@@ -118,19 +99,17 @@ describe('AuditLogService', () => {
       expect(Number(result.count)).toBe(5);
     });
 
-    it('should map camelCase fields to snake_case columns', async () => {
-      service.log(makeEntry({
-        organizationId: orgId,
-        userId,
-        userEmail,
-        action: 'login',
-        category: 'user_management',
-        resourceType: 'session',
-        resourceId: 'sess-123',
-        ipAddress: '192.168.1.1',
-        userAgent: 'Mozilla/5.0',
-        metadata: { browser: 'Chrome' },
-      }));
+    it('should map record() input fields to the correct row columns', async () => {
+      await service.record(
+        {
+          action: 'auth.login_succeeded',
+          target: { type: 'session', id: 'sess-123' },
+          actor: { type: 'user', id: userId, label: userEmail },
+          organizationId: orgId,
+          metadata: { browser: 'Chrome' },
+        },
+        { buffered: true },
+      );
 
       await service.shutdown();
 
@@ -142,21 +121,19 @@ describe('AuditLogService', () => {
       expect(row.organization_id).toBe(orgId);
       expect(row.user_id).toBe(userId);
       expect(row.user_email).toBe(userEmail);
-      expect(row.action).toBe('login');
-      expect(row.category).toBe('user_management');
+      expect(row.action).toBe('auth.login_succeeded');
+      // category is derived from the registry, not supplied by caller
+      expect(row.category).toBe(categoryFor('auth.login_succeeded'));
       expect(row.resource_type).toBe('session');
       expect(row.resource_id).toBe('sess-123');
-      expect(row.ip_address).toBe('192.168.1.1');
-      expect(row.user_agent).toBe('Mozilla/5.0');
       expect(row.metadata).toEqual({ browser: 'Chrome' });
     });
 
     it('should handle null/undefined optional fields', async () => {
-      service.log(makeEntry({
-        organizationId: orgId,
-        action: 'test',
-        category: 'log_access',
-      }));
+      await service.record(
+        { action: 'data.logs_searched', organizationId: orgId },
+        { buffered: true },
+      );
 
       await service.shutdown();
 
@@ -169,6 +146,7 @@ describe('AuditLogService', () => {
       expect(row.user_email).toBeNull();
       expect(row.resource_type).toBeNull();
       expect(row.resource_id).toBeNull();
+      // ip_address and user_agent are null when there is no request context
       expect(row.ip_address).toBeNull();
       expect(row.user_agent).toBeNull();
       expect(row.metadata).toBeNull();
@@ -176,11 +154,10 @@ describe('AuditLogService', () => {
 
     it('should auto-flush when buffer reaches BUFFER_MAX (50)', async () => {
       for (let i = 0; i < 50; i++) {
-        service.log(makeEntry({
-          organizationId: orgId,
-          action: `bulk_action_${i}`,
-          category: 'config_change',
-        }));
+        await service.record(
+          { action: 'project.updated', organizationId: orgId },
+          { buffered: true },
+        );
       }
 
       // Give the async flush a moment to complete
@@ -212,35 +189,22 @@ describe('AuditLogService', () => {
         throw new Error('DB connection error');
       });
 
-      service.log(makeEntry({
-        organizationId: orgId,
-        action: 'will_fail',
-        category: 'config_change',
-      }));
+      await service.record(
+        { action: 'org.updated', organizationId: orgId },
+        { buffered: true },
+      );
 
       // Trigger flush via shutdown - first attempt fails, entries re-queued
       await service.shutdown();
 
       insertSpy.mockRestore();
 
-      // Create a new service to flush the re-queued entries
-      // Since the entries were re-queued in the same service instance's buffer,
-      // we need to flush again
-      // Actually, shutdown calls flush which failed and re-queued, then
-      // the entries are still in the buffer. Let's create a new service
-      // and verify the original service's buffer state.
-      // The entries should be back in the buffer after the error.
-      // Let's try flushing again by calling shutdown on a fresh service
-      // that we populated manually.
-
-      // Since the flush failed and re-queued, we can't easily test
-      // the buffer state from outside. Let's verify by checking DB is empty.
+      // The flush failed and re-queued the entries; DB should still be empty
+      // because shutdown only calls flush once and that single attempt errored.
       const result = await db
         .selectFrom('audit_log')
         .select(db.fn.countAll<number>().as('count'))
         .executeTakeFirstOrThrow();
-      // The entries were re-queued but shutdown only calls flush once,
-      // so they're still in the buffer (DB should be empty)
       expect(Number(result.count)).toBe(0);
     });
   });
@@ -249,11 +213,10 @@ describe('AuditLogService', () => {
     it('should start the flush timer and stop it on shutdown', async () => {
       service.start();
 
-      service.log(makeEntry({
-        organizationId: orgId,
-        action: 'timed_flush',
-        category: 'config_change',
-      }));
+      await service.record(
+        { action: 'data.logs_streamed', organizationId: orgId },
+        { buffered: true },
+      );
 
       // Wait for the flush interval (1000ms + buffer)
       await new Promise((r) => setTimeout(r, 1500));
@@ -270,11 +233,10 @@ describe('AuditLogService', () => {
     it('should flush remaining entries on shutdown', async () => {
       service.start();
 
-      service.log(makeEntry({
-        organizationId: orgId,
-        action: 'shutdown_flush',
-        category: 'data_modification',
-      }));
+      await service.record(
+        { action: 'data.deleted', organizationId: orgId },
+        { buffered: true },
+      );
 
       // Immediately shutdown (don't wait for timer)
       await service.shutdown();
@@ -366,10 +328,6 @@ describe('AuditLogService', () => {
     });
 
     it('should filter by from date', async () => {
-      const oldDate = new Date('2024-01-01');
-      const recentDate = new Date();
-
-      // Insert using raw SQL for time control
       await db.insertInto('audit_log').values({
         organization_id: orgId,
         action: 'old_action',

@@ -60,9 +60,6 @@ export const AUDIT_ACTIONS = {
   'channel.updated': 'config_change',
   'channel.deleted': 'config_change',
   // webhooks
-  'webhook.created': 'config_change',
-  'webhook.updated': 'config_change',
-  'webhook.deleted': 'config_change',
   'webhook.delivery_replayed': 'config_change',
   // auth
   'auth.login_succeeded': 'user_management',

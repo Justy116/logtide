@@ -12,19 +12,6 @@ const actorTypeExpr = sql<string>`COALESCE(actor_type, CASE WHEN user_id IS NULL
 const actorIdExpr = sql<string | null>`COALESCE(actor_id, user_id)`;
 const outcomeExpr = sql<string>`COALESCE(outcome, 'success')`;
 
-export interface AuditLogEntry {
-  organizationId: string | null;
-  userId?: string | null;
-  userEmail?: string | null;
-  action: string;
-  category: AuditCategory;
-  resourceType?: string | null;
-  resourceId?: string | null;
-  ipAddress?: string | null;
-  userAgent?: string | null;
-  metadata?: Record<string, unknown> | null;
-}
-
 export interface AuditLogQueryParams {
   organizationId: string;
   category?: AuditCategory;
@@ -116,24 +103,6 @@ export class AuditLogService {
 
   start(): void {
     this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
-  }
-
-  log(entry: AuditLogEntry): void {
-    this.bufferRow({
-      organization_id: entry.organizationId,
-      actor_type: entry.userId ? 'user' : 'system',
-      actor_id: entry.userId ?? null,
-      user_id: entry.userId ?? null,
-      user_email: entry.userEmail ?? null,
-      action: entry.action,
-      category: entry.category,
-      resource_type: entry.resourceType ?? null,
-      resource_id: entry.resourceId ?? null,
-      outcome: 'success',
-      ip_address: entry.ipAddress ?? null,
-      user_agent: entry.userAgent ?? null,
-      metadata: entry.metadata ?? null,
-    });
   }
 
   private bufferRow(row: AuditRow): void {
