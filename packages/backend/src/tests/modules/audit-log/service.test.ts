@@ -573,6 +573,7 @@ describe('AuditLogService', () => {
       expect(actions).toContain('org.created');
       expect(actions).toContain('login'); // legacy db action not in registry
       expect(actions).toEqual([...actions].sort());
+      expect(new Set(actions).size).toBe(actions.length); // deduplicated
     });
 
     it('returns registry list for org with no entries', async () => {
