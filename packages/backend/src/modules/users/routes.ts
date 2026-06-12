@@ -58,14 +58,11 @@ export async function usersRoutes(fastify: FastifyInstance) {
           password: body.password,
         });
 
-        auditLogService.log({
+        await auditLogService.record({
+          action: 'user.registered',
+          target: { type: 'user', id: user.id },
           organizationId: null,
-          userId: user.id,
-          userEmail: user.email,
-          action: 'register',
-          category: 'user_management',
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
+          actor: { type: 'user', id: user.id, label: user.email },
         });
 
         return reply.status(201).send({
@@ -110,10 +107,11 @@ export async function usersRoutes(fastify: FastifyInstance) {
       }
     },
     handler: async (request, reply) => {
+      let parsedBody: { email: string; password: string } | undefined;
       try {
-        const body = loginSchema.parse(request.body);
+        parsedBody = loginSchema.parse(request.body);
 
-        const session = await usersService.login(body);
+        const session = await usersService.login(parsedBody);
         const user = await usersService.getUserById(session.userId);
 
         if (!user) {
@@ -122,14 +120,11 @@ export async function usersRoutes(fastify: FastifyInstance) {
           });
         }
 
-        auditLogService.log({
+        await auditLogService.record({
+          action: 'auth.login_succeeded',
           organizationId: null,
-          userId: user.id,
-          userEmail: user.email,
-          action: 'login',
-          category: 'user_management',
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
+          actor: { type: 'user', id: user.id, label: user.email },
+          metadata: { method: 'local' },
         });
 
         return reply.send({
@@ -154,6 +149,14 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
         if (error instanceof Error) {
           if (error.message.includes('Invalid')) {
+            // parsedBody is defined here (zod succeeded before the service threw)
+            await auditLogService.record({
+              action: 'auth.login_failed',
+              outcome: 'failure',
+              organizationId: null,
+              actor: { type: 'user', id: null, label: parsedBody?.email ?? null },
+              metadata: { method: 'local' },
+            });
             return reply.status(401).send({
               error: error.message,
             });
@@ -178,14 +181,11 @@ export async function usersRoutes(fastify: FastifyInstance) {
     const user = await usersService.validateSession(token);
     await usersService.logout(token);
 
-    auditLogService.log({
+    await auditLogService.record({
+      action: 'auth.session_revoked',
       organizationId: null,
-      userId: user?.id ?? null,
-      userEmail: user?.email ?? null,
-      action: 'logout',
-      category: 'user_management',
-      ipAddress: request.ip,
-      userAgent: request.headers['user-agent'],
+      actor: { type: 'user', id: user?.id ?? null, label: user?.email ?? null },
+      metadata: { reason: 'logout' },
     });
 
     return reply.send({
@@ -281,6 +281,12 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
       const updatedUser = await usersService.updateUser(currentUser.id, body);
 
+      await auditLogService.record({
+        action: 'user.profile_updated',
+        organizationId: null,
+        target: { type: 'user', id: updatedUser.id },
+      });
+
       return reply.send({
         user: {
           id: updatedUser.id,
@@ -339,14 +345,10 @@ export async function usersRoutes(fastify: FastifyInstance) {
 
       await usersService.deleteUser(currentUser.id, body.password);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'user.deleted',
+        target: { type: 'user', id: currentUser.id },
         organizationId: null,
-        userId: currentUser.id,
-        userEmail: currentUser.email,
-        action: 'delete_account',
-        category: 'user_management',
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
       });
 
       // Logout (delete session)
