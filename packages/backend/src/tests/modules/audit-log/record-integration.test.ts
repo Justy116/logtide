@@ -213,6 +213,130 @@ describe('org project apikey audit records', () => {
   });
 });
 
+const VALID_DASHBOARD_YAML = `
+name: Imported Audit Dashboard
+panels: []
+`;
+
+describe('coverage audit records', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await build();
+    await app.ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(async () => {
+    await truncateAllTables();
+    await db.deleteFrom('notification_channels').execute();
+    await db.deleteFrom('custom_dashboards').execute();
+    await db.deleteFrom('log_pipelines').execute();
+    await db.deleteFrom('audit_log').execute();
+  });
+
+  it('channel create produces channel.created row', async () => {
+    const user = await createTestUser({ email: 'ch-audit@example.com', password: 'password123' });
+    const org = await createTestOrganization({ ownerId: user.id });
+    const session = await createTestSession(user.id);
+
+    const res = await request(app.server)
+      .post('/api/v1/notification-channels')
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${session.token}`)
+      .send({ name: 'Audit Email Channel', type: 'email', config: { recipients: ['a@example.com'] } })
+      .expect(201);
+
+    expect(res.body.channel).toBeDefined();
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('action', '=', 'channel.created')
+      .execute();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.actor_type).toBe('user');
+    expect(row.actor_id).toBe(user.id);
+    expect(row.outcome).toBe('success');
+    expect(row.resource_type).toBe('notification_channel');
+    expect(row.resource_id).toBe(res.body.channel.id);
+    expect(row.organization_id).toBe(org.id);
+    expect((row.metadata as any)?.name).toBe('Audit Email Channel');
+    expect((row.metadata as any)?.type).toBe('email');
+  });
+
+  it('dashboard create produces dashboard.created row', async () => {
+    const user = await createTestUser({ email: 'dash-audit@example.com', password: 'password123' });
+    const org = await createTestOrganization({ ownerId: user.id });
+    const session = await createTestSession(user.id);
+
+    const res = await request(app.server)
+      .post('/api/v1/custom-dashboards')
+      .set('Authorization', `Bearer ${session.token}`)
+      .send({ organizationId: org.id, name: 'Audit Dashboard' })
+      .expect(201);
+
+    expect(res.body.dashboard).toBeDefined();
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('action', '=', 'dashboard.created')
+      .execute();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.actor_type).toBe('user');
+    expect(row.actor_id).toBe(user.id);
+    expect(row.outcome).toBe('success');
+    expect(row.resource_type).toBe('custom_dashboard');
+    expect(row.resource_id).toBe(res.body.dashboard.id);
+    expect(row.organization_id).toBe(org.id);
+    expect((row.metadata as any)?.name).toBe('Audit Dashboard');
+  });
+
+  it('pipeline create produces pipeline.created row', async () => {
+    const user = await createTestUser({ email: 'pipe-audit@example.com', password: 'password123' });
+    const org = await createTestOrganization({ ownerId: user.id });
+    const project = await createTestProject({ organizationId: org.id, userId: user.id });
+    const session = await createTestSession(user.id);
+
+    const res = await request(app.server)
+      .post('/api/v1/log-pipelines')
+      .query({ organizationId: org.id })
+      .set('Authorization', `Bearer ${session.token}`)
+      .send({
+        projectId: project.id,
+        name: 'Audit Pipeline',
+        steps: [{ type: 'parser', parser: 'nginx' }],
+      })
+      .expect(201);
+
+    expect(res.body.pipeline).toBeDefined();
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('action', '=', 'pipeline.created')
+      .execute();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.actor_type).toBe('user');
+    expect(row.actor_id).toBe(user.id);
+    expect(row.outcome).toBe('success');
+    expect(row.resource_type).toBe('log_pipeline');
+    expect(row.resource_id).toBe(res.body.pipeline.id);
+    expect(row.organization_id).toBe(org.id);
+    expect((row.metadata as any)?.name).toBe('Audit Pipeline');
+  });
+});
+
 const VALID_SIGMA_YAML = `
 title: Audit Test Rule
 status: stable

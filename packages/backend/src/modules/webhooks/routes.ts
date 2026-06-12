@@ -8,6 +8,7 @@ import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { webhookDeliveryService, redactDeliveryForApi } from './service.js';
 import { webhookDispatcher } from './dispatcher.js';
+import { auditLogService } from '../audit-log/service.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -102,6 +103,14 @@ export async function webhookDeliveriesRoutes(fastify: FastifyInstance) {
 
     const reset = await webhookDeliveryService.resetForReplay(id);
     await webhookDispatcher.enqueueExisting(id);
+
+    await auditLogService.record({
+      action: 'webhook.delivery_replayed',
+      target: { type: 'webhook_delivery', id },
+      organizationId: delivery.organization_id,
+      metadata: { eventType: delivery.event_type, url: delivery.url },
+    });
+
     return reply.send({ delivery: redactDeliveryForApi(reset) });
   });
 }

@@ -8,6 +8,7 @@ import { fetchPanelData } from './panel-data-service.js';
 import { context } from '@logtide/shared/context';
 import { assertWithinLimit } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
+import { auditLogService } from '../audit-log/service.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -109,6 +110,14 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
         },
         request.user.id
       );
+
+      await auditLogService.record({
+        action: 'dashboard.created',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId: body.organizationId,
+        metadata: { name: dashboard.name },
+      });
+
       return reply.status(201).send({ dashboard });
     } catch (e) {
       if (e instanceof CapabilityError) {
@@ -143,6 +152,14 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
         body.organizationId,
         request.user.id
       );
+
+      await auditLogService.record({
+        action: 'dashboard.imported',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId: body.organizationId,
+        metadata: { name: dashboard.name },
+      });
+
       return reply.status(201).send({ dashboard });
     } catch (e) {
       if (e instanceof CapabilityError) {
@@ -196,6 +213,14 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
         organizationId,
         body
       );
+
+      await auditLogService.record({
+        action: 'dashboard.updated',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId,
+        metadata: { name: dashboard.name },
+      });
+
       return reply.send({ dashboard });
     } catch (e) {
       if (e instanceof z.ZodError) {
@@ -224,6 +249,14 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
         (request.params as { id: string }).id,
         organizationId
       );
+
+      await auditLogService.record({
+        action: 'dashboard.updated',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId,
+        metadata: { name: dashboard.name, setDefault: true },
+      });
+
       return reply.send({ dashboard });
     } catch (e) {
       if (e instanceof Error) {
@@ -248,10 +281,15 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       return reply.status(403).send({ error: 'Forbidden' });
     }
     try {
-      await customDashboardsService.delete(
-        (request.params as { id: string }).id,
-        organizationId
-      );
+      const dashboardId = (request.params as { id: string }).id;
+      await customDashboardsService.delete(dashboardId, organizationId);
+
+      await auditLogService.record({
+        action: 'dashboard.deleted',
+        target: { type: 'custom_dashboard', id: dashboardId },
+        organizationId,
+      });
+
       return reply.status(204).send();
     } catch (e) {
       if (e instanceof Error) {
