@@ -205,14 +205,10 @@ export async function auditLogRoutes(fastify: FastifyInstance) {
           if (result.entries.length < CHUNK_SIZE || totalRows >= 10000) break;
         }
 
-        auditLogService.log({
+        await auditLogService.record({
+          action: 'data.exported',
+          target: { type: 'audit_log', id: null },
           organizationId: params.organizationId,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'export_audit_log',
-          category: 'log_access',
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
           metadata: {
             format: 'csv',
             rowCount: totalRows,

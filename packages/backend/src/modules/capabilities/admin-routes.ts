@@ -116,16 +116,10 @@ export async function adminEntitlementsRoutes(fastify: FastifyInstance) {
 
         capabilities.invalidate(id);
 
-        auditLogService.log({
+        await auditLogService.record({
+          action: 'org.entitlements_updated',
+          target: { type: 'organization_entitlement', id },
           organizationId: id,
-          userId: (request as any).user?.id,
-          userEmail: (request as any).user?.email,
-          action: 'update_entitlements',
-          category: 'config_change',
-          resourceType: 'organization_entitlement',
-          resourceId: id,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
           metadata: { entitlements: rows.map((r) => ({ capability: r.capability, enabled: r.enabled, limitValue: r.limit_value })) },
         });
 
