@@ -185,16 +185,10 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         description: body.description,
       });
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'project.created',
+        target: { type: 'project', id: project.id },
         organizationId: body.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'create_project',
-        category: 'config_change',
-        resourceType: 'project',
-        resourceId: project.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { name: project.name },
       });
 
@@ -238,16 +232,10 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'project.updated',
+        target: { type: 'project', id },
         organizationId: project.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'update_project',
-        category: 'config_change',
-        resourceType: 'project',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: body,
       });
 
@@ -304,16 +292,10 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'project.deleted',
+        target: { type: 'project', id },
         organizationId: project.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'delete_project',
-        category: 'data_modification',
-        resourceType: 'project',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
       });
 
       return reply.status(204).send();

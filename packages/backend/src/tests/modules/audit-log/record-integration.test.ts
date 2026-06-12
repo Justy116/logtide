@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import type { FastifyInstance } from 'fastify';
 import { build } from '../../../server.js';
 import { truncateAllTables } from '../../helpers/index.js';
-import { createTestUser } from '../../helpers/factories.js';
+import { createTestUser, createTestOrganization, createTestProject } from '../../helpers/factories.js';
+import { createTestSession } from '../../helpers/auth.js';
 import { db } from '../../../database/index.js';
 
 describe('auth audit records', () => {
@@ -86,5 +87,128 @@ describe('auth audit records', () => {
       .execute();
 
     expect(rows).toHaveLength(0);
+  });
+});
+
+vi.mock('../../../config/index.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../../config/index.js')>();
+  return {
+    ...original,
+    isSmtpConfigured: vi.fn(() => true),
+  };
+});
+
+vi.mock('../../../queue/jobs/invitation-email.js', () => ({
+  invitationEmailQueue: {
+    add: vi.fn(() => Promise.resolve()),
+  },
+}));
+
+vi.mock('../../../modules/notifications/service.js', () => ({
+  notificationsService: {
+    createNotification: vi.fn(() => Promise.resolve({ id: 'test-notification-id' })),
+  },
+}));
+
+describe('org project apikey audit records', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await build();
+    await app.ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(async () => {
+    await truncateAllTables();
+    await db.deleteFrom('organization_invitations').execute();
+    await db.deleteFrom('audit_log').execute();
+  });
+
+  it('org create via API produces org.created row with correct actor and resource', async () => {
+    const user = await createTestUser({ email: 'org-audit@example.com', password: 'password123' });
+    const session = await createTestSession(user.id);
+
+    await request(app.server)
+      .post('/api/v1/organizations')
+      .set('Authorization', `Bearer ${session.token}`)
+      .send({ name: 'Audit Test Org' })
+      .expect(201);
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('action', '=', 'org.created')
+      .execute();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.actor_type).toBe('user');
+    expect(row.actor_id).toBe(user.id);
+    expect(row.outcome).toBe('success');
+    expect(row.resource_type).toBe('organization');
+    expect(row.organization_id).toBeTruthy();
+    expect((row.metadata as any)?.name).toBe('Audit Test Org');
+  });
+
+  it('api key create produces apikey.created with organization_id from project org', async () => {
+    const user = await createTestUser({ email: 'apikey-audit@example.com', password: 'password123' });
+    const org = await createTestOrganization({ ownerId: user.id });
+    const project = await createTestProject({ organizationId: org.id, userId: user.id });
+    const session = await createTestSession(user.id);
+
+    await request(app.server)
+      .post(`/api/v1/projects/${project.id}/api-keys`)
+      .set('Authorization', `Bearer ${session.token}`)
+      .send({ name: 'Test Key', type: 'write' })
+      .expect(201);
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('action', '=', 'apikey.created')
+      .execute();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.organization_id).toBe(org.id);
+    expect(row.actor_type).toBe('user');
+    expect(row.actor_id).toBe(user.id);
+    expect(row.resource_type).toBe('api_key');
+    expect(row.outcome).toBe('success');
+    expect((row.metadata as any)?.projectId).toBe(project.id);
+    expect((row.metadata as any)?.name).toBe('Test Key');
+    expect((row.metadata as any)?.type).toBe('write');
+  });
+
+  it('invitation create produces user.invited with correct org and resource_type invitation', async () => {
+    const user = await createTestUser({ email: 'invite-audit@example.com', password: 'password123' });
+    const org = await createTestOrganization({ ownerId: user.id });
+    const session = await createTestSession(user.id);
+
+    await request(app.server)
+      .post(`/api/v1/invitations/${org.id}/invite`)
+      .set('Authorization', `Bearer ${session.token}`)
+      .send({ email: 'newmember@example.com', role: 'member' })
+      .expect(201);
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('action', '=', 'user.invited')
+      .execute();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.organization_id).toBe(org.id);
+    expect(row.actor_type).toBe('user');
+    expect(row.actor_id).toBe(user.id);
+    expect(row.resource_type).toBe('invitation');
+    expect(row.outcome).toBe('success');
+    expect((row.metadata as any)?.email).toBe('newmember@example.com');
+    expect((row.metadata as any)?.role).toBe('member');
   });
 });

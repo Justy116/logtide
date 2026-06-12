@@ -86,16 +86,10 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
         allowedOrigins: body.allowedOrigins ?? null,
       });
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'apikey.created',
+        target: { type: 'api_key', id: result.id },
         organizationId: project.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'create_api_key',
-        category: 'config_change',
-        resourceType: 'api_key',
-        resourceId: result.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { name: body.name, type: body.type, projectId },
       });
 
@@ -141,16 +135,10 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
         });
       }
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'apikey.revoked',
+        target: { type: 'api_key', id },
         organizationId: project.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'revoke_api_key',
-        category: 'config_change',
-        resourceType: 'api_key',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { projectId },
       });
 
