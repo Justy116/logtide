@@ -1556,6 +1556,7 @@ export class AdminService {
                 'name',
                 'slug',
                 'retention_days',
+                'audit_retention_days',
                 'created_at',
                 'updated_at',
             ])
@@ -1594,6 +1595,7 @@ export class AdminService {
         return {
             ...org,
             retentionDays: org.retention_days,
+            auditRetentionDays: org.audit_retention_days ?? null,
             members,
             projects,
         };

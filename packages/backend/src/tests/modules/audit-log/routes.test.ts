@@ -42,6 +42,8 @@ async function insertAuditEntry(overrides: {
   ip_address?: string | null;
   user_agent?: string | null;
   metadata?: Record<string, unknown> | null;
+  actor_type?: string | null;
+  outcome?: string | null;
 }) {
   return db
     .insertInto('audit_log')
@@ -56,6 +58,8 @@ async function insertAuditEntry(overrides: {
       ip_address: overrides.ip_address ?? '127.0.0.1',
       user_agent: overrides.user_agent ?? 'test-agent',
       metadata: overrides.metadata ?? null,
+      actor_type: (overrides.actor_type ?? null) as any,
+      outcome: (overrides.outcome ?? null) as any,
     })
     .returningAll()
     .executeTakeFirstOrThrow();
@@ -412,10 +416,14 @@ describe('Audit Log Routes', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body).toHaveProperty('actions');
-      expect(body.actions).toEqual(['create_project', 'delete_project']);
+      // registry union: create_project and delete_project are in the registry; result is sorted
+      expect(body.actions).toContain('create_project');
+      expect(body.actions).toContain('delete_project');
+      expect(body.actions).toContain('org.created');
+      expect(body.actions).toEqual([...body.actions].sort());
     });
 
-    it('should return empty actions array when no entries exist', async () => {
+    it('returns registry actions even when org has no entries', async () => {
       const response = await app.inject({
         method: 'GET',
         url: `/api/v1/admin/audit-log/actions?organizationId=${testOrg.id}`,
@@ -426,7 +434,9 @@ describe('Audit Log Routes', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
-      expect(body.actions).toEqual([]);
+      expect(body.actions.length).toBeGreaterThan(0);
+      expect(body.actions).toContain('org.created');
+      expect(body.actions).toEqual([...body.actions].sort());
     });
 
     it('should return 401 without auth token', async () => {
@@ -498,7 +508,7 @@ describe('Audit Log Routes', () => {
       expect(response.headers['content-disposition']).toContain('attachment; filename="audit-log-');
       
       const lines = response.payload.split('\n');
-      expect(lines[0]).toBe('Time,User,Category,Action,Resource Type,Resource ID,IP Address,User Agent,Details');
+      expect(lines[0]).toBe('Time,User,Actor Type,Outcome,Category,Action,Resource Type,Resource ID,IP Address,User Agent,Details');
       expect(lines[1]).toContain('test@example.com');
       expect(lines[1]).toContain('test_action');
       expect(lines[1]).toContain('config_change');
@@ -608,6 +618,88 @@ describe('Audit Log Routes', () => {
 
       expect(response.statusCode).toBe(200);
       expect(response.payload).toContain('"Action with, comma and ""quotes"""');
+    });
+
+    it('csv export includes actor type and outcome columns', async () => {
+      await insertAuditEntry({
+        organization_id: testOrg.id,
+        user_email: 'test@example.com',
+        action: 'test_action',
+        category: 'config_change',
+        actor_type: 'apiKey',
+        outcome: 'failure',
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/audit-log/export?organizationId=${testOrg.id}`,
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const lines = response.payload.split('\n');
+      expect(lines[0]).toBe('Time,User,Actor Type,Outcome,Category,Action,Resource Type,Resource ID,IP Address,User Agent,Details');
+      expect(lines[1]).toContain('apiKey');
+      expect(lines[1]).toContain('failure');
+    });
+  });
+
+  describe('GET /api/v1/admin/audit-log - actorType and outcome filters', () => {
+    it('filters by actorType and outcome', async () => {
+      // legacy row with null actor_type/outcome (normalizes to user/success)
+      await insertAuditEntry({
+        organization_id: testOrg.id,
+        user_id: adminUser.id,
+        action: 'legacy_row',
+        category: 'config_change',
+      });
+      // explicit apiKey failure row
+      await insertAuditEntry({
+        organization_id: testOrg.id,
+        user_id: null,
+        action: 'key_failure',
+        category: 'config_change',
+        actor_type: 'apiKey',
+        outcome: 'failure',
+      });
+
+      const byActorType = await app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/audit-log?organizationId=${testOrg.id}&actorType=apiKey`,
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      expect(byActorType.statusCode).toBe(200);
+      const byActorBody = JSON.parse(byActorType.payload);
+      expect(byActorBody.entries.map((e: any) => e.action)).toEqual(['key_failure']);
+
+      const byOutcome = await app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/audit-log?organizationId=${testOrg.id}&outcome=success`,
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      expect(byOutcome.statusCode).toBe(200);
+      const byOutcomeBody = JSON.parse(byOutcome.payload);
+      expect(byOutcomeBody.entries.map((e: any) => e.action)).toEqual(['legacy_row']);
+    });
+
+    it('rejects invalid actorType', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/audit-log?organizationId=${testOrg.id}&actorType=robot`,
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('rejects invalid outcome', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/audit-log?organizationId=${testOrg.id}&outcome=maybe`,
+        headers: { Authorization: `Bearer ${adminToken}` },
+      });
+      expect(response.statusCode).toBe(400);
     });
   });
 });

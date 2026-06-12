@@ -52,6 +52,7 @@
     let showDeleteDialog = $state(false);
     let deleting = $state(false);
     let retentionDays = $state(90);
+    let auditRetentionDays = $state<number | ''>('');
     let savingRetention = $state(false);
     let retentionError = $state("");
 
@@ -143,6 +144,7 @@
         try {
             org = await adminAPI.getOrganizationDetails(orgId);
             retentionDays = org.retentionDays || 90;
+            auditRetentionDays = org.auditRetentionDays ?? '';
         } catch (err: any) {
             error = err.message || "Failed to load organization";
         } finally {
@@ -156,12 +158,20 @@
             retentionError = "Retention must be between 1 and 365 days";
             return;
         }
+        const auditVal = auditRetentionDays === '' ? null : Number(auditRetentionDays);
+        if (auditVal !== null && (!Number.isInteger(auditVal) || auditVal < 1 || auditVal > 3650)) {
+            retentionError = "Audit retention must be between 1 and 3650 days, or empty for keep forever";
+            return;
+        }
 
         savingRetention = true;
         retentionError = "";
         try {
-            await adminAPI.updateOrganizationRetention(org.id, retentionDays);
-            org = { ...org, retentionDays };
+            await adminAPI.updateOrganizationRetention(org.id, {
+                retentionDays,
+                auditRetentionDays: auditVal,
+            });
+            org = { ...org, retentionDays, auditRetentionDays: auditVal };
         } catch (err: any) {
             retentionError = err.message || "Failed to update retention";
         } finally {
@@ -291,9 +301,22 @@
                                 class="w-32"
                             />
                         </div>
+                        <div class="space-y-2">
+                            <Label for="audit-retention-days">Audit Retention (days)</Label>
+                            <Input
+                                id="audit-retention-days"
+                                type="number"
+                                min="1"
+                                max="3650"
+                                placeholder="forever"
+                                bind:value={auditRetentionDays}
+                                disabled={savingRetention}
+                                class="w-32"
+                            />
+                        </div>
                         <Button
                             onclick={saveRetention}
-                            disabled={savingRetention || retentionDays === org.retentionDays}
+                            disabled={savingRetention || (retentionDays === org.retentionDays && (auditRetentionDays === '' ? null : Number(auditRetentionDays)) === org.auditRetentionDays)}
                         >
                             <Save class="h-4 w-4 mr-2" />
                             {savingRetention ? "Saving..." : "Save"}
@@ -304,7 +327,7 @@
                     {/if}
                     <p class="text-sm text-muted-foreground">
                         Logs older than {retentionDays} days will be automatically deleted during the daily cleanup.
-                        Valid range: 1-365 days.
+                        Valid range: 1-365 days. Audit log retention: 1-3650 days, or empty for keep forever.
                     </p>
                 </div>
             </CardContent>

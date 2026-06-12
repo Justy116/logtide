@@ -268,16 +268,10 @@ export async function adminRoutes(fastify: FastifyInstance) {
                     is_admin: is_admin === true,
                 });
 
-                auditLogService.log({
+                await auditLogService.record({
+                    action: 'user.created',
+                    target: { type: 'user', id: user.id },
                     organizationId: null,
-                    userId: (request as any).user?.id,
-                    userEmail: (request as any).user?.email,
-                    action: 'create_user',
-                    category: 'user_management',
-                    resourceType: 'user',
-                    resourceId: user.id,
-                    ipAddress: request.ip,
-                    userAgent: request.headers['user-agent'],
                     metadata: { targetEmail: user.email, is_admin: user.is_admin },
                 });
 
@@ -345,16 +339,10 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
                 const user = await adminService.updateUserStatus(id, disabled);
 
-                auditLogService.log({
+                await auditLogService.record({
+                    action: disabled ? 'user.disabled' : 'user.enabled',
+                    target: { type: 'user', id },
                     organizationId: null,
-                    userId: (request as any).user?.id,
-                    userEmail: (request as any).user?.email,
-                    action: disabled ? 'disable_user' : 'enable_user',
-                    category: 'user_management',
-                    resourceType: 'user',
-                    resourceId: id,
-                    ipAddress: request.ip,
-                    userAgent: request.headers['user-agent'],
                     metadata: { targetEmail: user.email },
                 });
 
@@ -400,17 +388,11 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
                 const user = await adminService.updateUserRole(id, is_admin);
 
-                auditLogService.log({
+                await auditLogService.record({
+                    action: 'user.role_changed',
+                    target: { type: 'user', id },
                     organizationId: null,
-                    userId: (request as any).user?.id,
-                    userEmail: (request as any).user?.email,
-                    action: 'update_user_role',
-                    category: 'user_management',
-                    resourceType: 'user',
-                    resourceId: id,
-                    ipAddress: request.ip,
-                    userAgent: request.headers['user-agent'],
-                    metadata: { is_admin, targetEmail: user.email },
+                    metadata: { is_admin, targetEmail: user.email, via: 'admin' },
                 });
 
                 return reply.send({
@@ -447,16 +429,10 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
                 const user = await adminService.resetUserPassword(id, newPassword);
 
-                auditLogService.log({
+                await auditLogService.record({
+                    action: 'user.password_reset',
+                    target: { type: 'user', id },
                     organizationId: null,
-                    userId: (request as any).user?.id,
-                    userEmail: (request as any).user?.email,
-                    action: 'reset_user_password',
-                    category: 'user_management',
-                    resourceType: 'user',
-                    resourceId: id,
-                    ipAddress: request.ip,
-                    userAgent: request.headers['user-agent'],
                     metadata: { targetEmail: user.email },
                 });
 
@@ -556,16 +532,11 @@ export async function adminRoutes(fastify: FastifyInstance) {
                 const { id } = request.params as { id: string };
                 const result = await adminService.deleteOrganization(id);
 
-                auditLogService.log({
+                await auditLogService.record({
+                    action: 'org.deleted',
+                    target: { type: 'organization', id },
                     organizationId: id,
-                    userId: (request as any).user?.id,
-                    userEmail: (request as any).user?.email,
-                    action: 'admin_delete_organization',
-                    category: 'data_modification',
-                    resourceType: 'organization',
-                    resourceId: id,
-                    ipAddress: request.ip,
-                    userAgent: request.headers['user-agent'],
+                    metadata: { via: 'admin' },
                 });
 
                 return reply.send(result);
@@ -662,16 +633,11 @@ export async function adminRoutes(fastify: FastifyInstance) {
                 const project = await adminService.getProjectDetails(id);
                 const result = await adminService.deleteProject(id);
 
-                auditLogService.log({
+                await auditLogService.record({
+                    action: 'project.deleted',
+                    target: { type: 'project', id },
                     organizationId: project.organization_id,
-                    userId: (request as any).user?.id,
-                    userEmail: (request as any).user?.email,
-                    action: 'admin_delete_project',
-                    category: 'data_modification',
-                    resourceType: 'project',
-                    resourceId: id,
-                    ipAddress: request.ip,
-                    userAgent: request.headers['user-agent'],
+                    metadata: { via: 'admin' },
                 });
 
                 return reply.send(result);

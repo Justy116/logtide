@@ -22,6 +22,7 @@ import { monitorService } from './modules/monitoring/index.js';
 import { maintenanceService } from './modules/maintenances/service.js';
 import { enrichmentService } from './modules/siem/enrichment-service.js';
 import { retentionService } from './modules/retention/index.js';
+import { auditLogService } from './modules/audit-log/index.js';
 import { sigmaSyncService } from './modules/sigma/sync-service.js';
 import { digestScheduler } from './modules/digests/scheduler.js';
 import { initializeWorkerLogging, shutdownInternalLogging, isInternalLoggingEnabled } from './utils/internal-logger.js';
@@ -532,6 +533,23 @@ async function runRetentionCleanup() {
             error: result.error,
           });
         }
+      }
+
+      const auditSummary = await retentionService.executeAuditRetentionForAllOrganizations();
+      console.log(`[Worker] Audit retention: ${auditSummary.totalEntriesDeleted} entries deleted across ${auditSummary.totalOrganizations} orgs`);
+      if (auditSummary.totalEntriesDeleted > 0) {
+        await auditLogService.record({
+          action: 'data.deleted',
+          organizationId: null,
+          target: { type: 'audit_log', id: null },
+          metadata: { scope: 'audit_retention', entriesDeleted: auditSummary.totalEntriesDeleted },
+        });
+      }
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('info', 'Audit retention cleanup completed', {
+          totalOrganizations: auditSummary.totalOrganizations,
+          totalEntriesDeleted: auditSummary.totalEntriesDeleted,
+        });
       }
     } catch (error) {
       console.error('Retention cleanup failed:', error);

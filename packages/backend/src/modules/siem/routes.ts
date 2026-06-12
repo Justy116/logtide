@@ -594,16 +594,10 @@ export async function siemRoutes(fastify: FastifyInstance) {
           }
         );
 
-        auditLogService.log({
+        await auditLogService.record({
+          action: body.status ? 'incident.status_changed' : 'incident.updated',
+          target: { type: 'incident', id: params.id },
           organizationId: body.organizationId,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: body.status ? `incident_status_${body.status}` : 'update_incident',
-          category: 'config_change',
-          resourceType: 'incident',
-          resourceId: params.id,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
           metadata: { status: body.status, severity: body.severity, assigneeId: body.assigneeId },
         });
 
@@ -681,16 +675,10 @@ export async function siemRoutes(fastify: FastifyInstance) {
 
         await siemService.deleteIncident(params.id, query.organizationId);
 
-        auditLogService.log({
+        await auditLogService.record({
+          action: 'incident.deleted',
+          target: { type: 'incident', id: params.id },
           organizationId: query.organizationId,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'delete_incident',
-          category: 'data_modification',
-          resourceType: 'incident',
-          resourceId: params.id,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
         });
 
         return reply.status(204).send();

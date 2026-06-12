@@ -84,7 +84,7 @@ describe('Alert CRUD audit logging', () => {
       .selectFrom('audit_log')
       .selectAll()
       .where('organization_id', '=', testOrganization.id)
-      .where('action', '=', 'create_alert_rule')
+      .where('action', '=', 'rule.created')
       .execute();
 
     expect(entries.length).toBeGreaterThan(0);
@@ -127,7 +127,7 @@ describe('Alert CRUD audit logging', () => {
       .selectFrom('audit_log')
       .selectAll()
       .where('organization_id', '=', testOrganization.id)
-      .where('action', '=', 'update_alert_rule')
+      .where('action', '=', 'rule.updated')
       .execute();
 
     expect(entries.length).toBeGreaterThan(0);
@@ -163,7 +163,7 @@ describe('Alert CRUD audit logging', () => {
       .selectFrom('audit_log')
       .selectAll()
       .where('organization_id', '=', testOrganization.id)
-      .where('action', '=', 'delete_alert_rule')
+      .where('action', '=', 'rule.deleted')
       .execute();
 
     expect(entries.length).toBeGreaterThan(0);

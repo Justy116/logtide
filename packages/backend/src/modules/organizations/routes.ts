@@ -131,16 +131,10 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
 
       await organizationsService.updateMemberRole(id, memberId, role as OrgRole, request.user.id);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'user.role_changed',
+        target: { type: 'organization_member', id: memberId },
         organizationId: id,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'update_member_role',
-        category: 'user_management',
-        resourceType: 'organization_member',
-        resourceId: memberId,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { role },
       });
 
@@ -187,16 +181,10 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
 
       await organizationsService.removeMember(id, memberId, request.user.id);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'user.removed',
+        target: { type: 'organization_member', id: memberId },
         organizationId: id,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'remove_member',
-        category: 'user_management',
-        resourceType: 'organization_member',
-        resourceId: memberId,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
       });
 
       return reply.status(204).send();
@@ -251,16 +239,10 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
 
       await organizationsService.leaveOrganization(id, request.user.id);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'user.left',
+        target: { type: 'organization', id },
         organizationId: id,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'leave_organization',
-        category: 'user_management',
-        resourceType: 'organization',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
       });
 
       return reply.status(204).send();
@@ -299,16 +281,10 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
         description: body.description,
       });
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'org.created',
+        target: { type: 'organization', id: organization.id },
         organizationId: organization.id,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'create_organization',
-        category: 'config_change',
-        resourceType: 'organization',
-        resourceId: organization.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { name: organization.name },
       });
 
@@ -341,16 +317,10 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
 
       const organization = await organizationsService.updateOrganization(id, request.user.id, body);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'org.updated',
+        target: { type: 'organization', id },
         organizationId: id,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'update_organization',
-        category: 'config_change',
-        resourceType: 'organization',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: body,
       });
 
@@ -398,16 +368,10 @@ export async function organizationsRoutes(fastify: FastifyInstance) {
 
       await organizationsService.deleteOrganization(id, request.user.id);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'org.deleted',
+        target: { type: 'organization', id },
         organizationId: id,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'delete_organization',
-        category: 'data_modification',
-        resourceType: 'organization',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
       });
 
       return reply.status(204).send();

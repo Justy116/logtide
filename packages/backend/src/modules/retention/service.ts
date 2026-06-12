@@ -8,6 +8,20 @@ import { hub } from '@logtide/core';
 // Types
 // ============================================================================
 
+// ============================================================================
+// Audit Retention Types
+// ============================================================================
+
+export interface AuditRetentionSummary {
+  totalOrganizations: number;
+  totalEntriesDeleted: number;
+  results: { organizationId: string; entriesDeleted: number; error?: string }[];
+}
+
+// ============================================================================
+// Log Retention Types
+// ============================================================================
+
 export interface RetentionExecutionResult {
   organizationId: string;
   organizationName: string;
@@ -519,6 +533,85 @@ export class RetentionService {
       totalExecutionTimeMs,
       results,
     };
+  }
+
+  // ============================================================================
+  // Audit Log Retention
+  // ============================================================================
+
+  /**
+   * Validate audit retention days value (1..3650 or null for keep-forever)
+   */
+  validateAuditRetentionDays(days: number | null): { valid: boolean; error?: string } {
+    if (days === null) return { valid: true };
+    if (!Number.isInteger(days)) return { valid: false, error: 'Audit retention days must be an integer' };
+    if (days < 1) return { valid: false, error: 'Audit retention days must be at least 1' };
+    if (days > 3650) return { valid: false, error: 'Audit retention days cannot exceed 3650' };
+    return { valid: true };
+  }
+
+  /**
+   * Update audit log retention policy for an organization (admin only).
+   * Pass null to revert to keep-forever (no expiry).
+   */
+  async updateOrganizationAuditRetention(
+    organizationId: string,
+    auditRetentionDays: number | null
+  ): Promise<{ success: boolean; auditRetentionDays: number | null }> {
+    const validation = this.validateAuditRetentionDays(auditRetentionDays);
+    if (!validation.valid) throw new Error(validation.error);
+
+    const org = await db
+      .selectFrom('organizations')
+      .select(['id'])
+      .where('id', '=', organizationId)
+      .executeTakeFirst();
+
+    if (!org) throw new Error('Organization not found');
+
+    await db
+      .updateTable('organizations')
+      .set({ audit_retention_days: auditRetentionDays, updated_at: new Date() })
+      .where('id', '=', organizationId)
+      .execute();
+
+    return { success: true, auditRetentionDays };
+  }
+
+  /**
+   * Delete audit_log entries older than each org's audit_retention_days window.
+   * Only orgs with a non-null audit_retention_days are processed.
+   * audit_log is a Postgres/TimescaleDB control-plane table; deleted with plain SQL.
+   */
+  async executeAuditRetentionForAllOrganizations(): Promise<AuditRetentionSummary> {
+    const orgs = await db
+      .selectFrom('organizations')
+      .select(['id', 'audit_retention_days'])
+      .where('audit_retention_days', 'is not', null)
+      .execute();
+
+    const results: AuditRetentionSummary['results'] = [];
+    let total = 0;
+
+    for (const org of orgs) {
+      try {
+        const res = await sql<{ count: string }>`
+          WITH deleted AS (
+            DELETE FROM audit_log
+            WHERE organization_id = ${org.id}
+              AND time < NOW() - make_interval(days => ${org.audit_retention_days})
+            RETURNING 1
+          ) SELECT COUNT(*)::text AS count FROM deleted
+        `.execute(db);
+        const deleted = Number(res.rows[0]?.count ?? 0);
+        total += deleted;
+        results.push({ organizationId: org.id, entriesDeleted: deleted });
+      } catch (err) {
+        results.push({ organizationId: org.id, entriesDeleted: 0, error: (err as Error).message });
+      }
+    }
+
+    return { totalOrganizations: orgs.length, totalEntriesDeleted: total, results };
   }
 }
 

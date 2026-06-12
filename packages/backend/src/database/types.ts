@@ -113,6 +113,7 @@ export interface OrganizationsTable {
   description: string | null;
   owner_id: string;
   retention_days: Generated<number>; // 1-365 days, default 90
+  audit_retention_days: number | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -955,6 +956,9 @@ export type AuditCategory =
   | 'user_management'
   | 'data_modification';
 
+export type AuditActorType = 'user' | 'apiKey' | 'system';
+export type AuditOutcome = 'success' | 'failure';
+
 export interface AuditLogTable {
   time: Generated<Timestamp>;
   id: Generated<string>;
@@ -972,6 +976,9 @@ export interface AuditLogTable {
     Record<string, unknown> | null,
     Record<string, unknown> | null
   >;
+  actor_type: AuditActorType | null;
+  actor_id: string | null;
+  outcome: AuditOutcome | null;
 }
 
 // ============================================================================

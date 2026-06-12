@@ -8,6 +8,7 @@ import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { webhookDeliveryService, redactDeliveryForApi } from './service.js';
 import { webhookDispatcher } from './dispatcher.js';
+import { auditLogService } from '../audit-log/service.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -102,6 +103,21 @@ export async function webhookDeliveriesRoutes(fastify: FastifyInstance) {
 
     const reset = await webhookDeliveryService.resetForReplay(id);
     await webhookDispatcher.enqueueExisting(id);
+
+    // host only: webhook URLs can embed credentials (e.g. Slack tokens)
+    let urlHost: string | null = null;
+    try {
+      urlHost = new URL(delivery.url).host;
+    } catch {
+      urlHost = null;
+    }
+    await auditLogService.record({
+      action: 'webhook.delivery_replayed',
+      target: { type: 'webhook_delivery', id },
+      organizationId: delivery.organization_id,
+      metadata: { eventType: delivery.event_type, urlHost },
+    });
+
     return reply.send({ delivery: redactDeliveryForApi(reset) });
   });
 }

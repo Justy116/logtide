@@ -164,16 +164,10 @@ export default async function piiMaskingRoutes(fastify: FastifyInstance) {
           projectId: request.body.projectId,
         });
 
-        auditLogService.log({
+        await auditLogService.record({
+          action: 'rule.created',
+          target: { type: 'pii_masking_rule', id: rule.id },
           organizationId,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'create_pii_rule',
-          category: 'config_change',
-          resourceType: 'pii_masking_rule',
-          resourceId: rule.id,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
           metadata: { name: request.body.name, action: request.body.action },
         });
 
@@ -240,18 +234,11 @@ export default async function piiMaskingRoutes(fastify: FastifyInstance) {
           request.body
         );
 
-        auditLogService.log({
+        const piiAction = request.body.enabled === true ? 'rule.enabled' as const : request.body.enabled === false ? 'rule.disabled' as const : 'rule.updated' as const;
+        await auditLogService.record({
+          action: piiAction,
+          target: { type: 'pii_masking_rule', id: request.params.id },
           organizationId,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: request.body.enabled !== undefined
-            ? (request.body.enabled ? 'enable_pii_rule' : 'disable_pii_rule')
-            : 'update_pii_rule',
-          category: 'config_change',
-          resourceType: 'pii_masking_rule',
-          resourceId: request.params.id,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
           metadata: request.body,
         });
 
@@ -298,16 +285,10 @@ export default async function piiMaskingRoutes(fastify: FastifyInstance) {
       try {
         await piiMaskingService.deleteRule(request.params.id, organizationId);
 
-        auditLogService.log({
+        await auditLogService.record({
+          action: 'rule.deleted',
+          target: { type: 'pii_masking_rule', id: request.params.id },
           organizationId,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'delete_pii_rule',
-          category: 'config_change',
-          resourceType: 'pii_masking_rule',
-          resourceId: request.params.id,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
         });
 
         return reply.send({ success: true, message: 'Rule deleted' });

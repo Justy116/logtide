@@ -11,6 +11,7 @@ import type { NotificationEventType } from '@logtide/shared';
 import { context } from '@logtide/shared/context';
 import { assertWithinLimit } from '../../capabilities/index.js';
 import { CapabilityError } from '../../capabilities/errors.js';
+import { auditLogService } from '../audit-log/service.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -185,6 +186,13 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         request.user.id
       );
 
+      await auditLogService.record({
+        action: 'channel.created',
+        target: { type: 'notification_channel', id: channel.id },
+        organizationId,
+        metadata: { name: channel.name, type: channel.type },
+      });
+
       return reply.status(201).send({ channel });
     } catch (error) {
       if (error instanceof CapabilityError) {
@@ -223,6 +231,13 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
 
       const channel = await notificationChannelsService.updateChannel(id, organizationId, body);
 
+      await auditLogService.record({
+        action: 'channel.updated',
+        target: { type: 'notification_channel', id: channel.id },
+        organizationId,
+        metadata: { name: channel.name, type: channel.type },
+      });
+
       return reply.send({ channel });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -259,6 +274,12 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
       if (!deleted) {
         return reply.status(404).send({ error: 'Channel not found' });
       }
+
+      await auditLogService.record({
+        action: 'channel.deleted',
+        target: { type: 'notification_channel', id },
+        organizationId,
+      });
 
       return reply.status(204).send();
     } catch (error) {

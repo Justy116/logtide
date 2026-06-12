@@ -1,18 +1,16 @@
 import { db } from '../../database/index.js';
-import type { AuditCategory } from '../../database/types.js';
+import type { Transaction } from 'kysely';
+import { sql } from 'kysely';
+import type { AuditCategory, Database, AuditActorType, AuditOutcome } from '../../database/types.js';
+import { context } from '@logtide/shared/context';
+import { hub } from '@logtide/core';
+import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
+import { categoryFor, AUDIT_ACTIONS, type AuditAction } from './actions.js';
 
-export interface AuditLogEntry {
-  organizationId: string | null;
-  userId?: string | null;
-  userEmail?: string | null;
-  action: string;
-  category: AuditCategory;
-  resourceType?: string | null;
-  resourceId?: string | null;
-  ipAddress?: string | null;
-  userAgent?: string | null;
-  metadata?: Record<string, unknown> | null;
-}
+// Read-time normalization expressions for legacy rows (actor_type/outcome may be NULL).
+const actorTypeExpr = sql<string>`COALESCE(actor_type, CASE WHEN user_id IS NULL THEN 'system' ELSE 'user' END)`;
+const actorIdExpr = sql<string | null>`COALESCE(actor_id, user_id)`;
+const outcomeExpr = sql<string>`COALESCE(outcome, 'success')`;
 
 export interface AuditLogQueryParams {
   organizationId: string;
@@ -20,6 +18,8 @@ export interface AuditLogQueryParams {
   action?: string;
   resourceType?: string;
   userId?: string;
+  actorType?: AuditActorType;
+  outcome?: AuditOutcome;
   from?: Date;
   to?: Date;
   limit?: number;
@@ -39,6 +39,11 @@ export interface AuditLogRow {
   ip_address: string | null;
   user_agent: string | null;
   metadata: Record<string, unknown> | null;
+  /** Normalized at read time; never null (legacy rows default to 'user'/'system'). */
+  actor_type: string;
+  actor_id: string | null;
+  /** Normalized at read time; never null (legacy rows default to 'success'). */
+  outcome: string;
 }
 
 export interface AuditLogResult {
@@ -46,11 +51,53 @@ export interface AuditLogResult {
   total: number;
 }
 
+export interface AuditTarget {
+  type: string;
+  id: string | null;
+}
+
+export interface RecordInput {
+  action: AuditAction;
+  target?: AuditTarget;
+  outcome?: AuditOutcome;
+  metadata?: Record<string, unknown> | null;
+  /** Override for flows without a usable request context (e.g. failed login). */
+  actor?: { type: AuditActorType; id: string | null; label?: string | null };
+  /** Override; otherwise taken from the request context. */
+  organizationId?: string | null;
+}
+
+export interface RecordOptions {
+  /** Record atomically with the caller's transaction. */
+  trx?: Transaction<Database>;
+  /**
+   * High-volume paths only (query access logs): use the flush buffer.
+   * Mutually exclusive with `trx`; when `buffered` is set, `trx` is ignored.
+   */
+  buffered?: boolean;
+}
+
+type AuditRow = {
+  organization_id: string | null;
+  actor_type: AuditActorType;
+  actor_id: string | null;
+  user_id: string | null;
+  user_email: string | null;
+  action: string;
+  category: AuditCategory;
+  resource_type: string | null;
+  resource_id: string | null;
+  outcome: AuditOutcome;
+  ip_address: string | null;
+  user_agent: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
 const BUFFER_MAX = 50;
 const FLUSH_INTERVAL_MS = 1000;
 
 export class AuditLogService {
-  private buffer: AuditLogEntry[] = [];
+  private buffer: AuditRow[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private flushing = false;
 
@@ -58,10 +105,60 @@ export class AuditLogService {
     this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
   }
 
-  log(entry: AuditLogEntry): void {
-    this.buffer.push(entry);
+  private bufferRow(row: AuditRow): void {
+    this.buffer.push(row);
     if (this.buffer.length >= BUFFER_MAX) {
       void this.flush();
+    }
+  }
+
+  private buildRow(input: RecordInput): AuditRow {
+    const ctx = context.currentOrNull();
+    const actor =
+      input.actor ??
+      (ctx
+        ? {
+            type: ctx.actor.type,
+            id: ctx.actor.id,
+            label: ctx.actor.type === 'user' ? (ctx.actor.email ?? null) : null,
+          }
+        : { type: 'system' as const, id: null, label: null });
+
+    return {
+      organization_id:
+        input.organizationId !== undefined ? input.organizationId : (ctx?.organizationId ?? null),
+      actor_type: actor.type,
+      actor_id: actor.id,
+      user_id: actor.type === 'user' ? actor.id : null,
+      user_email: actor.label ?? null,
+      action: input.action,
+      category: categoryFor(input.action),
+      resource_type: input.target?.type ?? null,
+      resource_id: input.target?.id ?? null,
+      outcome: input.outcome ?? 'success',
+      ip_address: ctx?.ip ?? null,
+      user_agent: ctx?.userAgent ?? null,
+      metadata: input.metadata ?? null,
+    };
+  }
+
+  async record(input: RecordInput, opts: RecordOptions = {}): Promise<void> {
+    const row = this.buildRow(input);
+
+    if (opts.buffered) {
+      this.bufferRow(row);
+      return;
+    }
+
+    try {
+      await (opts.trx ?? db).insertInto('audit_log').values(row).execute();
+    } catch (err) {
+      if (opts.trx) throw err; // inside a transaction the caller owns failure
+      console.error('[AuditLog] record error:', err);
+      /* v8 ignore next 3 -- telemetry, disabled in tests */
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('error', 'audit record failed', { action: input.action });
+      }
     }
   }
 
@@ -77,20 +174,7 @@ export class AuditLogService {
     try {
       await db
         .insertInto('audit_log')
-        .values(
-          toInsert.map((e) => ({
-            organization_id: e.organizationId,
-            user_id: e.userId ?? null,
-            user_email: e.userEmail ?? null,
-            action: e.action,
-            category: e.category,
-            resource_type: e.resourceType ?? null,
-            resource_id: e.resourceId ?? null,
-            ip_address: e.ipAddress ?? null,
-            user_agent: e.userAgent ?? null,
-            metadata: e.metadata ?? null,
-          }))
-        )
+        .values(toInsert)
         .execute();
     } catch (err) {
       console.error('[AuditLog] flush error:', err);
@@ -120,6 +204,12 @@ export class AuditLogService {
     if (params.userId) {
       baseQuery = baseQuery.where('user_id', '=', params.userId);
     }
+    if (params.actorType) {
+      baseQuery = baseQuery.where(actorTypeExpr, '=', params.actorType);
+    }
+    if (params.outcome) {
+      baseQuery = baseQuery.where(outcomeExpr, '=', params.outcome);
+    }
     if (params.from) {
       baseQuery = baseQuery.where('time', '>=', params.from);
     }
@@ -129,7 +219,23 @@ export class AuditLogService {
 
     const [entries, countResult] = await Promise.all([
       baseQuery
-        .selectAll()
+        .select([
+          'id',
+          'time',
+          'organization_id',
+          'user_id',
+          'user_email',
+          'action',
+          'category',
+          'resource_type',
+          'resource_id',
+          'ip_address',
+          'user_agent',
+          'metadata',
+          actorTypeExpr.as('actor_type'),
+          actorIdExpr.as('actor_id'),
+          outcomeExpr.as('outcome'),
+        ])
         .orderBy('time', 'desc')
         .limit(limit)
         .offset(offset)
@@ -151,9 +257,9 @@ export class AuditLogService {
       .select('action')
       .distinct()
       .where('organization_id', '=', organizationId)
-      .orderBy('action')
       .execute();
-    return results.map((r) => r.action);
+    const dbActions = results.map((r) => r.action);
+    return Array.from(new Set([...Object.keys(AUDIT_ACTIONS), ...dbActions])).sort();
   }
 
   async shutdown(): Promise<void> {

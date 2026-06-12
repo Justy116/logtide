@@ -213,16 +213,10 @@ export async function alertsRoutes(fastify: FastifyInstance) {
 
       const enrichedRule = await enrichAlertRuleWithChannels(alertRule);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'rule.created',
+        target: { type: 'alert_rule', id: alertRule.id },
         organizationId: body.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'create_alert_rule',
-        category: 'config_change',
-        resourceType: 'alert_rule',
-        resourceId: alertRule.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { name: alertRule.name, threshold: alertRule.threshold },
       });
 
@@ -420,16 +414,10 @@ export async function alertsRoutes(fastify: FastifyInstance) {
 
       const enrichedRule = await enrichAlertRuleWithChannels(alertRule);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'rule.updated',
+        target: { type: 'alert_rule', id },
         organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'update_alert_rule',
-        category: 'config_change',
-        resourceType: 'alert_rule',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { updatedFields: Object.keys(body) },
       });
 
@@ -468,16 +456,10 @@ export async function alertsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'rule.deleted',
+        target: { type: 'alert_rule', id },
         organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'delete_alert_rule',
-        category: 'config_change',
-        resourceType: 'alert_rule',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
       });
 
       return reply.status(204).send();

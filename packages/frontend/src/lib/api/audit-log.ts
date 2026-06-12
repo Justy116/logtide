@@ -2,6 +2,8 @@ import { getApiBaseUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
 
 export type AuditCategory = 'log_access' | 'config_change' | 'user_management' | 'data_modification';
+export type AuditActorType = 'user' | 'apiKey' | 'system';
+export type AuditOutcome = 'success' | 'failure';
 
 export interface AuditLogEntry {
   id: string;
@@ -9,6 +11,9 @@ export interface AuditLogEntry {
   organization_id: string | null;
   user_id: string | null;
   user_email: string | null;
+  actor_type: AuditActorType;
+  actor_id: string | null;
+  outcome: AuditOutcome;
   action: string;
   category: AuditCategory;
   resource_type: string | null;
@@ -24,6 +29,8 @@ export interface AuditLogFilters {
   action?: string;
   resourceType?: string;
   userId?: string;
+  actorType?: AuditActorType;
+  outcome?: AuditOutcome;
   from?: string;
   to?: string;
   limit?: number;
@@ -59,6 +66,8 @@ export async function getAuditLog(filters: AuditLogFilters): Promise<AuditLogRes
   if (filters.action) params.set('action', filters.action);
   if (filters.resourceType) params.set('resourceType', filters.resourceType);
   if (filters.userId) params.set('userId', filters.userId);
+  if (filters.actorType) params.set('actorType', filters.actorType);
+  if (filters.outcome) params.set('outcome', filters.outcome);
   if (filters.from) params.set('from', filters.from);
   if (filters.to) params.set('to', filters.to);
   if (filters.limit != null) params.set('limit', String(filters.limit));
@@ -78,6 +87,8 @@ export interface AuditLogExportFilters {
   organizationId: string;
   category?: AuditCategory;
   action?: string;
+  actorType?: AuditActorType;
+  outcome?: AuditOutcome;
   from?: string;
   to?: string;
 }
@@ -86,6 +97,8 @@ export async function exportAuditLogCsv(filters: AuditLogExportFilters): Promise
   const params = new URLSearchParams({ organizationId: filters.organizationId });
   if (filters.category) params.set('category', filters.category);
   if (filters.action) params.set('action', filters.action);
+  if (filters.actorType) params.set('actorType', filters.actorType);
+  if (filters.outcome) params.set('outcome', filters.outcome);
   if (filters.from) params.set('from', filters.from);
   if (filters.to) params.set('to', filters.to);
 

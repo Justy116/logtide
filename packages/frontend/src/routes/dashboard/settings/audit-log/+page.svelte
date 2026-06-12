@@ -10,6 +10,8 @@
 		exportAuditLogCsv,
 		type AuditLogEntry,
 		type AuditCategory,
+		type AuditActorType,
+		type AuditOutcome,
 	} from '$lib/api/audit-log';
 	import {
 		Card,
@@ -27,6 +29,7 @@
 	} from '$lib/components/ui/table';
 	import { Button } from '$lib/components/ui/button';
 	import Spinner from '$lib/components/Spinner.svelte';
+	import TimeRangePicker from '$lib/components/TimeRangePicker.svelte';
 	import type { OrganizationWithRole } from '@logtide/shared';
 	import { canManageMembers } from '@logtide/shared';
 	import ClipboardList from '@lucide/svelte/icons/clipboard-list';
@@ -74,6 +77,10 @@
 	// Filters
 	let categoryFilter = $state<AuditCategory | ''>('');
 	let actionFilter = $state('');
+	let actorTypeFilter = $state<AuditActorType | ''>('');
+	let outcomeFilter = $state<AuditOutcome | ''>('');
+	let fromFilter = $state('');
+	let toFilter = $state('');
 
 	// Pagination
 	let currentPage = $state(1);
@@ -119,6 +126,10 @@
 				organizationId: currentOrg.id,
 				category: categoryFilter || undefined,
 				action: actionFilter || undefined,
+				actorType: actorTypeFilter || undefined,
+				outcome: outcomeFilter || undefined,
+				from: fromFilter || undefined,
+				to: toFilter || undefined,
 				limit: pageSize,
 				offset: (currentPage - 1) * pageSize,
 			});
@@ -148,6 +159,10 @@
 	function clearFilters() {
 		categoryFilter = '';
 		actionFilter = '';
+		actorTypeFilter = '';
+		outcomeFilter = '';
+		fromFilter = '';
+		toFilter = '';
 		currentPage = 1;
 		void loadEntries();
 	}
@@ -160,6 +175,10 @@
 				organizationId: currentOrg.id,
 				category: categoryFilter || undefined,
 				action: actionFilter || undefined,
+				actorType: actorTypeFilter || undefined,
+				outcome: outcomeFilter || undefined,
+				from: fromFilter || undefined,
+				to: toFilter || undefined,
 			});
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to export';
@@ -206,7 +225,11 @@
 	}
 
 	function describeEntry(entry: AuditLogEntry): string {
-		const actor = entry.user_email ?? 'Unknown user';
+		const actor = entry.actor_type === 'apiKey'
+			? (entry.actor_id ? `api key ${entry.actor_id.slice(0, 8)}` : 'api key')
+			: entry.actor_type === 'system'
+			? 'system'
+			: (entry.user_email ?? 'unknown user');
 		const action = formatAction(entry.action);
 		const resource = entry.resource_type ?? '';
 		const meta = entry.metadata;
@@ -323,11 +346,55 @@
 						</select>
 					</div>
 
-					{#if categoryFilter || actionFilter}
+					<div class="space-y-1">
+						<label for="actor-type-filter" class="text-xs font-medium text-muted-foreground"
+							>Actor Type</label
+						>
+						<select
+							id="actor-type-filter"
+							bind:value={actorTypeFilter}
+							onchange={applyFilters}
+							class="flex h-9 w-36 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						>
+							<option value="">All actors</option>
+							<option value="user">User</option>
+							<option value="apiKey">API Key</option>
+							<option value="system">System</option>
+						</select>
+					</div>
+
+					<div class="space-y-1">
+						<label for="outcome-filter" class="text-xs font-medium text-muted-foreground"
+							>Outcome</label
+						>
+						<select
+							id="outcome-filter"
+							bind:value={outcomeFilter}
+							onchange={applyFilters}
+							class="flex h-9 w-32 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						>
+							<option value="">All outcomes</option>
+							<option value="success">Success</option>
+							<option value="failure">Failure</option>
+						</select>
+					</div>
+
+					{#if categoryFilter || actionFilter || actorTypeFilter || outcomeFilter || fromFilter || toFilter}
 						<Button variant="ghost" size="sm" onclick={clearFilters} class="h-9">
 							Clear
 						</Button>
 					{/if}
+				</div>
+
+				<div class="mt-4">
+					<TimeRangePicker
+						initialType="custom"
+						onchange={(range) => {
+							fromFilter = range.from.toISOString();
+							toFilter = range.to.toISOString();
+							applyFilters();
+						}}
+					/>
 				</div>
 			</CardContent>
 		</Card>
@@ -358,9 +425,10 @@
 								<TableRow>
 									<TableHead class="w-[30px]"></TableHead>
 									<TableHead class="w-[170px]">Time</TableHead>
-									<TableHead>User</TableHead>
+									<TableHead>Actor</TableHead>
 									<TableHead>Category</TableHead>
 									<TableHead>Action</TableHead>
+									<TableHead>Outcome</TableHead>
 									<TableHead>Resource</TableHead>
 									<TableHead>IP Address</TableHead>
 								</TableRow>
@@ -385,7 +453,16 @@
 											{formatDate(entry.time)}
 										</TableCell>
 										<TableCell class="text-sm">
-											{entry.user_email ?? '\u2014'}
+											{#if entry.actor_type === 'apiKey'}
+												<span class="text-muted-foreground">{entry.actor_id ? entry.actor_id.slice(0, 8) + '\u2026' : 'api key'}</span>
+												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">api key</span>
+											{:else if entry.actor_type === 'system'}
+												<span class="text-muted-foreground">system</span>
+												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">system</span>
+											{:else}
+												{entry.user_email ?? '\u2014'}
+												<span class="ml-1 inline-flex rounded-full px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">user</span>
+											{/if}
 										</TableCell>
 										<TableCell>
 											<span
@@ -396,6 +473,13 @@
 										</TableCell>
 										<TableCell class="font-mono text-sm">
 											{formatAction(entry.action)}
+										</TableCell>
+										<TableCell>
+											{#if entry.outcome === 'failure'}
+												<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">failure</span>
+											{:else}
+												<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">success</span>
+											{/if}
 										</TableCell>
 										<TableCell class="text-sm">
 											{#if entry.resource_type}
@@ -417,7 +501,7 @@
 									</TableRow>
 									{#if isExpanded}
 										<TableRow class="hover:bg-transparent">
-											<TableCell colspan={7} class="p-0">
+											<TableCell colspan={8} class="p-0">
 												<div class="bg-muted/30 mx-6 mb-4 mt-1 rounded-md px-5 py-4">
 													<p class="text-sm mb-3">{describeEntry(entry)}</p>
 													<div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 text-sm">
