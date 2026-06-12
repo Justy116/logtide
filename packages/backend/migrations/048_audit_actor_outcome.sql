@@ -33,3 +33,8 @@ BEGIN
       CHECK (audit_retention_days IS NULL OR (audit_retention_days >= 1 AND audit_retention_days <= 3650));
   END IF;
 END $$;
+
+-- Migration 025 added a platform-wide 365-day Timescale retention policy on
+-- audit_log. That contradicts per-org audit retention (NULL = keep forever):
+-- the per-org daily cleanup is now the only deletion path.
+SELECT remove_retention_policy('audit_log', if_exists => TRUE);

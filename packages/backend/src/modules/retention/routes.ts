@@ -137,12 +137,14 @@ export async function retentionRoutes(fastify: FastifyInstance) {
         const summary = await retentionService.executeRetentionForAllOrganizations();
         const auditSummary = await retentionService.executeAuditRetentionForAllOrganizations();
 
-        await auditLogService.record({
-          action: 'data.deleted',
-          organizationId: null,
-          target: { type: 'audit_log', id: null },
-          metadata: { scope: 'audit_retention', entriesDeleted: auditSummary.totalEntriesDeleted },
-        });
+        if (auditSummary.totalEntriesDeleted > 0) {
+          await auditLogService.record({
+            action: 'data.deleted',
+            organizationId: null,
+            target: { type: 'audit_log', id: null },
+            metadata: { scope: 'audit_retention', entriesDeleted: auditSummary.totalEntriesDeleted },
+          });
+        }
 
         return reply.send({
           message: 'Retention cleanup executed successfully',

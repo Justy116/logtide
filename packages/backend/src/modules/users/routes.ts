@@ -285,6 +285,8 @@ export async function usersRoutes(fastify: FastifyInstance) {
         action: 'user.profile_updated',
         organizationId: null,
         target: { type: 'user', id: updatedUser.id },
+        // field names only, never values (currentPassword/newPassword are in body)
+        metadata: { fields: Object.keys(body) },
       });
 
       return reply.send({
