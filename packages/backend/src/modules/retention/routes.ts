@@ -3,11 +3,17 @@ import { z } from 'zod';
 import { retentionService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { requireAdmin } from '../admin/middleware.js';
+import { auditLogService } from '../audit-log/index.js';
 
 // Validation schemas
-const updateRetentionSchema = z.object({
-  retentionDays: z.number().int().min(1).max(365),
-});
+const updateRetentionSchema = z
+  .object({
+    retentionDays: z.number().int().min(1).max(365).optional(),
+    auditRetentionDays: z.number().int().min(1).max(3650).nullable().optional(),
+  })
+  .refine((b) => b.retentionDays !== undefined || b.auditRetentionDays !== undefined, {
+    message: 'At least one of retentionDays or auditRetentionDays is required',
+  });
 
 export async function retentionRoutes(fastify: FastifyInstance) {
   // All routes require authentication
@@ -37,19 +43,35 @@ export async function retentionRoutes(fastify: FastifyInstance) {
         const { id } = request.params as { id: string };
         const body = updateRetentionSchema.parse(request.body);
 
-        const result = await retentionService.updateOrganizationRetention(
-          id,
-          body.retentionDays
-        );
-
-        return reply.send({
+        const response: Record<string, unknown> = {
           message: 'Retention policy updated successfully',
-          ...result,
+        };
+
+        if (body.retentionDays !== undefined) {
+          const result = await retentionService.updateOrganizationRetention(id, body.retentionDays);
+          Object.assign(response, result);
+        }
+
+        if (body.auditRetentionDays !== undefined) {
+          const auditResult = await retentionService.updateOrganizationAuditRetention(id, body.auditRetentionDays);
+          response.auditRetentionDays = auditResult.auditRetentionDays;
+        }
+
+        await auditLogService.record({
+          action: 'org.retention_updated',
+          organizationId: id,
+          target: { type: 'organization', id },
+          metadata: {
+            ...(body.retentionDays !== undefined ? { retentionDays: body.retentionDays } : {}),
+            ...(body.auditRetentionDays !== undefined ? { auditRetentionDays: body.auditRetentionDays } : {}),
+          },
         });
+
+        return reply.send(response);
       } catch (error: any) {
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
-            error: 'Invalid retention days. Must be an integer between 1 and 365.',
+            error: 'Invalid retention configuration. retentionDays must be 1-365; auditRetentionDays must be 1-3650 or null.',
           });
         }
         if (error.message === 'Organization not found') {
@@ -75,8 +97,19 @@ export async function retentionRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       try {
         const { id } = request.params as { id: string };
-        const status = await retentionService.getOrganizationRetentionStatus(id);
-        return reply.send(status);
+        const [status, org] = await Promise.all([
+          retentionService.getOrganizationRetentionStatus(id),
+          // Fetch audit_retention_days alongside (not in getOrganizationRetentionStatus to stay backward-compat)
+          (async () => {
+            const { db } = await import('../../database/index.js');
+            return db
+              .selectFrom('organizations')
+              .select('audit_retention_days')
+              .where('id', '=', id)
+              .executeTakeFirst();
+          })(),
+        ]);
+        return reply.send({ ...status, auditRetentionDays: org?.audit_retention_days ?? null });
       } catch (error: any) {
         if (error.message === 'Organization not found') {
           return reply.status(404).send({ error: error.message });
@@ -104,9 +137,19 @@ export async function retentionRoutes(fastify: FastifyInstance) {
     async (_request, reply) => {
       try {
         const summary = await retentionService.executeRetentionForAllOrganizations();
+        const auditSummary = await retentionService.executeAuditRetentionForAllOrganizations();
+
+        await auditLogService.record({
+          action: 'data.deleted',
+          organizationId: null,
+          target: { type: 'audit_log', id: null },
+          metadata: { scope: 'audit_retention', entriesDeleted: auditSummary.totalEntriesDeleted },
+        });
+
         return reply.send({
           message: 'Retention cleanup executed successfully',
           ...summary,
+          auditRetention: auditSummary,
         });
       } catch (error) {
         console.error('Error executing retention cleanup:', error);

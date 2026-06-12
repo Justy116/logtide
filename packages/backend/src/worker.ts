@@ -533,6 +533,15 @@ async function runRetentionCleanup() {
           });
         }
       }
+
+      const auditSummary = await retentionService.executeAuditRetentionForAllOrganizations();
+      console.log(`[Worker] Audit retention: ${auditSummary.totalEntriesDeleted} entries deleted across ${auditSummary.totalOrganizations} orgs`);
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('info', 'Audit retention cleanup completed', {
+          totalOrganizations: auditSummary.totalOrganizations,
+          totalEntriesDeleted: auditSummary.totalEntriesDeleted,
+        });
+      }
     } catch (error) {
       console.error('Retention cleanup failed:', error);
 
