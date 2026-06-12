@@ -212,3 +212,66 @@ describe('org project apikey audit records', () => {
     expect((row.metadata as any)?.role).toBe('member');
   });
 });
+
+const VALID_SIGMA_YAML = `
+title: Audit Test Rule
+status: stable
+level: medium
+logsource:
+    product: linux
+detection:
+    selection:
+        message|contains: 'suspicious'
+    condition: selection
+`;
+
+describe('rule audit records', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await build();
+    await app.ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(async () => {
+    await truncateAllTables();
+    await db.deleteFrom('audit_log').execute();
+  });
+
+  it('sigma rule import via API produces rule.imported row with resource_type sigma_rule, actor_type user, outcome success', async () => {
+    const user = await createTestUser({ email: 'sigma-audit@example.com', password: 'password123' });
+    const org = await createTestOrganization({ ownerId: user.id });
+    const session = await createTestSession(user.id);
+
+    const res = await request(app.server)
+      .post('/api/v1/sigma/import')
+      .set('Authorization', `Bearer ${session.token}`)
+      .send({
+        yaml: VALID_SIGMA_YAML,
+        organizationId: org.id,
+        createAlertRule: false,
+      })
+      .expect(200);
+
+    expect(res.body.sigmaRule).toBeDefined();
+
+    const rows = await db
+      .selectFrom('audit_log')
+      .selectAll()
+      .where('action', '=', 'rule.imported')
+      .execute();
+
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.actor_type).toBe('user');
+    expect(row.actor_id).toBe(user.id);
+    expect(row.outcome).toBe('success');
+    expect(row.resource_type).toBe('sigma_rule');
+    expect(row.organization_id).toBe(org.id);
+    expect(row.resource_id).toBe(res.body.sigmaRule.id);
+  });
+});

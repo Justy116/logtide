@@ -112,16 +112,10 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
           return reply.code(400).send(result);
         }
 
-        auditLogService.log({
+        await auditLogService.record({
+          action: 'rule.imported',
+          target: { type: 'sigma_rule', id: result.sigmaRule?.id ?? null },
           organizationId: body.organizationId,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'import_sigma_rule',
-          category: 'config_change',
-          resourceType: 'sigma_rule',
-          resourceId: result.sigmaRule?.id,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
           metadata: { title: result.sigmaRule?.title },
         });
 
@@ -368,16 +362,11 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
       // Fetch updated rule to return
       const updatedRule = await sigmaService.getSigmaRuleById(params.id, body.organizationId);
 
-      auditLogService.log({
+      const sigmaAction = body.enabled === true ? 'rule.enabled' as const : body.enabled === false ? 'rule.disabled' as const : 'rule.updated' as const;
+      await auditLogService.record({
+        action: sigmaAction,
+        target: { type: 'sigma_rule', id: params.id },
         organizationId: body.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: body.enabled !== undefined ? (body.enabled ? 'enable_sigma_rule' : 'disable_sigma_rule') : 'update_sigma_rule',
-        category: 'config_change',
-        resourceType: 'sigma_rule',
-        resourceId: params.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { enabled: body.enabled, channelIds: body.channelIds },
       });
 
@@ -468,16 +457,10 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         throw error;
       }
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'rule.deleted',
+        target: { type: 'sigma_rule', id: params.id },
         organizationId: query.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'delete_sigma_rule',
-        category: 'config_change',
-        resourceType: 'sigma_rule',
-        resourceId: params.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
       });
 
       return reply.send({ success: true });
