@@ -1,5 +1,10 @@
 import { db } from '../../database/index.js';
-import type { AuditCategory } from '../../database/types.js';
+import type { Transaction } from 'kysely';
+import type { AuditCategory, Database, AuditActorType, AuditOutcome } from '../../database/types.js';
+import { context } from '@logtide/shared/context';
+import { hub } from '@logtide/core';
+import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
+import { categoryFor, type AuditAction } from './actions.js';
 
 export interface AuditLogEntry {
   organizationId: string | null;
@@ -46,11 +51,50 @@ export interface AuditLogResult {
   total: number;
 }
 
+export interface AuditTarget {
+  type: string;
+  id: string | null;
+}
+
+export interface RecordInput {
+  action: AuditAction;
+  target?: AuditTarget;
+  outcome?: AuditOutcome;
+  metadata?: Record<string, unknown> | null;
+  /** Override for flows without a usable request context (e.g. failed login). */
+  actor?: { type: AuditActorType; id: string | null; label?: string | null };
+  /** Override; otherwise taken from the request context. */
+  organizationId?: string | null;
+}
+
+export interface RecordOptions {
+  /** Record atomically with the caller's transaction. */
+  trx?: Transaction<Database>;
+  /** High-volume paths only (query access logs): use the flush buffer. */
+  buffered?: boolean;
+}
+
+type AuditRow = {
+  organization_id: string | null;
+  actor_type: AuditActorType;
+  actor_id: string | null;
+  user_id: string | null;
+  user_email: string | null;
+  action: string;
+  category: AuditCategory;
+  resource_type: string | null;
+  resource_id: string | null;
+  outcome: AuditOutcome;
+  ip_address: string | null;
+  user_agent: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
 const BUFFER_MAX = 50;
 const FLUSH_INTERVAL_MS = 1000;
 
 export class AuditLogService {
-  private buffer: AuditLogEntry[] = [];
+  private buffer: AuditRow[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private flushing = false;
 
@@ -59,9 +103,77 @@ export class AuditLogService {
   }
 
   log(entry: AuditLogEntry): void {
-    this.buffer.push(entry);
+    this.bufferRow({
+      organization_id: entry.organizationId,
+      actor_type: entry.userId ? 'user' : 'system',
+      actor_id: entry.userId ?? null,
+      user_id: entry.userId ?? null,
+      user_email: entry.userEmail ?? null,
+      action: entry.action,
+      category: entry.category,
+      resource_type: entry.resourceType ?? null,
+      resource_id: entry.resourceId ?? null,
+      outcome: 'success',
+      ip_address: entry.ipAddress ?? null,
+      user_agent: entry.userAgent ?? null,
+      metadata: entry.metadata ?? null,
+    });
+  }
+
+  private bufferRow(row: AuditRow): void {
+    this.buffer.push(row);
     if (this.buffer.length >= BUFFER_MAX) {
       void this.flush();
+    }
+  }
+
+  private buildRow(input: RecordInput): AuditRow {
+    const ctx = context.currentOrNull();
+    const actor =
+      input.actor ??
+      (ctx
+        ? {
+            type: ctx.actor.type,
+            id: ctx.actor.id,
+            label: ctx.actor.type === 'user' ? (ctx.actor.email ?? null) : null,
+          }
+        : { type: 'system' as const, id: null, label: null });
+
+    return {
+      organization_id:
+        input.organizationId !== undefined ? input.organizationId : (ctx?.organizationId ?? null),
+      actor_type: actor.type,
+      actor_id: actor.id,
+      user_id: actor.type === 'user' ? actor.id : null,
+      user_email: actor.label ?? null,
+      action: input.action,
+      category: categoryFor(input.action),
+      resource_type: input.target?.type ?? null,
+      resource_id: input.target?.id ?? null,
+      outcome: input.outcome ?? 'success',
+      ip_address: ctx?.ip ?? null,
+      user_agent: ctx?.userAgent ?? null,
+      metadata: input.metadata ?? null,
+    };
+  }
+
+  async record(input: RecordInput, opts: RecordOptions = {}): Promise<void> {
+    const row = this.buildRow(input);
+
+    if (opts.buffered) {
+      this.bufferRow(row);
+      return;
+    }
+
+    try {
+      await (opts.trx ?? db).insertInto('audit_log').values(row).execute();
+    } catch (err) {
+      if (opts.trx) throw err; // inside a transaction the caller owns failure
+      console.error('[AuditLog] record error:', err);
+      /* v8 ignore next 3 -- telemetry, disabled in tests */
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('error', 'audit record failed', { action: input.action });
+      }
     }
   }
 
@@ -77,20 +189,7 @@ export class AuditLogService {
     try {
       await db
         .insertInto('audit_log')
-        .values(
-          toInsert.map((e) => ({
-            organization_id: e.organizationId,
-            user_id: e.userId ?? null,
-            user_email: e.userEmail ?? null,
-            action: e.action,
-            category: e.category,
-            resource_type: e.resourceType ?? null,
-            resource_id: e.resourceId ?? null,
-            ip_address: e.ipAddress ?? null,
-            user_agent: e.userAgent ?? null,
-            metadata: e.metadata ?? null,
-          }))
-        )
+        .values(toInsert)
         .execute();
     } catch (err) {
       console.error('[AuditLog] flush error:', err);

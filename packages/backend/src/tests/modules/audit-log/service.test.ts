@@ -3,6 +3,7 @@ import { db } from '../../../database/index.js';
 import { AuditLogService } from '../../../modules/audit-log/service.js';
 import type { AuditLogEntry } from '../../../modules/audit-log/service.js';
 import { createTestUser, createTestOrganization } from '../../helpers/factories.js';
+import { context } from '@logtide/shared/context';
 
 function makeEntry(overrides: Partial<AuditLogEntry> = {}): AuditLogEntry {
   return {
@@ -522,6 +523,124 @@ describe('AuditLogService', () => {
 
       const actions = await service.getDistinctActions(orgId);
       expect(actions).toEqual(['my_action']);
+    });
+  });
+
+  describe('record()', () => {
+    it('populates actor, org, ip, userAgent from the request context', async () => {
+      await context.run(
+        {
+          requestId: 'req-1',
+          origin: 'http',
+          actor: { type: 'user', id: userId, email: userEmail },
+          organizationId: orgId,
+          projectId: null,
+          ip: '10.0.0.1',
+          userAgent: 'vitest-agent',
+        },
+        async () => {
+          await service.record({
+            action: 'project.created',
+            target: { type: 'project', id: 'proj-1' },
+            metadata: { name: 'demo' },
+          });
+        }
+      );
+
+      const row = await db.selectFrom('audit_log').selectAll().executeTakeFirstOrThrow();
+      expect(row.action).toBe('project.created');
+      expect(row.category).toBe('config_change');
+      expect(row.actor_type).toBe('user');
+      expect(row.actor_id).toBe(userId);
+      expect(row.user_id).toBe(userId);
+      expect(row.user_email).toBe(userEmail);
+      expect(row.organization_id).toBe(orgId);
+      expect(row.resource_type).toBe('project');
+      expect(row.resource_id).toBe('proj-1');
+      expect(row.outcome).toBe('success');
+      expect(row.ip_address).toBe('10.0.0.1');
+      expect(row.user_agent).toBe('vitest-agent');
+    });
+
+    it('records apiKey actors without writing user_id', async () => {
+      await context.run(
+        {
+          requestId: 'req-2',
+          origin: 'http',
+          actor: { type: 'apiKey', id: '11111111-1111-1111-1111-111111111111', apiKeyType: 'ingest' },
+          organizationId: orgId,
+          projectId: null,
+        },
+        async () => {
+          await service.record({ action: 'data.logs_searched' });
+        }
+      );
+
+      const row = await db.selectFrom('audit_log').selectAll().executeTakeFirstOrThrow();
+      expect(row.actor_type).toBe('apiKey');
+      expect(row.actor_id).toBe('11111111-1111-1111-1111-111111111111');
+      expect(row.user_id).toBeNull();
+    });
+
+    it('explicit actor/organizationId overrides win over context', async () => {
+      await service.record({
+        action: 'auth.login_failed',
+        outcome: 'failure',
+        actor: { type: 'user', id: null, label: 'tried@example.com' },
+        organizationId: null,
+        metadata: { method: 'local' },
+      });
+
+      const row = await db.selectFrom('audit_log').selectAll().executeTakeFirstOrThrow();
+      expect(row.actor_type).toBe('user');
+      expect(row.actor_id).toBeNull();
+      expect(row.user_email).toBe('tried@example.com');
+      expect(row.organization_id).toBeNull();
+      expect(row.outcome).toBe('failure');
+    });
+
+    it('falls back to system actor with no context', async () => {
+      await service.record({ action: 'data.deleted', organizationId: orgId });
+      const row = await db.selectFrom('audit_log').selectAll().executeTakeFirstOrThrow();
+      expect(row.actor_type).toBe('system');
+      expect(row.actor_id).toBeNull();
+    });
+
+    it('writes inside the given transaction (rollback leaves no row)', async () => {
+      await db
+        .transaction()
+        .execute(async (trx) => {
+          await service.record({ action: 'org.updated', organizationId: orgId }, { trx });
+          throw new Error('boom');
+        })
+        .catch(() => {});
+
+      const count = await db.selectFrom('audit_log').select(db.fn.countAll<number>().as('count')).executeTakeFirstOrThrow();
+      expect(Number(count.count)).toBe(0);
+
+      await db.transaction().execute(async (trx) => {
+        await service.record({ action: 'org.updated', organizationId: orgId }, { trx });
+      });
+      const after = await db.selectFrom('audit_log').select(db.fn.countAll<number>().as('count')).executeTakeFirstOrThrow();
+      expect(Number(after.count)).toBe(1);
+    });
+
+    it('never throws to the caller when the insert fails', async () => {
+      const spy = vi.spyOn(db, 'insertInto').mockImplementationOnce(() => {
+        throw new Error('db down');
+      });
+      await expect(service.record({ action: 'org.updated', organizationId: orgId })).resolves.toBeUndefined();
+      spy.mockRestore();
+    });
+
+    it('buffered mode defers the insert to flush', async () => {
+      await service.record({ action: 'data.logs_searched', organizationId: orgId }, { buffered: true });
+      const before = await db.selectFrom('audit_log').select(db.fn.countAll<number>().as('count')).executeTakeFirstOrThrow();
+      expect(Number(before.count)).toBe(0);
+
+      await service.shutdown();
+      const after = await db.selectFrom('audit_log').select(db.fn.countAll<number>().as('count')).executeTakeFirstOrThrow();
+      expect(Number(after.count)).toBe(1);
     });
   });
 });
