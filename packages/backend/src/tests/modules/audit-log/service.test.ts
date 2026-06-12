@@ -59,8 +59,8 @@ describe('AuditLogService', () => {
       .insertInto('audit_log')
       .values({
         organization_id: overrides.organization_id ?? orgId,
-        user_id: overrides.user_id ?? userId,
-        user_email: overrides.user_email ?? userEmail,
+        user_id: 'user_id' in overrides ? overrides.user_id! : userId,
+        user_email: 'user_email' in overrides ? overrides.user_email! : userEmail,
         action: overrides.action ?? 'test_action',
         category: (overrides.category ?? 'config_change') as any,
         resource_type: overrides.resource_type ?? null,
@@ -495,10 +495,73 @@ describe('AuditLogService', () => {
       expect(result.entries).toHaveLength(1);
       expect(result.entries[0].action).toBe('create_project');
     });
+
+    it('normalizes legacy rows: user rows read as user/success', async () => {
+      await insertEntry({ action: 'legacy_action' });
+      const result = await service.query({ organizationId: orgId });
+      expect(result.entries[0].actor_type).toBe('user');
+      expect(result.entries[0].actor_id).toBe(userId);
+      expect(result.entries[0].outcome).toBe('success');
+    });
+
+    it('normalizes legacy rows with null user_id as system', async () => {
+      await insertEntry({ action: 'legacy_system', user_id: null, user_email: null });
+      const result = await service.query({ organizationId: orgId });
+      expect(result.entries[0].actor_type).toBe('system');
+    });
+
+    it('filters by actorType including legacy semantics', async () => {
+      await insertEntry({ action: 'legacy_user_row' });
+      await db.insertInto('audit_log').values({
+        organization_id: orgId,
+        user_id: null,
+        user_email: null,
+        action: 'apikey_row',
+        category: 'log_access' as any,
+        resource_type: null,
+        resource_id: null,
+        ip_address: null,
+        user_agent: null,
+        metadata: null,
+        actor_type: 'apiKey',
+        actor_id: null,
+        outcome: 'success',
+      } as any).execute();
+
+      const users = await service.query({ organizationId: orgId, actorType: 'user' });
+      expect(users.entries.map((e) => e.action)).toEqual(['legacy_user_row']);
+
+      const keys = await service.query({ organizationId: orgId, actorType: 'apiKey' });
+      expect(keys.entries.map((e) => e.action)).toEqual(['apikey_row']);
+    });
+
+    it('filters by outcome including legacy success default', async () => {
+      await insertEntry({ action: 'legacy_ok' });
+      await db.insertInto('audit_log').values({
+        organization_id: orgId,
+        user_id: null,
+        user_email: null,
+        action: 'failed_login',
+        category: 'user_management' as any,
+        resource_type: null,
+        resource_id: null,
+        ip_address: null,
+        user_agent: null,
+        metadata: null,
+        actor_type: 'user',
+        actor_id: null,
+        outcome: 'failure',
+      } as any).execute();
+
+      const failures = await service.query({ organizationId: orgId, outcome: 'failure' });
+      expect(failures.entries.map((e) => e.action)).toEqual(['failed_login']);
+      const oks = await service.query({ organizationId: orgId, outcome: 'success' });
+      expect(oks.entries.map((e) => e.action)).toEqual(['legacy_ok']);
+    });
   });
 
   describe('getDistinctActions()', () => {
-    it('should return sorted distinct actions', async () => {
+    it('returns registry actions unioned with db actions, sorted', async () => {
       await insertEntry({ action: 'delete_project' });
       await insertEntry({ action: 'create_project' });
       await insertEntry({ action: 'create_project' }); // duplicate
@@ -506,23 +569,30 @@ describe('AuditLogService', () => {
 
       const actions = await service.getDistinctActions(orgId);
 
-      expect(actions).toEqual(['create_project', 'delete_project', 'login']);
+      expect(actions).toContain('create_project');
+      expect(actions).toContain('org.created');
+      expect(actions).toContain('login'); // legacy db action not in registry
+      expect(actions).toEqual([...actions].sort());
     });
 
-    it('should return empty array for org with no entries', async () => {
+    it('returns registry list for org with no entries', async () => {
       const actions = await service.getDistinctActions(orgId);
-      expect(actions).toEqual([]);
+      expect(actions.length).toBeGreaterThan(0);
+      expect(actions).toContain('org.created');
+      expect(actions).not.toContain('my_legacy_action');
+      expect(actions).toEqual([...actions].sort());
     });
 
-    it('should not return actions from other organizations', async () => {
+    it('includes own legacy db actions but not other org actions', async () => {
       const otherUser = await createTestUser({ email: `distinct-${Date.now()}@test.com` });
       const otherOrg = await createTestOrganization({ ownerId: otherUser.id });
 
       await insertEntry({ action: 'my_action' });
-      await insertEntry({ organization_id: otherOrg.id, action: 'other_action' });
+      await insertEntry({ organization_id: otherOrg.id, action: 'other_org_action' });
 
       const actions = await service.getDistinctActions(orgId);
-      expect(actions).toEqual(['my_action']);
+      expect(actions).toContain('my_action');
+      expect(actions).not.toContain('other_org_action');
     });
   });
 

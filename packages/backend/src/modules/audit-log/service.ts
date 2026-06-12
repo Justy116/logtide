@@ -1,10 +1,16 @@
 import { db } from '../../database/index.js';
 import type { Transaction } from 'kysely';
+import { sql } from 'kysely';
 import type { AuditCategory, Database, AuditActorType, AuditOutcome } from '../../database/types.js';
 import { context } from '@logtide/shared/context';
 import { hub } from '@logtide/core';
 import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
-import { categoryFor, type AuditAction } from './actions.js';
+import { categoryFor, AUDIT_ACTIONS, type AuditAction } from './actions.js';
+
+// Read-time normalization expressions for legacy rows (actor_type/outcome may be NULL).
+const actorTypeExpr = sql<string>`COALESCE(actor_type, CASE WHEN user_id IS NULL THEN 'system' ELSE 'user' END)`;
+const actorIdExpr = sql<string | null>`COALESCE(actor_id, user_id)`;
+const outcomeExpr = sql<string>`COALESCE(outcome, 'success')`;
 
 export interface AuditLogEntry {
   organizationId: string | null;
@@ -25,6 +31,8 @@ export interface AuditLogQueryParams {
   action?: string;
   resourceType?: string;
   userId?: string;
+  actorType?: AuditActorType;
+  outcome?: AuditOutcome;
   from?: Date;
   to?: Date;
   limit?: number;
@@ -44,6 +52,11 @@ export interface AuditLogRow {
   ip_address: string | null;
   user_agent: string | null;
   metadata: Record<string, unknown> | null;
+  /** Normalized at read time; never null (legacy rows default to 'user'/'system'). */
+  actor_type: string;
+  actor_id: string | null;
+  /** Normalized at read time; never null (legacy rows default to 'success'). */
+  outcome: string;
 }
 
 export interface AuditLogResult {
@@ -70,7 +83,10 @@ export interface RecordInput {
 export interface RecordOptions {
   /** Record atomically with the caller's transaction. */
   trx?: Transaction<Database>;
-  /** High-volume paths only (query access logs): use the flush buffer. */
+  /**
+   * High-volume paths only (query access logs): use the flush buffer.
+   * Mutually exclusive with `trx`; when `buffered` is set, `trx` is ignored.
+   */
   buffered?: boolean;
 }
 
@@ -219,6 +235,12 @@ export class AuditLogService {
     if (params.userId) {
       baseQuery = baseQuery.where('user_id', '=', params.userId);
     }
+    if (params.actorType) {
+      baseQuery = baseQuery.where(actorTypeExpr, '=', params.actorType);
+    }
+    if (params.outcome) {
+      baseQuery = baseQuery.where(outcomeExpr, '=', params.outcome);
+    }
     if (params.from) {
       baseQuery = baseQuery.where('time', '>=', params.from);
     }
@@ -228,7 +250,23 @@ export class AuditLogService {
 
     const [entries, countResult] = await Promise.all([
       baseQuery
-        .selectAll()
+        .select([
+          'id',
+          'time',
+          'organization_id',
+          'user_id',
+          'user_email',
+          'action',
+          'category',
+          'resource_type',
+          'resource_id',
+          'ip_address',
+          'user_agent',
+          'metadata',
+          actorTypeExpr.as('actor_type'),
+          actorIdExpr.as('actor_id'),
+          outcomeExpr.as('outcome'),
+        ])
         .orderBy('time', 'desc')
         .limit(limit)
         .offset(offset)
@@ -250,9 +288,9 @@ export class AuditLogService {
       .select('action')
       .distinct()
       .where('organization_id', '=', organizationId)
-      .orderBy('action')
       .execute();
-    return results.map((r) => r.action);
+    const dbActions = results.map((r) => r.action);
+    return Array.from(new Set([...Object.keys(AUDIT_ACTIONS), ...dbActions])).sort();
   }
 
   async shutdown(): Promise<void> {
