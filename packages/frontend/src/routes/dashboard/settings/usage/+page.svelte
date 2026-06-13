@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { browser } from '$app/environment';
   import { organizationStore } from '$lib/stores/organization';
-  import { getUsage, getUsageBreakdown, getStorageUsage, type UsageRecord, type UsageBreakdown, type StorageUsageResponse } from '$lib/api/usage';
+  import { getUsage, getUsageBreakdown, getStorageUsage, getCapabilityUsage, type UsageRecord, type UsageBreakdown, type StorageUsageResponse, type CapabilityUsage } from '$lib/api/usage';
   import {
     Card,
     CardContent,
@@ -23,6 +23,7 @@
   import type { OrganizationWithRole } from '@logtide/shared';
   import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+  import Gauge from '@lucide/svelte/icons/gauge';
 
   // TODO(#214): entitlements/limits editor goes here once feature #214 backend is shipped
 
@@ -45,6 +46,7 @@
   let byDayBytes = $state<UsageRecord[]>([]);
   let breakdown = $state<UsageBreakdown | null>(null);
   let storage = $state<StorageUsageResponse | null>(null);
+  let capabilities = $state<CapabilityUsage[]>([]);
 
   let lastLoadedOrgId = $state<string | null>(null);
   let lastLoadedDays = $state<number | null>(null);
@@ -79,17 +81,19 @@
       const from = new Date(Date.now() - selectedDays * 86_400_000).toISOString();
       const orgId = currentOrg.id;
 
-      const [dayEvt, dayByt, bd, stor] = await Promise.all([
+      const [dayEvt, dayByt, bd, stor, caps] = await Promise.all([
         getUsage({ organizationId: orgId, from, to, groupBy: 'day', type: 'logs.ingested.events' }),
         getUsage({ organizationId: orgId, from, to, groupBy: 'day', type: 'logs.ingested.bytes' }),
         getUsageBreakdown({ organizationId: orgId, from, to }),
         getStorageUsage({ organizationId: orgId, from, to }).catch(() => null),
+        getCapabilityUsage(orgId).catch(() => ({ capabilities: [] })),
       ]);
 
       byDayEvents = dayEvt.usage;
       byDayBytes = dayByt.usage;
       breakdown = bd.breakdown;
       storage = stor;
+      capabilities = caps.capabilities;
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load usage data';
     } finally {
@@ -145,6 +149,53 @@
   function formatTypeQty(type: string, qty: number): string {
     return type.endsWith('.bytes') ? formatBytes(qty) : formatCount(qty);
   }
+
+  // Friendly labels + unit per measurable capability. Bytes-kind caps format as
+  // bytes; everything else as a count.
+  const CAP_META: Record<string, { label: string; unit: 'count' | 'bytes' }> = {
+    'alerts.max_rules': { label: 'Alert rules', unit: 'count' },
+    'notifications.max_channels': { label: 'Notification channels', unit: 'count' },
+    'apikeys.max': { label: 'API keys', unit: 'count' },
+    'sigma.max_active_rules': { label: 'Active Sigma rules', unit: 'count' },
+    'dashboards.max_custom': { label: 'Custom dashboards', unit: 'count' },
+    'ingestion.max_events_monthly': { label: 'Events (this month)', unit: 'count' },
+    'ingestion.max_bytes_monthly': { label: 'Ingested bytes (this month)', unit: 'bytes' },
+    'storage.max_bytes': { label: 'Storage used', unit: 'bytes' },
+    'tracing.max_spans_monthly': { label: 'Spans (this month)', unit: 'count' },
+  };
+
+  function capLabel(c: CapabilityUsage): string {
+    return CAP_META[c.capability]?.label ?? c.capability;
+  }
+
+  function capFormat(c: CapabilityUsage, n: number): string {
+    return CAP_META[c.capability]?.unit === 'bytes' ? formatBytes(n) : formatCount(n);
+  }
+
+  // null limit = unlimited, so no percentage. Capped at 999 to avoid runaway labels.
+  function capPercent(c: CapabilityUsage): number | null {
+    if (c.limit === null || c.limit <= 0) return null;
+    return Math.min(999, Math.round((c.current / c.limit) * 100));
+  }
+
+  // green < 80%, amber 80-99%, red >= 100% (over limit).
+  function capBarColor(pct: number): string {
+    if (pct >= 100) return 'bg-destructive';
+    if (pct >= 80) return 'bg-amber-500';
+    return 'bg-green-500';
+  }
+
+  // Capabilities with a configured limit come first (the actionable ones),
+  // unlimited ones after; stable within each group by registry order.
+  let sortedCapabilities = $derived(
+    [...capabilities].sort((a, b) => {
+      const al = a.limit === null ? 1 : 0;
+      const bl = b.limit === null ? 1 : 0;
+      return al - bl;
+    })
+  );
+
+  let hasAnyLimit = $derived(capabilities.some((c) => c.limit !== null));
 </script>
 
 <svelte:head>
@@ -230,6 +281,63 @@
       </CardContent>
     </Card>
   </div>
+
+  <!-- Capability usage vs plan limits -->
+  <Card>
+    <CardHeader class="pb-3">
+      <CardTitle class="text-base flex items-center gap-2">
+        <Gauge class="h-4 w-4 text-muted-foreground" />
+        Plan limits
+      </CardTitle>
+      <CardDescription>
+        Current usage against your organization's configured capability limits
+      </CardDescription>
+    </CardHeader>
+    <CardContent>
+      {#if loading}
+        <div class="flex justify-center py-10">
+          <Spinner />
+        </div>
+      {:else if capabilities.length === 0}
+        <div class="py-10 text-center">
+          <Gauge class="mx-auto h-10 w-10 text-muted-foreground/40" />
+          <p class="mt-3 text-sm text-muted-foreground">No capability data available.</p>
+        </div>
+      {:else}
+        {#if !hasAnyLimit}
+          <p class="mb-4 text-sm text-muted-foreground">
+            No limits configured - all capabilities are unlimited on this plan.
+          </p>
+        {/if}
+        <div class="grid gap-x-8 gap-y-4 sm:grid-cols-2">
+          {#each sortedCapabilities as cap (cap.capability)}
+            {@const pct = capPercent(cap)}
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between gap-2 text-sm">
+                <span class="font-medium truncate" title={cap.description}>{capLabel(cap)}</span>
+                <span class="text-muted-foreground whitespace-nowrap">
+                  {capFormat(cap, cap.current)} / {cap.limit === null ? '∞' : capFormat(cap, cap.limit)}
+                  {#if pct !== null}
+                    <span class="ml-1 font-semibold text-foreground">({pct}%)</span>
+                  {/if}
+                </span>
+              </div>
+              {#if pct !== null}
+                <div class="h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    class="h-full rounded-full transition-all {capBarColor(pct)}"
+                    style="width: {Math.min(100, pct)}%"
+                  ></div>
+                </div>
+              {:else}
+                <p class="text-xs text-muted-foreground">Unlimited</p>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </CardContent>
+  </Card>
 
   <!-- Storage trend -->
   <Card>

@@ -4,6 +4,7 @@ import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { meteringService } from './service.js';
 import { getUsageBreakdown } from './breakdown.js';
+import { getCapabilityUsage } from './capability-usage.js';
 import type { MeteringEventType } from './types.js';
 
 const organizationsService = new OrganizationsService();
@@ -20,6 +21,10 @@ const breakdownQuerySchema = z.object({
   organizationId: z.string().uuid(),
   from: z.string().datetime(),
   to: z.string().datetime(),
+});
+
+const orgOnlyQuerySchema = z.object({
+  organizationId: z.string().uuid(),
 });
 
 async function checkMembership(userId: string, orgId: string): Promise<boolean> {
@@ -95,6 +100,26 @@ export async function usageRoutes(fastify: FastifyInstance) {
       ]);
 
       return reply.send({ current, series });
+    } catch (e) {
+      if (e instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Validation error', details: e.errors });
+      }
+      throw e;
+    }
+  });
+
+  // Live usage vs configured limit for every measurable capability (resource
+  // counts + consumption quotas). Powers the usage page's "% of capability"
+  // bars. A null limit means unlimited (OSS default).
+  fastify.get('/capabilities', async (request: any, reply) => {
+    try {
+      const q = orgOnlyQuerySchema.parse(request.query);
+      if (!(await checkMembership(request.user.id, q.organizationId))) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
+      const capabilities = await getCapabilityUsage(q.organizationId);
+      return reply.send({ capabilities });
     } catch (e) {
       if (e instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Validation error', details: e.errors });

@@ -120,3 +120,23 @@ export async function getStorageUsage(params: {
   const response = await request(`/usage/storage?${qs.toString()}`);
   return response.json();
 }
+
+export interface CapabilityUsage {
+  capability: string;
+  kind: 'limit' | 'quota';
+  /** Current usage: a resource count (limit) or metered consumption (quota). */
+  current: number;
+  /** Configured cap. null = unlimited (OSS default). */
+  limit: number | null;
+  description: string;
+}
+
+export interface CapabilityUsageResponse {
+  capabilities: CapabilityUsage[];
+}
+
+export async function getCapabilityUsage(organizationId: string): Promise<CapabilityUsageResponse> {
+  const qs = new URLSearchParams({ organizationId });
+  const response = await request(`/usage/capabilities?${qs.toString()}`);
+  return response.json();
+}
