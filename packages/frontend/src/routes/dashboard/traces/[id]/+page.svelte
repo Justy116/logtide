@@ -213,10 +213,10 @@
           <Card>
             <CardContent class="pt-6">
               <div class="flex items-center gap-3">
-                <Server class="w-5 h-5 text-muted-foreground" />
-                <div>
+                <Server class="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                <div class="min-w-0">
                   <p class="text-sm text-muted-foreground">Root Service</p>
-                  <p class="font-medium">{trace.root_service_name || trace.service_name}</p>
+                  <p class="font-medium truncate" title={trace.root_service_name || trace.service_name}>{trace.root_service_name || trace.service_name}</p>
                 </div>
               </div>
             </CardContent>
@@ -224,10 +224,10 @@
           <Card>
             <CardContent class="pt-6">
               <div class="flex items-center gap-3">
-                <GitBranch class="w-5 h-5 text-muted-foreground" />
-                <div>
+                <GitBranch class="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                <div class="min-w-0">
                   <p class="text-sm text-muted-foreground">Operation</p>
-                  <p class="font-medium truncate">{trace.root_operation_name || "-"}</p>
+                  <p class="font-medium truncate" title={trace.root_operation_name || "-"}>{trace.root_operation_name || "-"}</p>
                 </div>
               </div>
             </CardContent>
@@ -246,10 +246,10 @@
           <Card>
             <CardContent class="pt-6">
               <div class="flex items-center gap-3">
-                <Timer class="w-5 h-5 text-muted-foreground" />
-                <div>
+                <Timer class="w-5 h-5 text-muted-foreground flex-shrink-0" />
+                <div class="min-w-0">
                   <p class="text-sm text-muted-foreground">Duration</p>
-                  <p class="font-medium">{formatDuration(trace.duration_ms)}</p>
+                  <p class="font-medium truncate">{formatDuration(trace.duration_ms)}</p>
                 </div>
               </div>
             </CardContent>
@@ -258,11 +258,11 @@
             <CardContent class="pt-6">
               <div class="flex items-center gap-3">
                 {#if trace.error}
-                  <AlertCircle class="w-5 h-5 text-red-500" />
+                  <AlertCircle class="w-5 h-5 text-red-500 flex-shrink-0" />
                 {:else}
-                  <Layers class="w-5 h-5 text-muted-foreground" />
+                  <Layers class="w-5 h-5 text-muted-foreground flex-shrink-0" />
                 {/if}
-                <div>
+                <div class="min-w-0">
                   <p class="text-sm text-muted-foreground">Status</p>
                   {#if trace.error}
                     <Badge variant="destructive">Error</Badge>
@@ -341,7 +341,7 @@
                       {:else}
                         <div class="w-5"></div>
                       {/if}
-                      <div class="truncate">
+                      <div class="truncate min-w-0 flex-1" title="{span.service_name}: {span.operation_name}">
                         <span class="text-xs text-muted-foreground">{span.service_name}</span>
                         <span class="text-xs mx-1">:</span>
                         <span class="text-sm font-medium">{span.operation_name}</span>
