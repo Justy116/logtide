@@ -23,7 +23,7 @@
 
 <br />
 
-> **🚀 RELEASE 0.9.1:** LogTide now ships with **Uptime Monitoring & Status Pages**, **Log Parsing Pipelines**, and **Custom Dashboards**.
+> **🌊 LogTide 1.0.0 (public beta):** unified **Logs, Traces & Metrics** with a built-in **SIEM**, multi-engine storage (TimescaleDB / ClickHouse / MongoDB), uptime monitoring, parsing pipelines, and custom dashboards.
 
 ---
 
@@ -46,7 +46,7 @@ Designed for teams that need **GDPR compliance**, **full data ownership**, and *
 ### Logs Explorer
 ![LogTide Logs](docs/images/logs.png)
 
-### Performance & Metrics (New in 0.9.1)
+### Performance & Metrics
 ![LogTide Metrics](docs/images/metrics.png)
 
 ### Distributed Tracing
@@ -126,7 +126,7 @@ We host it for you. Perfect for testing. [**Sign up at logtide.dev**](https://lo
 
 ## ✨ Core Features (v1.0.0)
 
-### 🆕 New in 0.9.1
+### Monitoring, Pipelines & Dashboards
 * 🩺 **Uptime Monitoring & Status Pages:** HTTP/TCP/heartbeat monitors with configurable thresholds, auto-created SIEM incidents on failure, scheduled maintenances, and public Uptime-Kuma-style status pages per project.
 * 🔧 **Log Parsing Pipelines:** Async enrichment with 5 built-in parsers (nginx, apache, syslog, logfmt, JSON), custom **grok** patterns (`%{PATTERN:field}`), and **GeoIP** enrichment from any IP field. YAML import/export.
 * 📊 **Custom Dashboards:** Drag-and-drop panels with 9 types (time series, top-N, live stream, metric charts, trace latency, detection events, monitor status, and more). Per-user or shared, with YAML round-trip.
