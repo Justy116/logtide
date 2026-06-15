@@ -24,7 +24,8 @@ import { enrichmentService } from './modules/siem/enrichment-service.js';
 import { retentionService } from './modules/retention/index.js';
 import { auditLogService } from './modules/audit-log/index.js';
 import { sigmaSyncService } from './modules/sigma/sync-service.js';
-import { digestScheduler } from './modules/digests/scheduler.js';
+// Email digest feature is incomplete and disabled for 1.0.0-beta (see #154 below).
+// import { digestScheduler } from './modules/digests/scheduler.js';
 import { initializeWorkerLogging, shutdownInternalLogging, isInternalLoggingEnabled } from './utils/internal-logger.js';
 import { hub } from '@logtide/core';
 import { reservoirReady } from './database/reservoir.js';
@@ -90,7 +91,12 @@ const pipelineWorker = createWorker<LogPipelineJobData>('log-pipeline', async (j
 const digestWorker = createWorker<DigestJobPayload>('digest-generation', async (job) => {
   await processDigestGeneration(job);
 });
-await digestScheduler.registerAllDigests();
+// The email digest reports feature (#154) is incomplete: it only summarizes log
+// volume (no error groups, security or uptime sections, no HTML layout) and has no
+// UI to configure it. The scheduler is intentionally left unregistered so no partial
+// digests are ever sent in the 1.0.0-beta release. The worker, service, database
+// schema and tests stay in place so the remaining scope can be finished under #154.
+// await digestScheduler.registerAllDigests();
 
 // Create worker for outbound webhook delivery (#218)
 const webhookDeliveryWorker = createWorker<WebhookDeliveryJobData>('webhook-delivery', async (job) => {
