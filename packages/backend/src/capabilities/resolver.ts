@@ -77,7 +77,8 @@ export class DbCapabilityResolver implements CapabilityResolver {
       }
     } catch (err) {
       console.warn(
-        `[Capabilities] Failed to load entitlements for org ${organizationId}, using registry defaults:`,
+        '[Capabilities] Failed to load entitlements, using registry defaults. org:',
+        organizationId,
         err
       );
       // values already holds permissive defaults; do not cache a failed read.
