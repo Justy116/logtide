@@ -20,8 +20,15 @@ function chCtxComment(): string {
 function chQueryId(operation: string): string | undefined {
   const ctx = currentOrNull();
   if (!ctx) return undefined;
-  // ClickHouse query_id has a 100-char limit; keep it tight.
-  return `${chSafe(ctx.requestId)}-${chSafe(operation)}`.slice(0, 100);
+  // ClickHouse rejects a query whose query_id matches one already running, so the
+  // id MUST be unique per call: two concurrent same-operation queries in one
+  // request would otherwise collide ("Query with id = ... is already running").
+  // Keep request id + operation as a readable, greppable prefix (the request id is
+  // also mirrored in the SQL log_comment for correlation) and append a random
+  // suffix for uniqueness. Cap the prefix so the suffix is never truncated away
+  // (ClickHouse query_id has a 100-char limit).
+  const prefix = `${chSafe(ctx.requestId)}-${chSafe(operation)}`.slice(0, 90);
+  return `${prefix}-${randomUUID().slice(0, 8)}`;
 }
 import type {
   LogRecord,
