@@ -61,10 +61,35 @@ const configSchema = z.object({
   CACHE_ENABLED: z.string().default('true').transform((val) => val === 'true'),
   CACHE_TTL: z.string().default('60').transform(Number), // Default TTL in seconds
 
+  // Metering / resource usage tracking (#212)
+  METERING_ENABLED: z.string().default('true').transform((val) => val === 'true'),
+  METERING_FLUSH_INTERVAL_MS: z.string().default('5000').transform(Number),
+  METERING_FLUSH_MAX_BUFFER: z.string().default('500').transform(Number),
+
+  // Capability usage-quota evaluator (#214). Periodic job that flags over-quota orgs.
+  QUOTA_EVALUATOR_ENABLED: z.string().default('true').transform((val) => val === 'true'),
+  QUOTA_EVALUATOR_INTERVAL_MS: z.string().default('60000').transform(Number),
+
+  // Storage snapshot job (#212 follow-up). Periodic per-project stored-bytes estimate.
+  STORAGE_SNAPSHOT_ENABLED: z.string().default('true').transform((val) => val === 'true'),
+  STORAGE_SNAPSHOT_INTERVAL_MS: z.string().default('86400000').transform(Number),
+
   // Outbound SSRF guard. By default, HTTP/TCP monitors and webhook delivery
   // reject loopback/private/link-local/reserved targets. Self-hosted
   // deployments that legitimately monitor internal services can opt in.
   MONITOR_ALLOW_PRIVATE_TARGETS: z.string().default('false').transform((val) => val === 'true'),
+
+  // Outbound webhook dispatcher (#218).
+  WEBHOOK_MAX_ATTEMPTS: z.string().default('5').transform(Number),
+  WEBHOOK_PER_ORG_CONCURRENCY: z.string().default('5').transform(Number),
+  WEBHOOK_GLOBAL_CONCURRENCY: z.string().default('50').transform(Number),
+  WEBHOOK_DELIVERY_LOG_LIMIT: z.string().default('1000').transform(Number),
+  WEBHOOK_REQUEST_TIMEOUT_MS: z.string().default('10000').transform(Number),
+
+  // Lifecycle hooks (#216). Comma-separated paths to .js/.mjs modules loaded
+  // at boot (server AND worker). Each default-exports (hooks) => void.
+  // A missing or throwing module is FATAL at boot, by design.
+  HOOKS_MODULES: z.string().optional(),
 
   // Initial Admin (for first deployment - creates admin user if no users exist)
   INITIAL_ADMIN_EMAIL: z.string().email().optional(),

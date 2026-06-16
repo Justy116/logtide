@@ -5,7 +5,7 @@ import { db } from '../../database/connection.js';
 import nodemailer from 'nodemailer';
 import { config } from '../../config/index.js';
 import { generateAlertEmail, getFrontendUrl } from '../../lib/email-templates.js';
-import { safeFetch, SsrfBlockedError } from '../../utils/ssrf-guard.js';
+import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
 import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
 export interface AlertNotificationData {
@@ -130,21 +130,23 @@ export async function processAlertNotification(job: any) {
       console.log(`No email recipients configured for: ${data.rule_name}`);
     }
 
-    // STEP 5: Collect webhook URLs from notification channels
-    const webhookUrls = new Set<string>();
+    // STEP 5: Collect webhook targets from notification channels
+    // (dedup by URL; first channel wins for hook attribution)
+    const webhookTargets = new Map<string, string>();
 
-    // Add webhook URLs from channels
     channels
       .filter((ch) => ch.type === 'webhook' && ch.enabled)
       .forEach((ch) => {
         const webhookConfig = ch.config as WebhookChannelConfig;
-        webhookUrls.add(webhookConfig.url);
+        if (!webhookTargets.has(webhookConfig.url)) {
+          webhookTargets.set(webhookConfig.url, ch.id);
+        }
       });
 
     // STEP 6: Send webhooks
-    for (const url of webhookUrls) {
+    for (const [url, channelId] of webhookTargets) {
       try {
-        await sendWebhookNotification({ ...data, webhook_url: url });
+        await sendWebhookNotification({ ...data, webhook_url: url }, channelId);
         console.log(`Webhook notification sent: ${data.rule_name} -> ${url}`);
       } catch (error) {
         const errMsg = `Webhook failed (${url}): ${error instanceof Error ? error.message : 'Unknown error'}`;
@@ -153,7 +155,7 @@ export async function processAlertNotification(job: any) {
       }
     }
 
-    if (webhookUrls.size === 0) {
+    if (webhookTargets.size === 0) {
       console.log(`No webhook configured for: ${data.rule_name}`);
     }
 
@@ -214,58 +216,43 @@ async function sendEmailNotification(data: AlertNotificationData & { organizatio
   console.log(`Email sent to: ${data.email_recipients.join(', ')}`);
 }
 
-async function sendWebhookNotification(data: AlertNotificationData) {
+async function sendWebhookNotification(data: AlertNotificationData, channelId?: string) {
   if (!data.webhook_url) return;
 
   const frontendUrl = getFrontendUrl();
 
-  // SSRF protection: route delivery through the centralized outbound guard
-  // (safeFetch resolves the host, rejects loopback/private/link-local/CGNAT/
-  // reserved IPv4+IPv6 ranges, and revalidates every redirect hop), matching
-  // the WebhookProvider. The same MONITOR_ALLOW_PRIVATE_TARGETS opt-in governs
-  // both paths so self-hosted deployments can still target internal endpoints.
-  let response: Response;
-  try {
-    response = await safeFetch(
-      data.webhook_url,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'LogTide/1.0',
-        },
-        body: JSON.stringify({
-          event_type: data.baseline_metadata ? 'anomaly' : 'alert',
-          alert_name: data.rule_name,
-          log_count: data.log_count,
-          threshold: data.threshold,
-          time_window: data.time_window,
-          organization_id: data.organization_id,
-          project_id: data.project_id,
-          baseline_metadata: data.baseline_metadata || null,
-          link: `${frontendUrl}/dashboard/alerts`,
-          timestamp: new Date().toISOString(),
-        }),
-        signal: AbortSignal.timeout(10000),
-      },
-      { allowPrivate: config.MONITOR_ALLOW_PRIVATE_TARGETS }
-    );
-  } catch (e) {
-    if (e instanceof SsrfBlockedError) {
-      throw new Error('Webhook URLs pointing to private/internal addresses are not allowed');
-    }
-    if (e instanceof TypeError) {
-      throw new Error(`Invalid webhook URL: ${data.webhook_url}`);
-    }
-    throw e;
-  }
+  // Wrap in the unified envelope (WS3). Both plain threshold and anomaly
+  // (rate-of-change) alerts use type 'alert.triggered'; anomaly is
+  // distinguished by data.baseline_metadata !== null.
+  // organization_id/project_id move to the envelope; event_type/timestamp
+  // are superseded by envelope.type/occurredAt.
+  const envelope = buildEnvelope({
+    type: 'alert.triggered',
+    organizationId: data.organization_id,
+    projectId: data.project_id ?? null,
+    data: {
+      alert_name: data.rule_name,
+      log_count: data.log_count,
+      threshold: data.threshold,
+      time_window: data.time_window,
+      baseline_metadata: data.baseline_metadata || null,
+      link: `${frontendUrl}/dashboard/alerts`,
+    },
+  });
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
-    throw new Error(`Webhook request failed: HTTP ${response.status}${errorText ? ` - ${errorText}` : ''}`);
-  }
-
-  console.log(`Webhook notification sent to: ${data.webhook_url}`);
+  // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
+  // retry/backoff, DLQ, delivery logging, and the beforeWebhookDispatch hook
+  // (#216) all live in one place now.
+  await webhookDispatcher.enqueue({
+    url: data.webhook_url,
+    organizationId: data.organization_id,
+    eventType: 'alert.triggered',
+    eventId: `${data.historyId || data.rule_id}:${data.webhook_url}`,
+    channelId,
+    ruleId: data.rule_id,
+    metadata: { ruleName: data.rule_name },
+    payload: envelope,
+  });
 }
 
 async function createInAppNotifications(data: AlertNotificationData, projectName: string | null) {

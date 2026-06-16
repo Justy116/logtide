@@ -5,6 +5,10 @@ import { OrganizationsService } from '../organizations/service.js';
 import { customDashboardsService } from './service.js';
 import { panelInstanceSchema } from './panel-registry.js';
 import { fetchPanelData } from './panel-data-service.js';
+import { context } from '@logtide/shared/context';
+import { assertWithinLimit } from '../../capabilities/index.js';
+import { CapabilityError } from '../../capabilities/errors.js';
+import { auditLogService } from '../audit-log/service.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -87,6 +91,14 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       if (!(await checkMembership(request.user.id, body.organizationId))) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
+
+      await context.runAsSystem('dashboards:create-limit-check', async () => {
+        await context.with({ organizationId: body.organizationId }, async () => {
+          const count = await customDashboardsService.countForOrg(body.organizationId);
+          await assertWithinLimit('dashboards.max_custom', count);
+        });
+      });
+
       const dashboard = await customDashboardsService.create(
         {
           organizationId: body.organizationId,
@@ -98,8 +110,19 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
         },
         request.user.id
       );
+
+      await auditLogService.record({
+        action: 'dashboard.created',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId: body.organizationId,
+        metadata: { name: dashboard.name },
+      });
+
       return reply.status(201).send({ dashboard });
     } catch (e) {
+      if (e instanceof CapabilityError) {
+        throw e;
+      }
       if (e instanceof z.ZodError) {
         return reply
           .status(400)
@@ -116,13 +139,32 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       if (!(await checkMembership(request.user.id, body.organizationId))) {
         return reply.status(403).send({ error: 'Forbidden' });
       }
+
+      await context.runAsSystem('dashboards:create-limit-check', async () => {
+        await context.with({ organizationId: body.organizationId }, async () => {
+          const count = await customDashboardsService.countForOrg(body.organizationId);
+          await assertWithinLimit('dashboards.max_custom', count);
+        });
+      });
+
       const dashboard = await customDashboardsService.importYaml(
         body.yaml,
         body.organizationId,
         request.user.id
       );
+
+      await auditLogService.record({
+        action: 'dashboard.imported',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId: body.organizationId,
+        metadata: { name: dashboard.name },
+      });
+
       return reply.status(201).send({ dashboard });
     } catch (e) {
+      if (e instanceof CapabilityError) {
+        throw e;
+      }
       if (e instanceof z.ZodError) {
         return reply
           .status(400)
@@ -171,12 +213,23 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
         organizationId,
         body
       );
+
+      await auditLogService.record({
+        action: 'dashboard.updated',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId,
+        metadata: { name: dashboard.name },
+      });
+
       return reply.send({ dashboard });
     } catch (e) {
       if (e instanceof z.ZodError) {
         return reply
           .status(400)
           .send({ error: 'Validation error', details: e.errors });
+      }
+      if (e instanceof Error && e.message === 'Dashboard not found') {
+        return reply.status(404).send({ error: e.message });
       }
       throw e;
     }
@@ -196,6 +249,14 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
         (request.params as { id: string }).id,
         organizationId
       );
+
+      await auditLogService.record({
+        action: 'dashboard.updated',
+        target: { type: 'custom_dashboard', id: dashboard.id },
+        organizationId,
+        metadata: { name: dashboard.name, setDefault: true },
+      });
+
       return reply.send({ dashboard });
     } catch (e) {
       if (e instanceof Error) {
@@ -220,14 +281,24 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       return reply.status(403).send({ error: 'Forbidden' });
     }
     try {
-      await customDashboardsService.delete(
-        (request.params as { id: string }).id,
-        organizationId
-      );
+      const dashboardId = (request.params as { id: string }).id;
+      await customDashboardsService.delete(dashboardId, organizationId);
+
+      await auditLogService.record({
+        action: 'dashboard.deleted',
+        target: { type: 'custom_dashboard', id: dashboardId },
+        organizationId,
+      });
+
       return reply.status(204).send();
     } catch (e) {
-      if (e instanceof Error && e.message.includes('default')) {
-        return reply.status(400).send({ error: e.message });
+      if (e instanceof Error) {
+        if (e.message === 'Dashboard not found') {
+          return reply.status(404).send({ error: e.message });
+        }
+        if (e.message.includes('default')) {
+          return reply.status(400).send({ error: e.message });
+        }
       }
       throw e;
     }

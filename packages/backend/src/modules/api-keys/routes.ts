@@ -1,10 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { API_KEY_TYPES } from '@logtide/shared';
+import { context } from '@logtide/shared/context';
 import { apiKeysService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { projectsService } from '../projects/service.js';
 import { auditLogService } from '../audit-log/index.js';
+import { assertWithinLimit } from '../../capabilities/index.js';
+import { CapabilityError } from '../../capabilities/errors.js';
 
 const createApiKeySchema = z.object({
   name: z.string().min(1, 'Name is required').max(100, 'Name too long'),
@@ -69,6 +72,13 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
         });
       }
 
+      await context.runAsSystem('apikeys:create-limit-check', async () => {
+        await context.with({ organizationId: project.organizationId }, async () => {
+          const count = await apiKeysService.countKeysForOrg(project.organizationId);
+          await assertWithinLimit('apikeys.max', count);
+        });
+      });
+
       const result = await apiKeysService.createApiKey({
         projectId,
         name: body.name,
@@ -76,16 +86,10 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
         allowedOrigins: body.allowedOrigins ?? null,
       });
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'apikey.created',
+        target: { type: 'api_key', id: result.id },
         organizationId: project.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'create_api_key',
-        category: 'config_change',
-        resourceType: 'api_key',
-        resourceId: result.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { name: body.name, type: body.type, projectId },
       });
 
@@ -96,6 +100,9 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
         message: 'API key created successfully. Save this key securely - it will not be shown again.',
       });
     } catch (error) {
+      if (error instanceof CapabilityError) {
+        throw error;
+      }
       if (error instanceof z.ZodError) {
         return reply.status(400).send({
           error: 'Validation error',
@@ -128,16 +135,10 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
         });
       }
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'apikey.revoked',
+        target: { type: 'api_key', id },
         organizationId: project.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'revoke_api_key',
-        category: 'config_change',
-        resourceType: 'api_key',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { projectId },
       });
 

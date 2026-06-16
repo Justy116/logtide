@@ -6,6 +6,7 @@ import { notificationsService } from '../../modules/notifications/service.js';
 import { notificationChannelsService } from '../../modules/notification-channels/index.js';
 import { createQueue } from '../connection.js';
 import { generateMonitorEmail, getFrontendUrl } from '../../lib/email-templates.js';
+import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
 import type { Severity, EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
 export interface MonitorNotificationJob {
@@ -51,14 +52,14 @@ async function sendMonitorWebhook(url: string, job: MonitorNotificationJob, orgN
   const frontendUrl = getFrontendUrl();
   const isDown = job.status === 'down';
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'LogTide/1.0',
-    },
-    body: JSON.stringify({
-      event_type: 'monitor_status_change',
+  // Wrap in the unified envelope (WS3). organization{id,name} object stays in
+  // data. event_type/timestamp superseded by envelope.type/occurredAt.
+  // No project on monitors, so projectId is null.
+  const envelope = buildEnvelope({
+    type: 'monitor.status_changed',
+    organizationId: job.organizationId,
+    projectId: null,
+    data: {
       monitor_id: job.monitorId,
       monitor_name: job.monitorName,
       status: job.status,
@@ -77,14 +78,18 @@ async function sendMonitorWebhook(url: string, job: MonitorNotificationJob, orgN
       consecutive_failures: job.consecutiveFailures,
       downtime_duration: job.downtimeDuration,
       link: `${frontendUrl}/dashboard/monitoring`,
-      timestamp: new Date().toISOString(),
-    }),
-    signal: AbortSignal.timeout(10000),
+    },
   });
 
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
+  // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
+  // retry/backoff, DLQ, and delivery logging.
+  await webhookDispatcher.enqueue({
+    url,
+    organizationId: job.organizationId,
+    eventType: 'monitor.status_changed',
+    eventId: `${job.monitorId}:${job.status}:${url}`,
+    payload: envelope,
+  });
 }
 
 export async function processMonitorNotification(job: IJob<MonitorNotificationJob>): Promise<void> {

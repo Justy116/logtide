@@ -14,6 +14,7 @@ import { notificationsService } from '../../modules/notifications/service.js';
 import { notificationChannelsService } from '../../modules/notification-channels/index.js';
 import { createQueue } from '../connection.js';
 import { generateErrorEmail, getFrontendUrl } from '../../lib/email-templates.js';
+import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
 import type { ExceptionLanguage } from '../../modules/exceptions/types.js';
 import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
@@ -63,14 +64,14 @@ async function sendErrorWebhook(
 ): Promise<void> {
   const frontendUrl = getFrontendUrl();
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'LogTide/1.0',
-    },
-    body: JSON.stringify({
-      event_type: 'error',
+  // Wrap in the unified envelope (WS3). organization{id,name} object stays in
+  // data (it carries the org name). projectId moves to the envelope as well.
+  // event_type/timestamp are superseded by envelope.type/occurredAt.
+  const envelope = buildEnvelope({
+    type: 'error.detected',
+    organizationId: data.organizationId,
+    projectId: data.projectId ?? null,
+    data: {
       title: `${data.isNewErrorGroup ? 'New Error' : 'Error'}: ${data.exceptionType}`,
       message: data.exceptionMessage || `An error occurred in ${data.service}`,
       severity: data.isNewErrorGroup ? 'high' : 'medium',
@@ -88,14 +89,18 @@ async function sendErrorWebhook(
       service: data.service,
       is_new: data.isNewErrorGroup,
       link: `${frontendUrl}/dashboard/errors/${errorGroupId}`,
-      timestamp: new Date().toISOString(),
-    }),
-    signal: AbortSignal.timeout(10000),
+    },
   });
 
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
+  // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
+  // retry/backoff, DLQ, and delivery logging.
+  await webhookDispatcher.enqueue({
+    url,
+    organizationId: data.organizationId,
+    eventType: 'error.detected',
+    eventId: `${errorGroupId}:${url}`,
+    payload: envelope,
+  });
 }
 
 /**

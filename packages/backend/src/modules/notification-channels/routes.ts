@@ -8,6 +8,10 @@ import { notificationChannelsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import type { NotificationEventType } from '@logtide/shared';
+import { context } from '@logtide/shared/context';
+import { assertWithinLimit } from '../../capabilities/index.js';
+import { CapabilityError } from '../../capabilities/errors.js';
+import { auditLogService } from '../audit-log/service.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -53,6 +57,10 @@ const channelIdSchema = z.object({
   id: z.string().uuid('Invalid channel ID format'),
 });
 
+const orgQuerySchema = z.object({
+  organizationId: z.string().uuid('organizationId must be a valid uuid'),
+});
+
 const setChannelsSchema = z.object({
   channelIds: z.array(z.string().uuid()),
 });
@@ -93,13 +101,9 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/', async (request: any, reply) => {
     try {
-      const organizationId = request.query.organizationId as string;
+      const { organizationId } = orgQuerySchema.parse(request.query);
       const enabledOnly = request.query.enabled === 'true';
       const type = request.query.type as 'email' | 'webhook' | undefined;
-
-      if (!organizationId) {
-        return reply.status(400).send({ error: 'organizationId is required' });
-      }
 
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
       if (!isMember) {
@@ -113,6 +117,9 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
 
       return reply.send({ channels });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'organizationId query parameter is required' });
+      }
       console.error(error, 'Failed to list notification channels');
       return reply.status(500).send({ error: 'Failed to list channels' });
     }
@@ -125,11 +132,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
   fastify.get('/:id', async (request: any, reply) => {
     try {
       const { id } = channelIdSchema.parse(request.params);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({ error: 'organizationId is required' });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
       if (!isMember) {
@@ -158,11 +161,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
   fastify.post('/', async (request: any, reply) => {
     try {
       const body = createChannelSchema.parse(request.body);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({ error: 'organizationId is required' });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
       if (!isMember) {
@@ -174,14 +173,31 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: 'Only admins can create notification channels' });
       }
 
+      await context.runAsSystem('channels:create-limit-check', async () => {
+        await context.with({ organizationId }, async () => {
+          const count = await notificationChannelsService.countChannels(organizationId);
+          await assertWithinLimit('notifications.max_channels', count);
+        });
+      });
+
       const channel = await notificationChannelsService.createChannel(
         organizationId,
         body,
         request.user.id
       );
 
+      await auditLogService.record({
+        action: 'channel.created',
+        target: { type: 'notification_channel', id: channel.id },
+        organizationId,
+        metadata: { name: channel.name, type: channel.type },
+      });
+
       return reply.status(201).send({ channel });
     } catch (error) {
+      if (error instanceof CapabilityError) {
+        throw error;
+      }
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Validation error', details: error.errors });
       }
@@ -201,11 +217,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
     try {
       const { id } = channelIdSchema.parse(request.params);
       const body = updateChannelSchema.parse(request.body);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({ error: 'organizationId is required' });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
       if (!isMember) {
@@ -218,6 +230,13 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
       }
 
       const channel = await notificationChannelsService.updateChannel(id, organizationId, body);
+
+      await auditLogService.record({
+        action: 'channel.updated',
+        target: { type: 'notification_channel', id: channel.id },
+        organizationId,
+        metadata: { name: channel.name, type: channel.type },
+      });
 
       return reply.send({ channel });
     } catch (error) {
@@ -239,11 +258,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
   fastify.delete('/:id', async (request: any, reply) => {
     try {
       const { id } = channelIdSchema.parse(request.params);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({ error: 'organizationId is required' });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
       if (!isMember) {
@@ -259,6 +274,12 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
       if (!deleted) {
         return reply.status(404).send({ error: 'Channel not found' });
       }
+
+      await auditLogService.record({
+        action: 'channel.deleted',
+        target: { type: 'notification_channel', id },
+        organizationId,
+      });
 
       return reply.status(204).send();
     } catch (error) {
@@ -278,11 +299,11 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
     try {
       const { id } = channelIdSchema.parse(request.params);
       // Accept from body (preferred) or query (legacy)
-      const organizationId = (request.body?.organizationId || request.query.organizationId) as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({ error: 'organizationId is required' });
-      }
+      const { organizationId } = orgQuerySchema.parse(
+        request.body?.organizationId
+          ? request.body
+          : request.query
+      );
 
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
       if (!isMember) {
@@ -298,6 +319,9 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
 
       return reply.send({ result });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'organizationId is required' });
+      }
       if (error instanceof Error && error.message === 'Channel not found') {
         return reply.status(404).send({ error: 'Channel not found' });
       }
@@ -316,11 +340,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/defaults', async (request: any, reply) => {
     try {
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({ error: 'organizationId is required' });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
       if (!isMember) {
@@ -331,6 +351,9 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
 
       return reply.send({ defaults });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'organizationId is required' });
+      }
       console.error(error, 'Failed to get organization defaults');
       return reply.status(500).send({ error: 'Failed to get defaults' });
     }
@@ -343,11 +366,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
   fastify.get('/defaults/:eventType', async (request: any, reply) => {
     try {
       const eventType = eventTypeSchema.parse(request.params.eventType);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({ error: 'organizationId is required' });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
       if (!isMember) {
@@ -377,11 +396,7 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
     try {
       const eventType = eventTypeSchema.parse(request.params.eventType);
       const { channelIds } = setChannelsSchema.parse(request.body);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({ error: 'organizationId is required' });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
       if (!isMember) {

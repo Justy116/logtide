@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EmailProvider } from '../../../modules/notification-channels/providers/email-provider.js';
 import { WebhookProvider } from '../../../modules/notification-channels/providers/webhook-provider.js';
 import type { NotificationContext } from '../../../modules/notification-channels/providers/interface.js';
+import { parseWebhookEvent } from '@logtide/shared';
 
 // safeFetch normally resolves DNS + validates; in tests delegate straight to
 // the mocked global.fetch so existing payload/header assertions hold without
@@ -182,12 +183,17 @@ describe('WebhookProvider', () => {
       expect(options.headers['Content-Type']).toBe('application/json');
 
       const body = JSON.parse(options.body);
-      expect(body.event_type).toBe('alert');
-      expect(body.title).toBe('Test Alert');
-      expect(body.message).toBe('Test message');
-      expect(body.severity).toBe('high');
-      expect(body.organization.id).toBe('org-123');
-      expect(body.organization.name).toBe('Test Org');
+      // body is now a webhook envelope; non-test sends use channel.notification
+      expect(body.type).toBe('channel.notification');
+      expect(body.version).toBe(1);
+      expect(body.id).toMatch(/^evt_/);
+      expect(body.data.title).toBe('Test Alert');
+      expect(body.data.message).toBe('Test message');
+      expect(body.data.severity).toBe('high');
+      expect(body.data.organization.id).toBe('org-123');
+      expect(body.data.organization.name).toBe('Test Org');
+      expect(body.data).not.toHaveProperty('event_type');
+      expect(body.data).not.toHaveProperty('timestamp');
     });
 
     it('should add bearer auth header when configured', async () => {
@@ -355,14 +361,22 @@ describe('WebhookProvider', () => {
       });
       global.fetch = mockFetch;
 
-      const result = await provider.test({ url: 'https://example.com/webhook' });
+      const testOrgId = '11111111-1111-1111-1111-111111111111';
+      const result = await provider.test({ url: 'https://example.com/webhook' }, testOrgId);
 
       expect(result.success).toBe(true);
 
       const [, options] = mockFetch.mock.calls[0];
       const body = JSON.parse(options.body);
-      expect(body.title).toBe('Test Notification');
-      expect(body.organization.name).toBe('Test Organization');
+      // body is now a webhook envelope of type channel.test
+      expect(body.type).toBe('channel.test');
+      expect(body.version).toBe(1);
+      expect(body.data.title).toBe('Test Notification');
+      expect(body.data.organization.name).toBe('Test Organization');
+      // real org id must flow into the envelope
+      expect(body.organizationId).toBe(testOrgId);
+      // schema-lock: parseWebhookEvent must accept the full envelope
+      expect(() => parseWebhookEvent(body)).not.toThrow();
     });
   });
 });

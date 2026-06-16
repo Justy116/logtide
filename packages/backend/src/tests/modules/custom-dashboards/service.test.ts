@@ -179,10 +179,10 @@ describe('CustomDashboardsService.delete', () => {
     await expect(service.delete(d.id, ctx.organization.id)).rejects.toThrow('Cannot delete the default dashboard');
   });
 
-  it('is idempotent for non-existent dashboard', async () => {
+  it('throws Dashboard not found when the id does not exist in this org', async () => {
     await expect(
       service.delete('00000000-0000-0000-0000-000000000000', ctx.organization.id)
-    ).resolves.not.toThrow();
+    ).rejects.toThrow('Dashboard not found');
   });
 });
 

@@ -300,8 +300,11 @@ describe('OTLP API', () => {
 
       expect(storedLog?.metadata).toBeDefined();
       const metadata = storedLog?.metadata as Record<string, unknown>;
-      expect(metadata['service.version']).toBe('1.2.3');
-      expect(metadata['host.name']).toBe('test-host');
+      // resource attrs are namespaced under metadata.resource
+      const resource = metadata['resource'] as Record<string, unknown>;
+      expect(resource['service.version']).toBe('1.2.3');
+      expect(resource['host.name']).toBe('test-host');
+      // log record attributes stay flat
       expect(metadata['user.id']).toBe('12345');
     });
 

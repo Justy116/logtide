@@ -122,12 +122,15 @@ export class CustomDashboardsService {
       }
     }
 
-    const rows = await query.orderBy('updated_at', 'desc').execute();
+    query = query.where((eb) =>
+      eb.or([
+        eb('is_personal', '=', false),
+        eb('created_by', '=', userId),
+      ])
+    );
 
-    // Hide other users' personal dashboards
-    return rows
-      .filter((r) => !r.is_personal || r.created_by === userId)
-      .map((r) => this.mapRow(r as unknown as DashboardRow));
+    const rows = await query.orderBy('updated_at', 'desc').execute();
+    return rows.map((r) => this.mapRow(r as unknown as DashboardRow));
   }
 
   async getById(id: string, organizationId: string): Promise<CustomDashboard | null> {
@@ -183,7 +186,11 @@ export class CustomDashboardsService {
       .where('id', '=', id)
       .where('organization_id', '=', organizationId)
       .returningAll()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
+
+    if (!row) {
+      throw new Error('Dashboard not found');
+    }
 
     return this.mapRow(row as unknown as DashboardRow);
   }
@@ -246,7 +253,9 @@ export class CustomDashboardsService {
       .where('organization_id', '=', organizationId)
       .executeTakeFirst();
 
-    if (!existing) return;
+    if (!existing) {
+      throw new Error('Dashboard not found');
+    }
     if (existing.is_default) {
       throw new Error('Cannot delete the default dashboard');
     }
@@ -492,6 +501,16 @@ export class CustomDashboardsService {
   generatePanelId(): string {
     // Avoid pulling in nanoid; randomUUID is good enough for panel IDs.
     return `panel-${globalThis.crypto.randomUUID()}`;
+  }
+
+  /** Count custom dashboards for an organization (capability limit input). */
+  async countForOrg(organizationId: string): Promise<number> {
+    const row = await db
+      .selectFrom('custom_dashboards')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
   }
 
   /**

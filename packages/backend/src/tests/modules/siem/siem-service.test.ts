@@ -411,10 +411,10 @@ describe('SIEM Service - Incidents', () => {
         });
 
         // Link events to incident
-        await siemService.linkDetectionEventsToIncident(incident.id, [event1.id, event2.id]);
+        await siemService.linkDetectionEventsToIncident(incident.id, [event1.id, event2.id], organization.id);
 
         // Verify link
-        const linkedEvents = await siemService.getIncidentDetections(incident.id);
+        const linkedEvents = await siemService.getIncidentDetections(incident.id, organization.id);
         expect(linkedEvents).toHaveLength(2);
         expect(linkedEvents[0].incidentId).toBe(incident.id);
         expect(linkedEvents[1].incidentId).toBe(incident.id);
@@ -465,7 +465,7 @@ describe('SIEM Service - Incidents', () => {
             matchedFields: { source_ip: '1.1.1.1' },
         });
 
-        await siemService.linkDetectionEventsToIncident(incident.id, [event.id]);
+        await siemService.linkDetectionEventsToIncident(incident.id, [event.id], organization.id);
 
         // Mock enrichment service
         const mockEnrichmentService = {
@@ -482,7 +482,7 @@ describe('SIEM Service - Incidents', () => {
             }),
         } as any;
 
-        await siemService.enrichIncidentIpData(incident.id, mockEnrichmentService);
+        await siemService.enrichIncidentIpData(incident.id, mockEnrichmentService, organization.id);
 
         const updated = await siemService.getIncident(incident.id, organization.id);
         expect(updated?.ipReputation).toBeDefined();
@@ -504,7 +504,7 @@ describe('SIEM Service - Incidents', () => {
             extractIpAddresses: () => [],
         } as any;
 
-        await siemService.enrichIncidentIpData(incident.id, mockEnrichmentService);
+        await siemService.enrichIncidentIpData(incident.id, mockEnrichmentService, organization.id);
         const updated = await siemService.getIncident(incident.id, organization.id);
         expect(updated?.ipReputation).toBeNull();
     });

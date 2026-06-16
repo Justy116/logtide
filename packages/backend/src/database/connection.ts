@@ -4,6 +4,9 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Database } from './types.js';
+import { currentOrNull } from '@logtide/shared/context';
+import { formatContextComment } from '../context/kysely-plugin.js';
+import { TenantScopeGuardPlugin } from './tenant-scope-guard.js';
 
 const { Pool } = pg;
 
@@ -21,6 +24,11 @@ console.log('[Database Connection] Using DATABASE_URL:', DATABASE_URL.replace(/:
 
 const isProduction = process.env.NODE_ENV === 'production';
 const isTest = process.env.NODE_ENV === 'test';
+
+// Tenant scope guard: opt-in tripwire that throws on unscoped tenant-table queries.
+// Off by default (keeps the normal suite clean); enable with TENANT_GUARD=1 for the
+// isolation suite or a one-shot audit run. Never enabled in production.
+const tenantGuardEnabled = process.env.TENANT_GUARD === '1' && !isProduction;
 
 // Pool size configuration based on environment
 // Production: larger pool for high concurrency
@@ -59,6 +67,64 @@ const poolConfig = {
 
 export const pool = new Pool(poolConfig);
 
+// Context SQL comment injection: prepend /* req=... */ to every query string,
+// transparently, so slow-query logs and pg_stat_activity carry the request id.
+// Disabled when LOGTIDE_CONTEXT_SQL_COMMENT=false.
+const originalQuery = pool.query.bind(pool);
+(pool as unknown as { query: typeof pool.query }).query = function patchedQuery(
+  this: typeof pool,
+  ...args: any[]
+): any {
+  if (process.env.LOGTIDE_CONTEXT_SQL_COMMENT === 'false') {
+    return (originalQuery as any)(...args);
+  }
+  const ctx = currentOrNull();
+  if (!ctx) return (originalQuery as any)(...args);
+
+  const comment = formatContextComment(ctx);
+  const first = args[0];
+  if (typeof first === 'string') {
+    args[0] = comment + first;
+  } else if (first && typeof first === 'object' && typeof first.text === 'string') {
+    args[0] = { ...first, text: comment + first.text };
+  }
+  return (originalQuery as any)(...args);
+} as typeof pool.query;
+
+// Kysely uses pool.connect() to acquire a client and calls client.query() on it.
+// Wrap connect() to install the same comment-injection on each connected client.
+const originalConnect = pool.connect.bind(pool);
+(pool as unknown as { connect: typeof pool.connect }).connect = (async function patchedConnect(
+  this: typeof pool,
+  ...args: any[]
+): Promise<any> {
+  const client = await (originalConnect as any)(...args);
+  // pool.connect(callback) returns void; bail if no client materialized.
+  if (!client || typeof client !== 'object') return client;
+  // Patch the client's query method (only once per client)
+  if (!(client as any).__logtideContextPatched) {
+    const clientOriginalQuery = client.query.bind(client);
+    (client as any).query = function patchedClientQuery(this: any, ...qArgs: any[]): any {
+      if (process.env.LOGTIDE_CONTEXT_SQL_COMMENT === 'false') {
+        return clientOriginalQuery(...qArgs);
+      }
+      const ctx = currentOrNull();
+      if (!ctx) return clientOriginalQuery(...qArgs);
+
+      const comment = formatContextComment(ctx);
+      const first = qArgs[0];
+      if (typeof first === 'string') {
+        qArgs[0] = comment + first;
+      } else if (first && typeof first === 'object' && typeof first.text === 'string') {
+        qArgs[0] = { ...first, text: comment + first.text };
+      }
+      return clientOriginalQuery(...qArgs);
+    };
+    (client as any).__logtideContextPatched = true;
+  }
+  return client;
+}) as any;
+
 // Pool event handlers for monitoring
 pool.on('connect', () => {
   // Set statement timeout on each new connection
@@ -84,6 +150,7 @@ const enableQueryLogging = process.env.LOG_QUERIES === 'true' || (!isProduction 
 
 export const db = new Kysely<Database>({
   dialect,
+  plugins: tenantGuardEnabled ? [new TenantScopeGuardPlugin()] : [],
   log(event) {
     if (enableQueryLogging && event.level === 'query') {
       console.log('Query:', event.query.sql);

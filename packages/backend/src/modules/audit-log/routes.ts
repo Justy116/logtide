@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { auditLogService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
-import type { AuditCategory } from '../../database/types.js';
+import type { AuditCategory, AuditActorType, AuditOutcome } from '../../database/types.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -15,6 +15,8 @@ const querySchema = z.object({
   action: z.string().optional(),
   resourceType: z.string().optional(),
   userId: z.string().uuid().optional(),
+  actorType: z.enum(['user', 'apiKey', 'system']).optional(),
+  outcome: z.enum(['success', 'failure']).optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
   limit: z.coerce.number().min(1).max(200).optional().default(50),
@@ -25,6 +27,8 @@ const exportSchema = z.object({
   organizationId: z.string().uuid(),
   category: z.enum(AUDIT_CATEGORIES).optional(),
   action: z.string().optional(),
+  actorType: z.enum(['user', 'apiKey', 'system']).optional(),
+  outcome: z.enum(['success', 'failure']).optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
 });
@@ -60,6 +64,8 @@ export async function auditLogRoutes(fastify: FastifyInstance) {
           action: params.action,
           resourceType: params.resourceType,
           userId: params.userId,
+          actorType: params.actorType as AuditActorType | undefined,
+          outcome: params.outcome as AuditOutcome | undefined,
           from: params.from ? new Date(params.from) : undefined,
           to: params.to ? new Date(params.to) : undefined,
           limit: params.limit,
@@ -154,6 +160,8 @@ export async function auditLogRoutes(fastify: FastifyInstance) {
           return [
             escape(timeStr),
             escape(e.user_email),
+            escape(e.actor_type),
+            escape(e.outcome),
             escape(e.category),
             escape(e.action),
             escape(e.resource_type),
@@ -167,7 +175,7 @@ export async function auditLogRoutes(fastify: FastifyInstance) {
         reply.raw.setHeader('Content-Type', 'text/csv');
         reply.raw.setHeader('Content-Disposition', `attachment; filename="audit-log-${new Date().toISOString().slice(0, 10)}.csv"`);
 
-        const csvHeader = 'Time,User,Category,Action,Resource Type,Resource ID,IP Address,User Agent,Details\n';
+        const csvHeader = 'Time,User,Actor Type,Outcome,Category,Action,Resource Type,Resource ID,IP Address,User Agent,Details\n';
         reply.raw.write(csvHeader);
 
         const CHUNK_SIZE = 200;
@@ -179,6 +187,8 @@ export async function auditLogRoutes(fastify: FastifyInstance) {
             organizationId: params.organizationId,
             category: params.category as AuditCategory | undefined,
             action: params.action,
+            actorType: params.actorType as AuditActorType | undefined,
+            outcome: params.outcome as AuditOutcome | undefined,
             from: params.from ? new Date(params.from) : undefined,
             to: params.to ? new Date(params.to) : undefined,
             limit: CHUNK_SIZE,
@@ -195,14 +205,10 @@ export async function auditLogRoutes(fastify: FastifyInstance) {
           if (result.entries.length < CHUNK_SIZE || totalRows >= 10000) break;
         }
 
-        auditLogService.log({
+        await auditLogService.record({
+          action: 'data.exported',
+          target: { type: 'audit_log', id: null },
           organizationId: params.organizationId,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'export_audit_log',
-          category: 'log_access',
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
           metadata: {
             format: 'csv',
             rowCount: totalRows,

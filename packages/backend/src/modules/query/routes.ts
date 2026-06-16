@@ -3,7 +3,7 @@ import { queryService, type SearchMode } from './service.js';
 import type { LogLevel, MetadataFilter } from '@logtide/shared';
 import { metadataFiltersSchema } from '@logtide/shared';
 import { db } from '../../database/index.js';
-import { requireFullAccess } from '../auth/guards.js';
+import { requireFullAccess, resolveQueryProjectId } from '../auth/guards.js';
 import { auditLogService } from '../audit-log/service.js';
 
 
@@ -104,8 +104,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         metadata_filters = result.data;
       }
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -113,10 +115,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      if (request.user?.id) {
+      if ((request as any).user?.id) {
         const projectIds = Array.isArray(projectId) ? projectId : [projectId];
         for (const pid of projectIds) {
-          const hasAccess = await verifyProjectAccess(pid, request.user.id);
+          const hasAccess = await verifyProjectAccess(pid, (request as any).user.id);
           if (!hasAccess) {
             return reply.code(403).send({
               error: `Access denied - you do not have access to project ${pid}`,
@@ -142,20 +144,12 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         cursor,
       });
 
-      if (request.user?.id) {
-        auditLogService.log({
-          organizationId: null, // Project context, organizationId will be resolved if needed or kept null for global/multi-project
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'search_logs',
-          category: 'log_access',
-          resourceType: 'project',
-          resourceId: Array.isArray(projectId) ? projectId.join(',') : projectId,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { q, service, level, traceId, sessionId, searchMode },
-        });
-      }
+      void auditLogService.record({
+        action: 'data.logs_searched',
+        target: { type: 'project', id: Array.isArray(projectId) ? projectId.join(',') : projectId },
+        metadata: { q, service, level, traceId, sessionId, searchMode },
+        organizationId: null,
+      }, { buffered: true });
 
       return logs;
     },
@@ -186,8 +180,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
       const { traceId } = request.params as { traceId: string };
       const { projectId: queryProjectId } = request.query as { projectId?: string };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -207,20 +203,12 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
 
       const logs = await queryService.getLogsByTraceId(projectId, traceId);
 
-      if (request.user?.id) {
-        auditLogService.log({
-          organizationId: null,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'view_trace_logs',
-          category: 'log_access',
-          resourceType: 'trace',
-          resourceId: traceId,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { projectId },
-        });
-      }
+      void auditLogService.record({
+        action: 'data.trace_viewed',
+        target: { type: 'trace', id: traceId },
+        metadata: { projectId },
+        organizationId: null,
+      }, { buffered: true });
 
       return { logs };
     },
@@ -252,8 +240,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         projectId?: string;
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -278,20 +268,12 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         after: after || 10,
       });
 
-      if (request.user?.id) {
-        auditLogService.log({
-          organizationId: null,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'view_log_context',
-          category: 'log_access',
-          resourceType: 'project',
-          resourceId: projectId,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { time, before, after },
-        });
-      }
+      void auditLogService.record({
+        action: 'data.log_context_viewed',
+        target: { type: 'project', id: projectId },
+        metadata: { time, before, after },
+        organizationId: null,
+      }, { buffered: true });
 
       return context;
     },
@@ -322,8 +304,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
       const { logId } = request.params as { logId: string };
       const { projectId: queryProjectId } = request.query as { projectId?: string };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -349,20 +333,12 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      if (request.user?.id) {
-        auditLogService.log({
-          organizationId: null,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'view_log_detail',
-          category: 'log_access',
-          resourceType: 'log',
-          resourceId: logId,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { projectId, service: log.service, level: log.level },
-        });
-      }
+      void auditLogService.record({
+        action: 'data.log_viewed',
+        target: { type: 'log', id: logId },
+        metadata: { projectId, service: log.service, level: log.level },
+        organizationId: null,
+      }, { buffered: true });
 
       return { log };
     },
@@ -396,8 +372,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         interval: '1m' | '5m' | '1h' | '1d';
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -423,20 +401,12 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         interval: interval || '1h',
       });
 
-      if (request.user?.id) {
-        auditLogService.log({
-          organizationId: null,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'view_aggregated_stats',
-          category: 'log_access',
-          resourceType: 'project',
-          resourceId: projectId,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { service, from, to, interval },
-        });
-      }
+      void auditLogService.record({
+        action: 'data.stats_viewed',
+        target: { type: 'project', id: projectId },
+        metadata: { service, from, to, interval },
+        organizationId: null,
+      }, { buffered: true });
 
       return stats;
     },
@@ -467,8 +437,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         to?: string;
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -493,20 +465,12 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         to ? new Date(to) : undefined
       );
 
-      if (request.user?.id) {
-        auditLogService.log({
-          organizationId: null,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'view_top_services',
-          category: 'log_access',
-          resourceType: 'project',
-          resourceId: projectId,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { limit, from, to },
-        });
-      }
+      void auditLogService.record({
+        action: 'data.top_services_viewed',
+        target: { type: 'project', id: projectId },
+        metadata: { limit, from, to },
+        organizationId: null,
+      }, { buffered: true });
 
       return { services };
     },
@@ -540,8 +504,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         to?: string;
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -589,20 +555,12 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         toDate
       );
 
-      if (request.user?.id) {
-        auditLogService.log({
-          organizationId: null,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'list_services',
-          category: 'log_access',
-          resourceType: 'project',
-          resourceId: Array.isArray(projectId) ? projectId.join(',') : projectId,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { from, to },
-        });
-      }
+      void auditLogService.record({
+        action: 'data.services_listed',
+        target: { type: 'project', id: Array.isArray(projectId) ? projectId.join(',') : projectId },
+        metadata: { from, to },
+        organizationId: null,
+      }, { buffered: true });
 
       return { services };
     },
@@ -636,8 +594,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         to?: string;
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -685,20 +645,12 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         toDate
       );
 
-      if (request.user?.id) {
-        auditLogService.log({
-          organizationId: null,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'list_hostnames',
-          category: 'log_access',
-          resourceType: 'project',
-          resourceId: Array.isArray(projectId) ? projectId.join(',') : projectId,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { from, to },
-        });
-      }
+      void auditLogService.record({
+        action: 'data.hostnames_listed',
+        target: { type: 'project', id: Array.isArray(projectId) ? projectId.join(',') : projectId },
+        metadata: { from, to },
+        organizationId: null,
+      }, { buffered: true });
 
       return { hostnames };
     },
@@ -726,8 +678,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         projectId?: string;
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -745,20 +699,12 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      if (request.user?.id) {
-        auditLogService.log({
-          organizationId: null,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'stream_logs',
-          category: 'log_access',
-          resourceType: 'project',
-          resourceId: projectId,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { service, level },
-        });
-      }
+      void auditLogService.record({
+        action: 'data.logs_streamed',
+        target: { type: 'project', id: projectId },
+        metadata: { service, level },
+        organizationId: null,
+      }, { buffered: true });
 
       reply.raw.setHeader('Access-Control-Allow-Origin', '*');
       reply.raw.setHeader('Access-Control-Allow-Credentials', 'false');
@@ -860,8 +806,10 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         to?: string;
       };
 
-      // Get projectId from query params (for session auth) or from auth plugin (for API key auth)
-      const projectId = queryProjectId || request.projectId;
+      // Resolve projectId enforcing API-key tenant boundary
+      const resolvedProjectId = await resolveQueryProjectId(request, reply, queryProjectId);
+      if (resolvedProjectId === null) return; // 403 already sent
+      const projectId = resolvedProjectId as string | undefined;
 
       if (!projectId) {
         return reply.code(400).send({
@@ -886,20 +834,12 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
         to ? new Date(to) : undefined
       );
 
-      if (request.user?.id) {
-        auditLogService.log({
-          organizationId: null,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'view_top_errors',
-          category: 'log_access',
-          resourceType: 'project',
-          resourceId: projectId,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { limit, from, to },
-        });
-      }
+      void auditLogService.record({
+        action: 'data.top_errors_viewed',
+        target: { type: 'project', id: projectId },
+        metadata: { limit, from, to },
+        organizationId: null,
+      }, { buffered: true });
 
       return { errors };
     },

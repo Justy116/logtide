@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { db } from '../../../database/index.js';
 import { createTestUser, createTestOrganization } from '../../helpers/factories.js';
+import { parseWebhookEvent } from '@logtide/shared';
 
 // Mock queue connection BEFORE importing anything that uses it
 vi.mock('../../../queue/connection.js', () => ({
@@ -14,6 +15,17 @@ vi.mock('../../../queue/connection.js', () => ({
   })),
   getConnection: () => null,
 }));
+
+// Mock webhookDispatcher so it doesn't hit real queues/SSRF guard.
+// buildEnvelope is kept real so the envelope shape can be validated.
+const { incidentEnqueueMock } = vi.hoisted(() => ({ incidentEnqueueMock: vi.fn() }));
+vi.mock('../../../modules/webhooks/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../modules/webhooks/index.js')>();
+  return {
+    ...actual,
+    webhookDispatcher: { enqueue: incidentEnqueueMock },
+  };
+});
 
 // Mock the config module
 vi.mock('../../../config/index.js', () => ({
@@ -48,9 +60,10 @@ vi.mock('../../../modules/notifications/service.js', () => ({
 }));
 
 // Mock the notification channels service
+const mockGetIncidentChannels = vi.fn().mockResolvedValue([]);
 vi.mock('../../../modules/notification-channels/index.js', () => ({
   notificationChannelsService: {
-    getIncidentChannels: vi.fn().mockResolvedValue([]),
+    getIncidentChannels: (...args: unknown[]) => mockGetIncidentChannels(...args),
     getOrganizationDefaults: vi.fn().mockResolvedValue([]),
   },
 }));
@@ -64,6 +77,8 @@ import type { Job } from 'bullmq';
 describe('Incident Notification Job', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    incidentEnqueueMock.mockReset().mockResolvedValue({ deliveryId: 'del-1' });
+    mockGetIncidentChannels.mockReset().mockResolvedValue([]);
   });
 
   describe('processIncidentNotification', () => {
@@ -267,6 +282,51 @@ describe('Incident Notification Job', () => {
         expect(notificationsService.createNotification).toHaveBeenCalled();
       }
     });
+  });
+});
+
+describe('Incident webhook envelope', () => {
+  beforeEach(() => {
+    incidentEnqueueMock.mockReset().mockResolvedValue({ deliveryId: 'del-1' });
+    mockGetIncidentChannels.mockReset();
+  });
+
+  it('enqueues an incident.created envelope', async () => {
+    const owner = await createTestUser({ name: 'Owner User' });
+    const org = await createTestOrganization({ ownerId: owner.id, name: 'Webhook Org' });
+
+    mockGetIncidentChannels.mockResolvedValueOnce([{
+      id: '00000000-0000-0000-0000-000000000020',
+      type: 'webhook',
+      enabled: true,
+      config: { url: 'https://hooks.example.com/incident' },
+    }]);
+
+    const job = {
+      data: {
+        incidentId: '00000000-0000-0000-0000-000000000099',
+        organizationId: org.id,
+        title: 'Envelope Test Incident',
+        description: 'something suspicious',
+        severity: 'high',
+        affectedServices: ['api'],
+      } as IncidentNotificationJob,
+    } as Job<IncidentNotificationJob>;
+
+    await processIncidentNotification(job);
+
+    expect(incidentEnqueueMock).toHaveBeenCalledTimes(1);
+    const call = incidentEnqueueMock.mock.calls[0][0];
+    expect(call.eventType).toBe('incident.created');
+    const envelope = parseWebhookEvent(call.payload);
+    expect(envelope.type).toBe('incident.created');
+    expect(envelope.organizationId).toBe(org.id);
+    expect(envelope.projectId).toBeNull();
+    const d = envelope.data as Record<string, unknown>;
+    expect(d).not.toHaveProperty('event_type');
+    expect(d).not.toHaveProperty('timestamp');
+    expect(d.incident_id).toBe('00000000-0000-0000-0000-000000000099');
+    expect(d.title).toBe('Envelope Test Incident');
   });
 });
 

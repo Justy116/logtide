@@ -13,6 +13,8 @@
   import GitBranch from '@lucide/svelte/icons/git-branch';
   import Settings from '@lucide/svelte/icons/settings';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
+  import Send from '@lucide/svelte/icons/send';
 
   interface Props {
     children?: import('svelte').Snippet;
@@ -77,12 +79,19 @@
       label: 'Notifications',
       items: [
         { label: 'Channels', href: '/dashboard/settings/channels', icon: BellRing },
+        { label: 'Webhook Deliveries', href: '/dashboard/settings/webhooks', icon: Send },
       ],
     },
     {
       label: 'Team',
       items: [
         { label: 'Members', href: '/dashboard/settings/members', icon: Users },
+      ],
+    },
+    {
+      label: 'Billing & Usage',
+      items: [
+        { label: 'Usage', href: '/dashboard/settings/usage', icon: BarChart3 },
       ],
     },
     {

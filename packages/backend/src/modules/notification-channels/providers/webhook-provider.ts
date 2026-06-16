@@ -4,9 +4,24 @@
  */
 
 import type { NotificationProvider, NotificationContext, DeliveryResult } from './interface.js';
-import type { WebhookChannelConfig, ChannelConfig } from '@logtide/shared';
-import { safeFetch, SsrfBlockedError } from '../../../utils/ssrf-guard.js';
-import { config } from '../../../config/index.js';
+import type { WebhookChannelConfig, ChannelConfig, WebhookEventType } from '@logtide/shared';
+import { deliverOnce, buildEnvelope } from '../../webhooks/index.js';
+import type { NotificationEventType } from '@logtide/shared';
+
+/** Map a NotificationEventType to a WebhookEventType for the envelope.
+ *
+ * The provider's generic buildData output satisfies channelNotificationDataSchema
+ * but not the stricter per-event schemas (alert.triggered requires log_count etc.).
+ * Queue jobs that send type-specific events build their own envelopes and bypass
+ * this provider path entirely; here we use channel.notification for all non-test
+ * sends so parseWebhookEvent never throws for receivers.
+ */
+function toEnvelopeType(eventType: NotificationEventType | string): WebhookEventType {
+  if (eventType === 'test') {
+    return 'channel.test';
+  }
+  return 'channel.notification';
+}
 
 export class WebhookProvider implements NotificationProvider {
   readonly type = 'webhook' as const;
@@ -18,71 +33,49 @@ export class WebhookProvider implements NotificationProvider {
 
     const webhookConfig = channelConfig as WebhookChannelConfig;
 
-    try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'User-Agent': 'LogTide/1.0',
-        ...(webhookConfig.headers || {}),
-      };
-
-      // Add authentication if configured
-      if (webhookConfig.auth) {
-        if (webhookConfig.auth.type === 'bearer' && webhookConfig.auth.token) {
-          headers['Authorization'] = `Bearer ${webhookConfig.auth.token}`;
-        } else if (
-          webhookConfig.auth.type === 'basic' &&
-          webhookConfig.auth.username &&
-          webhookConfig.auth.password
-        ) {
-          const credentials = Buffer.from(
-            `${webhookConfig.auth.username}:${webhookConfig.auth.password}`
-          ).toString('base64');
-          headers['Authorization'] = `Basic ${credentials}`;
-        }
+    // Build auth headers, then hand off to the shared deliverOnce primitive
+    // (#218): it runs the beforeWebhookDispatch hook, applies the SSRF guard,
+    // and signs the body. This keeps the synchronous DeliveryResult contract
+    // the "Test Channel" button relies on while centralizing delivery.
+    const headers: Record<string, string> = { ...(webhookConfig.headers || {}) };
+    if (webhookConfig.auth) {
+      if (webhookConfig.auth.type === 'bearer' && webhookConfig.auth.token) {
+        headers['Authorization'] = `Bearer ${webhookConfig.auth.token}`;
+      } else if (
+        webhookConfig.auth.type === 'basic' &&
+        webhookConfig.auth.username &&
+        webhookConfig.auth.password
+      ) {
+        const credentials = Buffer.from(
+          `${webhookConfig.auth.username}:${webhookConfig.auth.password}`
+        ).toString('base64');
+        headers['Authorization'] = `Basic ${credentials}`;
       }
-
-      const payload = this.buildPayload(context);
-
-      // safeFetch validates the URL (and every redirect hop) against the SSRF
-      // guard before connecting. Private/internal targets are rejected unless
-      // MONITOR_ALLOW_PRIVATE_TARGETS is set for self-hosted deployments.
-      const response = await safeFetch(
-        webhookConfig.url,
-        {
-          method: webhookConfig.method || 'POST',
-          headers,
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(10000), // 10s timeout
-        },
-        { allowPrivate: config.MONITOR_ALLOW_PRIVATE_TARGETS }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        console.error(`[WebhookProvider] HTTP ${response.status}: ${errorText}`);
-        return {
-          success: false,
-          error: `HTTP ${response.status}: ${response.statusText}`,
-        };
-      }
-
-      console.log(`[WebhookProvider] Sent to ${webhookConfig.url}`);
-
-      return {
-        success: true,
-        metadata: {
-          statusCode: response.status,
-          url: webhookConfig.url,
-        },
-      };
-    } catch (error) {
-      if (error instanceof SsrfBlockedError) {
-        return { success: false, error: 'Webhook URLs pointing to private/internal addresses are not allowed' };
-      }
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`[WebhookProvider] Failed: ${errorMessage}`);
-      return { success: false, error: errorMessage };
     }
+
+    const envelopeType = toEnvelopeType(context.eventType);
+
+    const envelope = buildEnvelope({
+      type: envelopeType,
+      organizationId: context.organizationId,
+      projectId: null,
+      data: this.buildData(context),
+    });
+
+    const result = await deliverOnce({
+      url: webhookConfig.url,
+      body: envelope,
+      organizationId: context.organizationId ?? null,
+      eventType: envelopeType,
+      method: webhookConfig.method,
+      headers,
+      channelId: context.channelId,
+    });
+
+    if (result.success) {
+      return { success: true, metadata: { statusCode: result.statusCode, url: webhookConfig.url } };
+    }
+    return { success: false, error: result.error };
   }
 
   validateConfig(config: unknown): config is WebhookChannelConfig {
@@ -95,12 +88,14 @@ export class WebhookProvider implements NotificationProvider {
     );
   }
 
-  async test(channelConfig: ChannelConfig): Promise<DeliveryResult> {
+  async test(channelConfig: ChannelConfig, organizationId: string): Promise<DeliveryResult> {
     return this.send(
       {
-        organizationId: 'test',
+        organizationId,
         organizationName: 'Test Organization',
-        eventType: 'alert',
+        // 'test' is not in NotificationEventType; cast to trigger the default
+        // branch in toEnvelopeType which maps to 'channel.test'.
+        eventType: 'test' as NotificationEventType,
         title: 'Test Notification',
         message: 'This is a test notification from LogTide to verify your webhook configuration.',
         severity: 'informational',
@@ -109,9 +104,9 @@ export class WebhookProvider implements NotificationProvider {
     );
   }
 
-  private buildPayload(context: NotificationContext): Record<string, unknown> {
+  /** Build the per-type data object (minus event_type/timestamp which move to the envelope). */
+  private buildData(context: NotificationContext): Record<string, unknown> {
     return {
-      event_type: context.eventType,
       title: context.title,
       message: context.message,
       severity: context.severity || 'informational',
@@ -120,7 +115,6 @@ export class WebhookProvider implements NotificationProvider {
         name: context.organizationName,
       },
       link: context.link,
-      timestamp: new Date().toISOString(),
       metadata: context.metadata || {},
     };
   }

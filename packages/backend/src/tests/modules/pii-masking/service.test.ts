@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { db } from '../../../database/index.js';
 import { PiiMaskingService } from '../../../modules/pii-masking/service.js';
 import { createTestContext } from '../../helpers/factories.js';
+import type { LogInput } from '@logtide/shared';
 
 describe('PiiMaskingService', () => {
     let service: PiiMaskingService;
@@ -712,6 +713,67 @@ describe('PiiMaskingService', () => {
             expect(meta.users[1].password).toBe('[REDACTED]');
             expect(meta.users[0].name).toBe('Alice');
         });
+
+        it('returns empty array when all records mask successfully', async () => {
+            await service.createRule(organizationId, {
+                name: 'email',
+                displayName: 'Email',
+                patternType: 'builtin',
+                action: 'redact',
+                enabled: true,
+            });
+
+            const logs: LogInput[] = [
+                { time: new Date(), service: 'api', level: 'info', message: 'user email is test@example.com' },
+            ];
+            const failed = await service.maskLogBatch(logs, organizationId, projectId);
+            expect(failed).toEqual([]);
+        });
+
+        it('returns the index of a record whose masking throws, leaving others masked', async () => {
+            await service.createRule(organizationId, {
+                name: 'email',
+                displayName: 'Email',
+                patternType: 'builtin',
+                action: 'redact',
+                enabled: true,
+            });
+
+            const logs: LogInput[] = [
+                { time: new Date(), service: 'api', level: 'info', message: 'first test@example.com' },
+                { time: new Date(), service: 'api', level: 'info', message: 'second test@example.com' },
+                { time: new Date(), service: 'api', level: 'info', message: 'third test@example.com' },
+            ];
+            const realMaskText = (service as any).maskText.bind(service);
+            const spy = vi.spyOn(service as any, 'maskText').mockImplementation((text: string, ruleSet: unknown) => {
+                if (typeof text === 'string' && text.startsWith('second')) {
+                    throw new Error('boom');
+                }
+                return realMaskText(text, ruleSet);
+            });
+            try {
+                const failed = await service.maskLogBatch(logs, organizationId, projectId);
+                expect(failed).toEqual([1]);
+                expect(logs[0].message).not.toContain('test@example.com');
+                expect(logs[2].message).not.toContain('test@example.com');
+            } finally {
+                spy.mockRestore();
+            }
+        });
+
+        it('fails the whole batch when rule compilation fails', async () => {
+            const logs: LogInput[] = [
+                { time: new Date(), service: 'api', level: 'info', message: 'a' },
+                { time: new Date(), service: 'api', level: 'info', message: 'b' },
+            ];
+            const spy = vi.spyOn(service as any, 'getCompiledRules').mockRejectedValue(new Error('db down'));
+            try {
+                const failed = await service.maskLogBatch(logs, organizationId, projectId);
+                expect(failed).toEqual([0, 1]);
+            } finally {
+                spy.mockRestore();
+            }
+        });
     });
 
     describe('testMasking', () => {
@@ -929,8 +991,9 @@ describe('PiiMaskingService', () => {
             });
 
             const logs: any[] = [];
-            await service.maskLogBatch(logs, organizationId, projectId);
+            const failed = await service.maskLogBatch(logs, organizationId, projectId);
             expect(logs.length).toBe(0);
+            expect(failed).toEqual([]);
         });
 
         it('should handle log with no message', async () => {

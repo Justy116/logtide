@@ -34,6 +34,26 @@ export interface IJobOptions {
   priority?: number;
   /** Unique job key (for deduplication) */
   jobKey?: string;
+  /** Cron repeat pattern */
+  repeat?: { pattern: string };
+  /** Remove completed jobs */
+  removeOnComplete?: boolean;
+  /** Remove failed jobs */
+  removeOnFail?: boolean;
+}
+
+/**
+ * Definition of a repeating cron job.
+ * Used by ICronRegistry.registerCronJobs() to register schedules at worker boot time.
+ */
+export interface CronJobDefinition {
+  task: string;
+  cronExpression: string;
+  payload: unknown;
+  identifier: string;
+}
+export interface ICronRegistry {
+  registerCronJobs(items: CronJobDefinition[]): Promise<void>;
 }
 
 /**

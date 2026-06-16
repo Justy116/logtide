@@ -194,6 +194,7 @@ export interface OrganizationDetails {
     name: string;
     slug: string;
     retentionDays: number;
+    auditRetentionDays: number | null;
     created_at: string;
     updated_at: string;
     members: Array<{
@@ -216,6 +217,20 @@ export interface OrganizationsListResponse {
     page: number;
     limit: number;
     totalPages: number;
+}
+
+// Capability entitlements (#214)
+export type EntitlementValue =
+    | { kind: 'boolean'; enabled: boolean }
+    | { kind: 'limit'; limit: number | null }
+    | { kind: 'quota'; limit: number | null };
+
+export type EntitlementMap = Record<string, EntitlementValue>;
+
+export interface EntitlementUpdate {
+    capability: string;
+    enabled?: boolean;
+    limitValue?: number | null;
 }
 
 // Project Management Interfaces
@@ -362,6 +377,26 @@ export interface VersionCheckResult {
     checkedAt: string;
 }
 
+export interface EnrichmentSourceStatus {
+    configured: boolean;
+    ready: boolean;
+    lastUpdate: string | null;
+    source: string;
+}
+
+export interface IngestionHealthStats {
+    counters24h: {
+        piiRejected: number;
+        detectionEnqueueFailed: number;
+        exceptionEnqueueFailed: number;
+        identifierFailed: number;
+    };
+    enrichment: {
+        ipReputation: EnrichmentSourceStatus & { totalIps: number };
+        geoIp: EnrichmentSourceStatus;
+    };
+}
+
 // System Settings Interfaces
 export interface SystemSetting {
     key: string;
@@ -462,6 +497,10 @@ class AdminAPI {
 
     async getVersionCheck(): Promise<VersionCheckResult> {
         return this.fetch<VersionCheckResult>('/version-check');
+    }
+
+    async getIngestionHealth(): Promise<IngestionHealthStats> {
+        return this.fetch<IngestionHealthStats>('/stats/ingestion-health');
     }
 
     // User Management
@@ -603,6 +642,10 @@ class AdminAPI {
         return this.fetch<OrganizationDetails>(`/organizations/${orgId}`);
     }
 
+    async getOrganizationEntitlements(orgId: string): Promise<{ entitlements: EntitlementMap }> {
+        return this.fetch<{ entitlements: EntitlementMap }>(`/organizations/${orgId}/entitlements`);
+    }
+
     async deleteOrganization(orgId: string): Promise<{ message: string }> {
         const auth = get(authStore);
         const token = auth.token;
@@ -626,7 +669,10 @@ class AdminAPI {
         return response.json();
     }
 
-    async updateOrganizationRetention(orgId: string, retentionDays: number): Promise<{ message: string; success: boolean; retentionDays: number }> {
+    async updateOrganizationRetention(
+        orgId: string,
+        opts: { retentionDays?: number; auditRetentionDays?: number | null }
+    ): Promise<{ message: string; success: boolean; retentionDays: number }> {
         const auth = get(authStore);
         const token = auth.token;
 
@@ -641,12 +687,41 @@ class AdminAPI {
                 'Content-Type': 'application/json',
                 Authorization: `Bearer ${token}`,
             },
-            body: JSON.stringify({ retentionDays }),
+            body: JSON.stringify(opts),
         });
 
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.error || 'Failed to update retention policy');
+        }
+
+        return response.json();
+    }
+
+    async updateOrganizationEntitlements(
+        orgId: string,
+        entitlements: EntitlementUpdate[]
+    ): Promise<{ message: string; updated: number }> {
+        const auth = get(authStore);
+        const token = auth.token;
+
+        if (!token) {
+            goto('/login');
+            throw new Error('No token found');
+        }
+
+        const response = await fetch(`${getApiBaseUrl()}/admin/organizations/${orgId}/entitlements`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ entitlements }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to update entitlements');
         }
 
         return response.json();

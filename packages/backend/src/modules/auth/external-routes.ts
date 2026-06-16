@@ -146,17 +146,11 @@ export async function publicAuthRoutes(fastify: FastifyInstance) {
 
       const result = await authenticationService.handleOidcCallback(code, state, request.query);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'auth.login_succeeded',
         organizationId: null,
-        userId: result.session.userId,
-        userEmail: result.user.email,
-        action: 'login_oidc',
-        category: 'user_management',
-        resourceType: 'user',
-        resourceId: result.session.userId,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
-        metadata: { provider: slug, isNewUser: result.isNewUser },
+        actor: { type: 'user', id: result.session.userId, label: result.user.email },
+        metadata: { provider: slug, isNewUser: result.isNewUser, method: 'oidc' },
       });
 
       // Redirect to frontend with session token
@@ -188,17 +182,11 @@ export async function publicAuthRoutes(fastify: FastifyInstance) {
 
         const result = await authenticationService.authenticateWithProvider(slug, body);
 
-        auditLogService.log({
+        await auditLogService.record({
+          action: 'auth.login_succeeded',
           organizationId: null,
-          userId: result.user.id,
-          userEmail: result.user.email,
-          action: 'login_ldap',
-          category: 'user_management',
-          resourceType: 'user',
-          resourceId: result.user.id,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
-          metadata: { provider: slug, isNewUser: result.isNewUser },
+          actor: { type: 'user', id: result.user.id, label: result.user.email },
+          metadata: { provider: slug, isNewUser: result.isNewUser, method: 'ldap' },
         });
 
         return reply.send({
@@ -287,16 +275,9 @@ export async function authenticatedAuthRoutes(fastify: FastifyInstance) {
 
       const identity = await authenticationService.linkIdentity(user.id, slug, body);
 
-      auditLogService.log({
-        organizationId: null,
-        userId: user.id,
-        userEmail: user.email,
-        action: 'link_identity',
-        category: 'user_management',
-        resourceType: 'user',
-        resourceId: user.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
+      await auditLogService.record({
+        action: 'user.identity_linked',
+        target: { type: 'user', id: user.id },
         metadata: { provider: slug, providerUserId: identity.providerUserId },
       });
 
@@ -327,17 +308,9 @@ export async function authenticatedAuthRoutes(fastify: FastifyInstance) {
       const { id } = request.params;
       await authenticationService.unlinkIdentity(user.id, id);
 
-      auditLogService.log({
-        organizationId: null,
-        userId: user.id,
-        userEmail: user.email,
-        action: 'unlink_identity',
-        category: 'user_management',
-        resourceType: 'user_identity',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
-        metadata: {},
+      await auditLogService.record({
+        action: 'user.identity_unlinked',
+        target: { type: 'user_identity', id },
       });
 
       return reply.status(204).send();
@@ -419,16 +392,10 @@ export async function adminAuthRoutes(fastify: FastifyInstance) {
       const body = createProviderSchema.parse(request.body);
       const provider = await providerService.createProvider(body);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'auth.provider_created',
+        target: { type: 'auth_provider', id: provider.id },
         organizationId: null,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'create_auth_provider',
-        category: 'config_change',
-        resourceType: 'auth_provider',
-        resourceId: provider.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { type: body.type, slug: body.slug, name: body.name },
       });
 
@@ -454,16 +421,10 @@ export async function adminAuthRoutes(fastify: FastifyInstance) {
 
       const provider = await providerService.updateProvider(id, body);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'auth.provider_updated',
+        target: { type: 'auth_provider', id },
         organizationId: null,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'update_auth_provider',
-        category: 'config_change',
-        resourceType: 'auth_provider',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { updates: Object.keys(body) },
       });
 
@@ -487,17 +448,10 @@ export async function adminAuthRoutes(fastify: FastifyInstance) {
       const { id } = request.params;
       await providerService.deleteProvider(id);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'auth.provider_deleted',
+        target: { type: 'auth_provider', id },
         organizationId: null,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'delete_auth_provider',
-        category: 'config_change',
-        resourceType: 'auth_provider',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
-        metadata: {},
       });
 
       return reply.status(204).send();
@@ -521,16 +475,9 @@ export async function adminAuthRoutes(fastify: FastifyInstance) {
       const { order } = request.body as { order: string[] };
       await providerService.reorderProviders(order);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'auth.providers_reordered',
         organizationId: null,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'reorder_auth_providers',
-        category: 'config_change',
-        resourceType: 'auth_provider',
-        resourceId: 'all',
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { order },
       });
 

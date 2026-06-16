@@ -18,6 +18,7 @@ export default defineConfig({
                 'dist/',
                 'src/tests/',
                 'src/scripts/',
+                'scripts/',
                 'migrations/',
                 'load-tests/',
                 'run-migration.js',
@@ -29,14 +30,8 @@ export default defineConfig({
                 '**/*.config.*',
                 '**/types.ts',
                 // Exclude hard-to-test infrastructure files
-                'src/modules/query/websocket.ts',
                 'src/queue/adapters/*.ts',
                 'src/queue/index.ts',
-                'src/modules/sigma/sync-service.ts',
-                'src/modules/siem/geolite2-service.ts',
-                'src/modules/siem/ipsum-service.ts',
-                'src/modules/monitoring/checker.ts',
-                'src/modules/custom-dashboards/panel-data-service.ts',
             ],
             thresholds: {
                 lines: 80,

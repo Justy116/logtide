@@ -102,11 +102,12 @@ async function groupByTraceId(organizationId: string): Promise<void> {
       // Link detection events to incident
       await siemService.linkDetectionEventsToIncident(
         incident.id,
-        group.eventIds.filter(Boolean)
+        group.eventIds.filter(Boolean),
+        organizationId
       );
 
       // Enrich incident with IP data
-      await siemService.enrichIncidentIpData(incident.id, enrichmentService);
+      await siemService.enrichIncidentIpData(incident.id, enrichmentService, organizationId);
 
       console.log(
         `[IncidentAutoGrouping] Created incident ${incident.id} with ${group.count} events (trace: ${group.trace_id})`
@@ -190,11 +191,12 @@ async function groupByTimeWindow(organizationId: string): Promise<void> {
       // Link detection events to incident
       await siemService.linkDetectionEventsToIncident(
         incident.id,
-        events.map(e => e.id)
+        events.map(e => e.id),
+        organizationId
       );
 
       // Enrich incident with IP data
-      await siemService.enrichIncidentIpData(incident.id, enrichmentService);
+      await siemService.enrichIncidentIpData(incident.id, enrichmentService, organizationId);
 
       console.log(
         `[IncidentAutoGrouping] Created incident ${incident.id} with ${events.length} events (service: ${firstEvent.service}, window: ${TIME_WINDOW_MINUTES}min)`

@@ -106,18 +106,22 @@ test.describe('Network Edge Cases', () => {
   });
 
   test('Page handles 401 unauthorized and redirects to login', async ({ page }) => {
-    await page.goto(`${TEST_FRONTEND_URL}/dashboard`);
-    await page.waitForLoadState('load');
+    // beforeEach already loaded /dashboard and waited for sidebar to render.
+    // Wait for network to be idle so any in-flight auth/org API calls complete
+    // before we clear storage - otherwise updateUser() can race and rewrite the
+    // auth state to localStorage after the clear, defeating the simulation.
+    await page.waitForLoadState('networkidle');
 
-    // Clear auth to simulate expired session
-    await page.evaluate(() => localStorage.clear());
+    // Clear auth + org state to simulate expired session
+    await page.evaluate(() => {
+      localStorage.clear();
+      sessionStorage.clear();
+    });
 
-    // Reload page
+    // Reload page - should detect missing token and redirect to login
     await page.reload();
-    await page.waitForTimeout(2000);
 
-    // Should redirect to login
-    await expect(page).toHaveURL(/login/);
+    await expect(page).toHaveURL(/login/, { timeout: 15000 });
   });
 
   test('Form handles validation errors from API', async ({ page }) => {

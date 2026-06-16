@@ -65,6 +65,16 @@ export class NotificationChannelsService {
     return this.mapChannel(channel);
   }
 
+  /** Count notification channels for an organization (capability limit input). */
+  async countChannels(organizationId: string): Promise<number> {
+    const row = await db
+      .selectFrom('notification_channels')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('organization_id', '=', organizationId)
+      .executeTakeFirst();
+    return Number(row?.count ?? 0);
+  }
+
   /**
    * Get all channels for an organization
    */
@@ -172,7 +182,7 @@ export class NotificationChannelsService {
       throw new Error(`Provider not found for type: ${channel.type}`);
     }
 
-    return provider.test(channel.config);
+    return provider.test(channel.config, organizationId);
   }
 
   // ============================================================================
@@ -554,7 +564,7 @@ export class NotificationChannelsService {
       }
 
       try {
-        const result = await provider.send(context, channel.config as ChannelConfig);
+        const result = await provider.send({ ...context, channelId: channel.id }, channel.config as ChannelConfig);
         results.set(channel.id, result);
       } catch (error) {
         results.set(channel.id, {

@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { db } from '../../../database/index.js';
 import { ingestionService } from '../../../modules/ingestion/service.js';
 import { createTestContext, createTestLog } from '../../helpers/factories.js';
+import { piiMaskingService } from '../../../modules/pii-masking/service.js';
+import { metering } from '../../../modules/metering/index.js';
 
 /**
  * Tests for IngestionService to improve coverage
@@ -30,8 +32,8 @@ describe('IngestionService', () => {
 
     describe('ingestLogs', () => {
         it('should return 0 for empty logs array', async () => {
-            const count = await ingestionService.ingestLogs([], projectId);
-            expect(count).toBe(0);
+            const result = await ingestionService.ingestLogs([], projectId);
+            expect(result.received).toBe(0);
         });
 
         it('should ingest logs and return count', async () => {
@@ -40,8 +42,8 @@ describe('IngestionService', () => {
                 { time: new Date(), service: 'api', level: 'error' as const, message: 'Test 2' },
             ];
 
-            const count = await ingestionService.ingestLogs(logs, projectId);
-            expect(count).toBe(2);
+            const result = await ingestionService.ingestLogs(logs, projectId);
+            expect(result.received).toBe(2);
         });
 
         it('should sanitize null characters from strings', async () => {
@@ -55,8 +57,8 @@ describe('IngestionService', () => {
                 },
             ];
 
-            const count = await ingestionService.ingestLogs(logs, projectId);
-            expect(count).toBe(1);
+            const result = await ingestionService.ingestLogs(logs, projectId);
+            expect(result.received).toBe(1);
 
             // Verify sanitization
             const log = await db
@@ -81,8 +83,8 @@ describe('IngestionService', () => {
                 },
             ];
 
-            const count = await ingestionService.ingestLogs(logs, projectId);
-            expect(count).toBe(1);
+            const result = await ingestionService.ingestLogs(logs, projectId);
+            expect(result.received).toBe(1);
 
             const log = await db
                 .selectFrom('logs')
@@ -104,8 +106,8 @@ describe('IngestionService', () => {
                 },
             ];
 
-            const count = await ingestionService.ingestLogs(logs, projectId);
-            expect(count).toBe(1);
+            const result = await ingestionService.ingestLogs(logs, projectId);
+            expect(result.received).toBe(1);
 
             const log = await db
                 .selectFrom('logs')
@@ -143,53 +145,64 @@ describe('IngestionService', () => {
             const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
             const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
-            // Create old log
             await db.insertInto('logs').values({
-                project_id: projectId,
-                service: 'test',
-                level: 'info',
-                message: 'Old log',
-                time: twoHoursAgo,
+                project_id: projectId, service: 'test', level: 'info',
+                message: 'Old log', time: twoHoursAgo,
             }).execute();
-
-            // Create recent log
             await db.insertInto('logs').values({
-                project_id: projectId,
-                service: 'test',
-                level: 'info',
-                message: 'Recent log',
-                time: now,
+                project_id: projectId, service: 'test', level: 'info',
+                message: 'Recent log', time: now,
             }).execute();
 
             const stats = await ingestionService.getStats(projectId, oneHourAgo);
 
-            // Note: Due to a bug in the service (missing query reassignment),
-            // the filter may not be applied. This test documents the expected behavior.
-            expect(stats.total).toBeGreaterThanOrEqual(0);
+            expect(stats.total).toBe(1);
+            expect(stats.by_level.info).toBe(1);
         });
 
         it('should filter by to date', async () => {
             const now = new Date();
             const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+            const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
-            await createTestLog({ projectId, level: 'info' });
+            await db.insertInto('logs').values({
+                project_id: projectId, service: 'test', level: 'info',
+                message: 'Old log', time: twoHoursAgo,
+            }).execute();
+            await db.insertInto('logs').values({
+                project_id: projectId, service: 'test', level: 'info',
+                message: 'Recent log', time: now,
+            }).execute();
 
-            const stats = await ingestionService.getStats(projectId, undefined, now);
+            const stats = await ingestionService.getStats(projectId, undefined, oneHourAgo);
 
-            expect(stats.total).toBeGreaterThanOrEqual(0);
+            expect(stats.total).toBe(1);
+            expect(stats.by_level.info).toBe(1);
         });
 
         it('should filter by both from and to dates', async () => {
             const now = new Date();
             const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+            const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
             const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
-            await createTestLog({ projectId, level: 'info' });
+            await db.insertInto('logs').values({
+                project_id: projectId, service: 'test', level: 'info',
+                message: 'Too old', time: threeHoursAgo,
+            }).execute();
+            await db.insertInto('logs').values({
+                project_id: projectId, service: 'test', level: 'error',
+                message: 'In window', time: twoHoursAgo,
+            }).execute();
+            await db.insertInto('logs').values({
+                project_id: projectId, service: 'test', level: 'info',
+                message: 'Too new', time: now,
+            }).execute();
 
-            const stats = await ingestionService.getStats(projectId, twoHoursAgo, now);
+            const stats = await ingestionService.getStats(projectId, new Date(twoHoursAgo.getTime() - 1000), oneHourAgo);
 
-            expect(stats).toHaveProperty('total');
-            expect(stats).toHaveProperty('by_level');
+            expect(stats.total).toBe(1);
+            expect(stats.by_level.error).toBe(1);
         });
 
         it('should return empty stats for project with no logs', async () => {
@@ -218,7 +231,6 @@ describe('IngestionService', () => {
 
         it('should correctly count logs within time range', async () => {
             const now = new Date();
-            const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
             const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
             const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
 
@@ -270,8 +282,8 @@ describe('IngestionService', () => {
                 },
             ];
 
-            const count = await ingestionService.ingestLogs(logs, projectId);
-            expect(count).toBe(1);
+            const result = await ingestionService.ingestLogs(logs, projectId);
+            expect(result.received).toBe(1);
 
             // Verify log was inserted
             const log = await db
@@ -293,8 +305,8 @@ describe('IngestionService', () => {
                 },
             ];
 
-            const count = await ingestionService.ingestLogs(logs, projectId);
-            expect(count).toBe(1);
+            const result = await ingestionService.ingestLogs(logs, projectId);
+            expect(result.received).toBe(1);
         });
 
         it('should sanitize null chars in arrays within metadata', async () => {
@@ -311,8 +323,8 @@ describe('IngestionService', () => {
                 },
             ];
 
-            const count = await ingestionService.ingestLogs(logs, projectId);
-            expect(count).toBe(1);
+            const result = await ingestionService.ingestLogs(logs, projectId);
+            expect(result.received).toBe(1);
 
             const log = await db
                 .selectFrom('logs')
@@ -344,8 +356,8 @@ describe('IngestionService', () => {
                 },
             ];
 
-            const count = await ingestionService.ingestLogs(logs, projectId);
-            expect(count).toBe(1);
+            const result = await ingestionService.ingestLogs(logs, projectId);
+            expect(result.received).toBe(1);
         });
 
         it('should handle logs without metadata', async () => {
@@ -358,8 +370,8 @@ describe('IngestionService', () => {
                 },
             ];
 
-            const count = await ingestionService.ingestLogs(logs, projectId);
-            expect(count).toBe(1);
+            const result = await ingestionService.ingestLogs(logs, projectId);
+            expect(result.received).toBe(1);
 
             const log = await db
                 .selectFrom('logs')
@@ -380,8 +392,8 @@ describe('IngestionService', () => {
                 },
             ];
 
-            const count = await ingestionService.ingestLogs(logs, projectId);
-            expect(count).toBe(1);
+            const result = await ingestionService.ingestLogs(logs, projectId);
+            expect(result.received).toBe(1);
 
             const log = await db
                 .selectFrom('logs')
@@ -400,11 +412,65 @@ describe('IngestionService', () => {
                 message: `Log message ${i}`,
             }));
 
-            const count = await ingestionService.ingestLogs(logs, projectId);
-            expect(count).toBe(100);
+            const result = await ingestionService.ingestLogs(logs, projectId);
+            expect(result.received).toBe(100);
 
             const stats = await ingestionService.getStats(projectId);
             expect(stats.total).toBe(100);
+        });
+    });
+
+    describe('PII masking fail-closed', () => {
+        afterEach(() => {
+            vi.restoreAllMocks();
+        });
+
+        it('rejects records whose masking failed and stores the rest', async () => {
+            vi.spyOn(piiMaskingService, 'maskLogBatch').mockResolvedValue([1]);
+            const recordSpy = vi.spyOn(metering, 'record').mockImplementation(() => {});
+
+            const logs = [
+                { time: new Date(), service: 'svc', level: 'info' as const, message: 'keep me 0' },
+                { time: new Date(), service: 'svc', level: 'info' as const, message: 'reject me' },
+                { time: new Date(), service: 'svc', level: 'info' as const, message: 'keep me 2' },
+            ];
+
+            const result = await ingestionService.ingestLogs(logs, projectId);
+
+            expect(result.received).toBe(2);
+            expect(result.rejected).toEqual([{ index: 1, reason: 'pii_masking_failed' }]);
+
+            const stats = await ingestionService.getStats(projectId);
+            expect(stats.total).toBe(2);
+
+            expect(recordSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'ingestion.pii_rejected', quantity: 1 })
+            );
+        });
+
+        it('rejects the whole batch when every record fails masking', async () => {
+            vi.spyOn(piiMaskingService, 'maskLogBatch').mockResolvedValue([0, 1]);
+            vi.spyOn(metering, 'record').mockImplementation(() => {});
+
+            const logs = [
+                { time: new Date(), service: 'svc', level: 'info' as const, message: 'a' },
+                { time: new Date(), service: 'svc', level: 'info' as const, message: 'b' },
+            ];
+
+            const result = await ingestionService.ingestLogs(logs, projectId);
+
+            expect(result.received).toBe(0);
+            expect(result.rejected).toHaveLength(2);
+
+            const stats = await ingestionService.getStats(projectId);
+            expect(stats.total).toBe(0);
+        });
+
+        it('returns empty rejected array on the happy path', async () => {
+            const logs = [{ time: new Date(), service: 'svc', level: 'info' as const, message: 'ok' }];
+            const result = await ingestionService.ingestLogs(logs, projectId);
+            expect(result.received).toBe(1);
+            expect(result.rejected).toEqual([]);
         });
     });
 });

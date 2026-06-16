@@ -64,6 +64,28 @@ export interface LogsTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface MeteringEventsTable {
+  time: Generated<Timestamp>;
+  organization_id: string;
+  project_id: string | null;
+  type: string;
+  quantity: number;
+  metadata: ColumnType<
+    Record<string, unknown> | null,
+    Record<string, unknown> | null,
+    Record<string, unknown> | null
+  >;
+}
+
+// Per-organization feature entitlements (#214)
+export interface OrganizationEntitlementsTable {
+  organization_id: string;
+  capability: string;
+  enabled: boolean | null;
+  limit_value: number | null;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface UsersTable {
   id: Generated<string>;
   email: string;
@@ -91,6 +113,7 @@ export interface OrganizationsTable {
   description: string | null;
   owner_id: string;
   retention_days: Generated<number>; // 1-365 days, default 90
+  audit_retention_days: number | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -859,6 +882,41 @@ export interface OrganizationDefaultChannelsTable {
 }
 
 // ============================================================================
+// OUTBOUND WEBHOOK DELIVERY TABLES (#218)
+// ============================================================================
+
+export interface WebhookDeliveriesTable {
+  id: Generated<string>;
+  organization_id: string;
+  event_type: string;
+  event_id: string;
+  url: string;
+  status: Generated<string>; // 'pending' | 'delivered' | 'failed' | 'dead'
+  attempt_count: Generated<number>;
+  max_attempts: Generated<number>;
+  next_attempt_at: ColumnType<Date | null, Date | null, Date | null>;
+  last_error: string | null;
+  metadata: ColumnType<
+    Record<string, unknown> | null,
+    Record<string, unknown> | null,
+    Record<string, unknown> | null
+  >;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface WebhookDeliveryAttemptsTable {
+  id: Generated<string>;
+  delivery_id: string;
+  attempt_number: number;
+  status_code: number | null;
+  duration_ms: number | null;
+  response_excerpt: string | null;
+  error: string | null;
+  created_at: Generated<Timestamp>;
+}
+
+// ============================================================================
 // PII MASKING TABLES
 // ============================================================================
 
@@ -898,6 +956,9 @@ export type AuditCategory =
   | 'user_management'
   | 'data_modification';
 
+export type AuditActorType = 'user' | 'apiKey' | 'system';
+export type AuditOutcome = 'success' | 'failure';
+
 export interface AuditLogTable {
   time: Generated<Timestamp>;
   id: Generated<string>;
@@ -915,6 +976,9 @@ export interface AuditLogTable {
     Record<string, unknown> | null,
     Record<string, unknown> | null
   >;
+  actor_type: AuditActorType | null;
+  actor_id: string | null;
+  outcome: AuditOutcome | null;
 }
 
 // ============================================================================
@@ -1019,6 +1083,35 @@ export interface LogPipelinesTable {
   updated_at: Generated<Timestamp>;
 }
 
+// ============================================================================
+// DIGEST EMAIL REPORTS TABLES
+// ============================================================================
+
+export type DigestFrequency = 'daily' | 'weekly';
+
+export interface DigestConfigsTable {
+  id: Generated<string>;
+  organization_id: string;
+  frequency: DigestFrequency;
+  delivery_hour: number;           
+  delivery_day_of_week: number | null; 
+  enabled: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface DigestRecipientsTable {
+  id: Generated<string>;
+  organization_id: string;
+  digest_config_id: string;
+  user_id: string | null;       
+  email: string;
+  subscribed: Generated<boolean>;
+  unsubscribe_token: string;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface Database {
   logs: LogsTable;
   users: UsersTable;
@@ -1097,4 +1190,14 @@ export interface Database {
   status_incidents: StatusIncidentsTable;
   status_incident_updates: StatusIncidentUpdatesTable;
   scheduled_maintenances: ScheduledMaintenancesTable;
+  // Digest email reports
+  digest_configs: DigestConfigsTable;
+  digest_recipients: DigestRecipientsTable;
+  // Resource usage metering (#212)
+  metering_events: MeteringEventsTable;
+  // Per-organization feature entitlements (#214)
+  organization_entitlements: OrganizationEntitlementsTable;
+  // Outbound webhook delivery (#218)
+  webhook_deliveries: WebhookDeliveriesTable;
+  webhook_delivery_attempts: WebhookDeliveryAttemptsTable;
 }

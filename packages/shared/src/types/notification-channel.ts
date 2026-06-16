@@ -81,6 +81,8 @@ export interface UpdateNotificationChannelInput {
 export interface NotificationContext {
   organizationId: string;
   organizationName: string;
+  /** Set by the dispatch layer; identifies the channel being delivered to. */
+  channelId?: string;
   eventType: NotificationEventType;
   title: string;
   message: string;

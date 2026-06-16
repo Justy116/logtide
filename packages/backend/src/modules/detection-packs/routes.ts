@@ -33,6 +33,10 @@ const packIdSchema = z.object({
   packId: z.string().min(1),
 });
 
+const orgQuerySchema = z.object({
+  organizationId: z.string().uuid('organizationId must be a valid uuid'),
+});
+
 /**
  * Check if user is member of organization
  */
@@ -53,34 +57,23 @@ export async function detectionPacksRoutes(fastify: FastifyInstance) {
    * List all available detection packs with status for organization
    */
   fastify.get('/', async (request: any, reply) => {
+    let organizationId: string;
     try {
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
-
-      const isMember = await checkOrganizationMembership(request.user.id, organizationId);
-      if (!isMember) {
-        return reply.status(403).send({
-          error: 'You are not a member of this organization',
-        });
-      }
-
-      const packs = await detectionPacksService.listPacksWithStatus(organizationId);
-
-      return reply.send({ packs });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return reply.status(400).send({
-          error: 'Validation error',
-          details: error.errors,
-        });
-      }
-      throw error;
+      ({ organizationId } = orgQuerySchema.parse(request.query));
+    } catch {
+      return reply.status(400).send({ error: 'organizationId query parameter is required' });
     }
+
+    const isMember = await checkOrganizationMembership(request.user.id, organizationId);
+    if (!isMember) {
+      return reply.status(403).send({
+        error: 'You are not a member of this organization',
+      });
+    }
+
+    const packs = await detectionPacksService.listPacksWithStatus(organizationId);
+
+    return reply.send({ packs });
   });
 
   /**
@@ -88,41 +81,35 @@ export async function detectionPacksRoutes(fastify: FastifyInstance) {
    * Get single pack details with status
    */
   fastify.get('/:packId', async (request: any, reply) => {
+    let packId: string;
+    let organizationId: string;
     try {
-      const { packId } = packIdSchema.parse(request.params);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
-
-      const isMember = await checkOrganizationMembership(request.user.id, organizationId);
-      if (!isMember) {
-        return reply.status(403).send({
-          error: 'You are not a member of this organization',
-        });
-      }
-
-      const pack = await detectionPacksService.getPackWithStatus(organizationId, packId);
-
-      if (!pack) {
-        return reply.status(404).send({
-          error: 'Pack not found',
-        });
-      }
-
-      return reply.send({ pack });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return reply.status(400).send({
-          error: 'Validation error',
-          details: error.errors,
-        });
-      }
-      throw error;
+      ({ packId } = packIdSchema.parse(request.params));
+    } catch {
+      return reply.status(400).send({ error: 'Invalid pack ID' });
     }
+    try {
+      ({ organizationId } = orgQuerySchema.parse(request.query));
+    } catch {
+      return reply.status(400).send({ error: 'organizationId query parameter is required' });
+    }
+
+    const isMember = await checkOrganizationMembership(request.user.id, organizationId);
+    if (!isMember) {
+      return reply.status(403).send({
+        error: 'You are not a member of this organization',
+      });
+    }
+
+    const pack = await detectionPacksService.getPackWithStatus(organizationId, packId);
+
+    if (!pack) {
+      return reply.status(404).send({
+        error: 'Pack not found',
+      });
+    }
+
+    return reply.send({ pack });
   });
 
   /**
@@ -187,13 +174,11 @@ export async function detectionPacksRoutes(fastify: FastifyInstance) {
     try {
       const { packId } = packIdSchema.parse(request.params);
       // Accept from body (preferred) or query (legacy)
-      const organizationId = (request.body?.organizationId || request.query.organizationId) as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId is required',
-        });
-      }
+      const { organizationId } = orgQuerySchema.parse(
+        request.body?.organizationId
+          ? request.body
+          : request.query
+      );
 
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
       if (!isMember) {

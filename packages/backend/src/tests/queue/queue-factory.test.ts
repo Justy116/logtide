@@ -12,7 +12,7 @@ vi.mock('ioredis', () => {
 
 // Mock pg Pool
 vi.mock('pg', () => ({
-    default: {
+        default: {
         Pool: vi.fn().mockImplementation(() => ({
             end: vi.fn().mockResolvedValue(undefined),
         })),
@@ -402,6 +402,28 @@ describe('QueueFactory', () => {
             const connection = freshFactory.getRedisConnection();
 
             expect(connection).toBeNull();
+        });
+    });
+
+    describe('getCronRegistry', () => {
+        it('should return a cron registry (queue) instance', () => {
+            queueFactory.initializeQueueSystem({
+                backend: 'graphile',
+                databaseUrl: 'postgresql://localhost:5432',
+            });
+
+            const registry = queueFactory.getCronRegistry('test-queue');
+
+            expect(registry).toBeDefined();
+            
+            expect((registry as any).name).toBe('test-queue');
+        });
+
+        it('should throw if not initialized', async () => {
+            vi.resetModules();
+            const freshFactory = await import('../../queue/queue-factory.js');
+
+            expect(() => freshFactory.getCronRegistry('test-queue')).toThrow('Not initialized');
         });
     });
 });

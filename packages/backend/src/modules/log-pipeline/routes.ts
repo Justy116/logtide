@@ -4,6 +4,7 @@ import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { pipelineService } from './service.js';
 import { PipelineExecutor } from './pipeline-executor.js';
+import { auditLogService } from '../audit-log/service.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -92,6 +93,12 @@ export async function pipelineRoutes(fastify: FastifyInstance) {
       const body = importYamlSchema.parse({ organizationId: orgIdFromQuery, ...request.body });
       if (!await checkMembership(request.user.id, body.organizationId)) return reply.status(403).send({ error: 'Forbidden' });
       const pipeline = await pipelineService.importFromYaml(body.yaml, body.organizationId, body.projectId ?? null);
+      await auditLogService.record({
+        action: 'pipeline.imported',
+        target: { type: 'log_pipeline', id: pipeline.id },
+        organizationId: body.organizationId,
+        metadata: { name: pipeline.name, projectId: pipeline.projectId ?? null },
+      });
       return reply.status(201).send({ pipeline });
     } catch (e) {
       if (e instanceof z.ZodError) return reply.status(400).send({ error: 'Validation error', details: e.errors });
@@ -107,6 +114,12 @@ export async function pipelineRoutes(fastify: FastifyInstance) {
       const body = createSchema.parse({ organizationId: orgIdFromQuery, ...request.body });
       if (!await checkMembership(request.user.id, body.organizationId)) return reply.status(403).send({ error: 'Forbidden' });
       const pipeline = await pipelineService.create(body as any);
+      await auditLogService.record({
+        action: 'pipeline.created',
+        target: { type: 'log_pipeline', id: pipeline.id },
+        organizationId: body.organizationId,
+        metadata: { name: pipeline.name, projectId: pipeline.projectId ?? null },
+      });
       return reply.status(201).send({ pipeline });
     } catch (e) {
       if (e instanceof z.ZodError) return reply.status(400).send({ error: 'Validation error', details: e.errors });
@@ -133,6 +146,12 @@ export async function pipelineRoutes(fastify: FastifyInstance) {
       if (!await checkMembership(request.user.id, orgId)) return reply.status(403).send({ error: 'Forbidden' });
       const body = updateSchema.parse(request.body);
       const pipeline = await pipelineService.update((request.params as any).id, orgId, body as any);
+      await auditLogService.record({
+        action: 'pipeline.updated',
+        target: { type: 'log_pipeline', id: pipeline.id },
+        organizationId: orgId,
+        metadata: { name: pipeline.name, projectId: pipeline.projectId ?? null },
+      });
       return reply.send({ pipeline });
     } catch (e) {
       if (e instanceof z.ZodError) return reply.status(400).send({ error: 'Validation error', details: e.errors });
@@ -145,7 +164,13 @@ export async function pipelineRoutes(fastify: FastifyInstance) {
     const orgId = (request.query as any).organizationId as string;
     if (!orgId) return reply.status(400).send({ error: 'organizationId required' });
     if (!await checkMembership(request.user.id, orgId)) return reply.status(403).send({ error: 'Forbidden' });
-    await pipelineService.delete((request.params as any).id, orgId);
+    const pipelineId = (request.params as any).id as string;
+    await pipelineService.delete(pipelineId, orgId);
+    await auditLogService.record({
+      action: 'pipeline.deleted',
+      target: { type: 'log_pipeline', id: pipelineId },
+      organizationId: orgId,
+    });
     return reply.status(204).send();
   });
 }

@@ -25,15 +25,20 @@ const projectIdSchema = z.object({
   id: z.string().uuid('Invalid project ID format'),
 });
 
+const orgQuerySchema = z.object({
+  organizationId: z.string().uuid('organizationId must be a valid uuid'),
+});
+
 export async function projectsRoutes(fastify: FastifyInstance) {
   // All routes require authentication
   fastify.addHook('onRequest', authenticate);
 
   // Get all projects for an organization
   fastify.get('/', async (request: any, reply) => {
-    const organizationId = request.query.organizationId;
-
-    if (!organizationId) {
+    let organizationId: string;
+    try {
+      ({ organizationId } = orgQuerySchema.parse(request.query));
+    } catch {
       return reply.status(400).send({
         error: 'organizationId query parameter is required',
       });
@@ -54,9 +59,10 @@ export async function projectsRoutes(fastify: FastifyInstance) {
 
   // Get project data availability per category
   fastify.get('/data-availability', async (request: any, reply) => {
-    const organizationId = request.query.organizationId;
-
-    if (!organizationId) {
+    let organizationId: string;
+    try {
+      ({ organizationId } = orgQuerySchema.parse(request.query));
+    } catch {
       return reply.status(400).send({
         error: 'organizationId query parameter is required',
       });
@@ -179,16 +185,10 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         description: body.description,
       });
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'project.created',
+        target: { type: 'project', id: project.id },
         organizationId: body.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'create_project',
-        category: 'config_change',
-        resourceType: 'project',
-        resourceId: project.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { name: project.name },
       });
 
@@ -232,16 +232,10 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'project.updated',
+        target: { type: 'project', id },
         organizationId: project.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'update_project',
-        category: 'config_change',
-        resourceType: 'project',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: body,
       });
 
@@ -298,16 +292,10 @@ export async function projectsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'project.deleted',
+        target: { type: 'project', id },
         organizationId: project.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'delete_project',
-        category: 'data_modification',
-        resourceType: 'project',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
       });
 
       return reply.status(204).send();

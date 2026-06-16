@@ -6,6 +6,7 @@ import { config, isRedisConfigured } from './config/index.js';
 import { getConnection } from './queue/connection.js';
 import { notificationManager } from './modules/streaming/index.js';
 import authPlugin from './modules/auth/plugin.js';
+import { contextPlugin } from './context/index.js';
 import { ingestionRoutes } from './modules/ingestion/index.js';
 import { queryRoutes } from './modules/query/index.js';
 import { alertsRoutes } from './modules/alerts/index.js';
@@ -33,6 +34,11 @@ import { correlationRoutes, patternRoutes } from './modules/correlation/index.js
 import { piiMaskingRoutes } from './modules/pii-masking/index.js';
 import { pipelineRoutes } from './modules/log-pipeline/index.js';
 import { customDashboardsRoutes } from './modules/custom-dashboards/index.js';
+import { usageRoutes, meteringRecorder, meteringService } from './modules/metering/index.js';
+import { capabilitiesRoutes, adminEntitlementsRoutes } from './modules/capabilities/index.js';
+import { QuotaEvaluator } from './capabilities/index.js';
+import { loadExternalHooks } from './hooks/index.js';
+import { storageSnapshotJob } from './modules/metering/storage-snapshot.js';
 import { monitoringRoutes, heartbeatRoutes, publicStatusRoutes } from './modules/monitoring/index.js';
 import { statusIncidentRoutes } from './modules/status-incidents/routes.js';
 import { maintenanceRoutes } from './modules/maintenances/routes.js';
@@ -42,6 +48,7 @@ import { auditLogRoutes, auditLogService } from './modules/audit-log/index.js';
 import { bootstrapService } from './modules/bootstrap/index.js';
 import { runDataAvailabilityBackfill } from './modules/projects/data-availability-backfill.js';
 import { notificationChannelsRoutes } from './modules/notification-channels/index.js';
+import { webhookDeliveriesRoutes } from './modules/webhooks/routes.js';
 import internalLoggingPlugin from './plugins/internal-logging-plugin.js';
 import { initializeInternalLogging, shutdownInternalLogging } from './utils/internal-logger.js';
 import websocketPlugin from './plugins/websocket.js';
@@ -58,6 +65,8 @@ const packageJson = JSON.parse(readFileSync(path.resolve(__serverDirname, '../pa
 
 const PORT = config.PORT;
 const HOST = config.HOST;
+
+const quotaEvaluator = new QuotaEvaluator(meteringService);
 
 export async function build(opts = {}) {
   const fastify = Fastify({
@@ -94,6 +103,9 @@ export async function build(opts = {}) {
         body.details = (error as any).validation;
       } else if ((error as any).name === 'ZodError' && Array.isArray((error as any).errors)) {
         body.details = (error as any).errors;
+      }
+      if (typeof (error as any).code === 'string') {
+        body.code = (error as any).code;
       }
       reply.code(statusCode).send(body);
       return;
@@ -167,6 +179,7 @@ export async function build(opts = {}) {
   await fastify.register(projectsRoutes, { prefix: '/api/v1/projects' });
   await fastify.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
   await fastify.register(notificationChannelsRoutes, { prefix: '/api/v1/notification-channels' });
+  await fastify.register(webhookDeliveriesRoutes, { prefix: '/api/v1/webhooks' });
   await fastify.register(onboardingRoutes, { prefix: '/api/v1/onboarding' });
   await fastify.register(alertsRoutes, { prefix: '/api/v1/alerts' });
   await fastify.register(detectionPacksRoutes, { prefix: '/api/v1/detection-packs' });
@@ -180,8 +193,10 @@ export async function build(opts = {}) {
   await fastify.register(settingsRoutes, { prefix: '/api/v1/admin/settings' });
   await fastify.register(auditLogRoutes, { prefix: '/api/v1/audit-log' });
   await fastify.register(retentionRoutes, { prefix: '/api/v1/admin' });
+  await fastify.register(adminEntitlementsRoutes, { prefix: '/api/v1/admin' });
 
   await fastify.register(authPlugin);
+  await fastify.register(contextPlugin);
   await fastify.register(ingestionRoutes);
   await fastify.register(queryRoutes);
   await fastify.register(correlationRoutes, { prefix: '/api' });
@@ -189,6 +204,8 @@ export async function build(opts = {}) {
   await fastify.register(piiMaskingRoutes, { prefix: '/api' });
   await fastify.register(pipelineRoutes, { prefix: '/api/v1/log-pipelines' });
   await fastify.register(customDashboardsRoutes, { prefix: '/api/v1/custom-dashboards' });
+  await fastify.register(usageRoutes, { prefix: '/api/v1/usage' });
+  await fastify.register(capabilitiesRoutes, { prefix: '/api/v1/capabilities' });
   await fastify.register(otlpRoutes);
   await fastify.register(otlpTraceRoutes);
   await fastify.register(otlpMetricRoutes);
@@ -210,11 +227,15 @@ export async function build(opts = {}) {
 async function start() {
   validateStorageConfig();
 
+  await loadExternalHooks();
   await bootstrapService.runInitialBootstrap();
   await initializeInternalLogging();
   auditLogService.start();
   await enrichmentService.initialize();
   await notificationManager.initialize(config.DATABASE_URL);
+  meteringRecorder.start();
+  quotaEvaluator.start();
+  storageSnapshotJob.start();
 
   const authMode = await settingsService.getAuthMode();
   if (authMode === 'none') {
@@ -226,6 +247,9 @@ async function start() {
 
   const shutdown = async () => {
     console.log('[Server] Shutting down gracefully...');
+    quotaEvaluator.stop();
+    storageSnapshotJob.stop();
+    await meteringRecorder.stop();
     await auditLogService.shutdown();
     await notificationManager.shutdown();
     await shutdownInternalLogging();

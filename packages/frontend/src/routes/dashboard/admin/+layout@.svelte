@@ -8,6 +8,7 @@
         Settings,
         KeyRound,
         HeartPulse,
+        BarChart3,
     } from "@lucide/svelte";
     import Menu from "@lucide/svelte/icons/menu";
     import X from "@lucide/svelte/icons/x";
@@ -47,6 +48,11 @@
             name: "Auth Providers",
             href: "/dashboard/admin/auth-providers",
             icon: KeyRound,
+        },
+        {
+            name: "Usage",
+            href: "/dashboard/admin/usage",
+            icon: BarChart3,
         },
         {
             name: "Settings",

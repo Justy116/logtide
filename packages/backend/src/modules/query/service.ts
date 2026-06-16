@@ -3,6 +3,8 @@ import { reservoir } from '../../database/reservoir.js';
 import type { TimeBucket, StoredLogRecord } from '@logtide/reservoir';
 import { CacheManager, CACHE_TTL } from '../../utils/cache.js';
 import type { LogLevel, MetadataFilter } from '@logtide/shared';
+import { hooks } from '../../hooks/index.js';
+import { context } from '@logtide/shared/context';
 
 /** Supported search modes */
 export type SearchMode = 'fulltext' | 'substring';
@@ -33,6 +35,17 @@ export class QueryService {
    * to prevent full table scans on large datasets.
    */
   async queryLogs(params: LogQueryParams) {
+    // Lifecycle hook (#216): runs after parsing/access checks (done in the
+    // route), before the cache key is built - so mutated params drive both
+    // the cache key and the reservoir read.
+    if (hooks.hasHandlers('beforeQuery')) {
+      await hooks.run('beforeQuery', {
+        organizationId: context.currentOrNull()?.organizationId ?? null,
+        projectIds: Array.isArray(params.projectId) ? params.projectId : [params.projectId],
+        params,
+      });
+    }
+
     const {
       projectId,
       service,

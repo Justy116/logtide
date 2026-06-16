@@ -14,9 +14,15 @@ vi.mock('nodemailer', () => ({
   },
 }));
 
-// Mock fetch for webhooks
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+// Mock webhookDispatcher; buildEnvelope is kept real so the envelope shape tests work.
+const { enqueueMock } = vi.hoisted(() => ({ enqueueMock: vi.fn() }));
+vi.mock('../../modules/webhooks/index.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../modules/webhooks/index.js')>();
+  return {
+    ...actual,
+    webhookDispatcher: { enqueue: enqueueMock },
+  };
+});
 
 describe('Error Notification Job', () => {
   let testOrganization: any;
@@ -26,8 +32,8 @@ describe('Error Notification Job', () => {
   beforeEach(async () => {
     // Reset mocks
     vi.clearAllMocks();
-    mockFetch.mockReset();
-    mockFetch.mockResolvedValue({ ok: true, status: 200 });
+    enqueueMock.mockReset();
+    enqueueMock.mockResolvedValue({ deliveryId: 'del-1' });
 
     // Clean up tables
     await db.deleteFrom('notifications').execute();
@@ -268,19 +274,20 @@ describe('Error Notification Job', () => {
 
       await processErrorNotification(job);
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://example.com/error-hook',
+      expect(enqueueMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          method: 'POST',
+          url: 'https://example.com/error-hook',
+          eventType: 'error.detected',
+          payload: expect.objectContaining({
+            type: 'error.detected',
+            version: 1,
+            data: expect.objectContaining({
+              exception_type: 'TypeError',
+              is_new: true,
+            }),
+          }),
         })
       );
-
-      // Check payload
-      const [, options] = mockFetch.mock.calls[0];
-      const body = JSON.parse(options.body);
-      expect(body.event_type).toBe('error');
-      expect(body.exception_type).toBe('TypeError');
-      expect(body.is_new).toBe(true);
     });
 
     it('should use organization defaults when no specific channels', async () => {
@@ -322,9 +329,11 @@ describe('Error Notification Job', () => {
 
       await processErrorNotification(job);
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://example.com/default-error',
-        expect.anything()
+      expect(enqueueMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: 'https://example.com/default-error',
+          eventType: 'error.detected',
+        })
       );
     });
 
@@ -354,7 +363,7 @@ describe('Error Notification Job', () => {
     });
 
     it('should handle webhook errors gracefully', async () => {
-      mockFetch.mockRejectedValue(new Error('Connection refused'));
+      enqueueMock.mockRejectedValue(new Error('Connection refused'));
 
       const errorGroup = await createTestErrorGroup();
 

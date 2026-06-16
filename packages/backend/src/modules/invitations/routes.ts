@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { invitationsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import type { OrgRole } from '@logtide/shared';
+import { auditLogService } from '../audit-log/index.js';
 
 const organizationIdSchema = z.object({
   organizationId: z.string().uuid('Invalid organization ID format'),
@@ -65,6 +66,12 @@ export async function invitationsRoutes(fastify: FastifyInstance) {
         userId: request.user.id,
       });
 
+      await auditLogService.record({
+        action: 'user.invite_accepted',
+        target: { type: 'invitation', id: null },
+        organizationId: result.organizationId,
+      });
+
       return reply.send({
         success: true,
         organizationId: result.organizationId,
@@ -120,6 +127,13 @@ export async function invitationsRoutes(fastify: FastifyInstance) {
           email: body.email,
           role: body.role as OrgRole,
           invitedBy: request.user.id,
+        });
+
+        await auditLogService.record({
+          action: 'user.invited',
+          target: { type: 'invitation', id: result.invitation?.id ?? null },
+          organizationId,
+          metadata: { email: body.email, role: body.role },
         });
 
         return reply.status(201).send(result);
@@ -195,6 +209,12 @@ export async function invitationsRoutes(fastify: FastifyInstance) {
 
         await invitationsService.revokeInvitation(invitationId, request.user.id, organizationId);
 
+        await auditLogService.record({
+          action: 'user.invite_revoked',
+          target: { type: 'invitation', id: invitationId },
+          organizationId,
+        });
+
         return reply.status(204).send();
       } catch (error) {
         if (error instanceof z.ZodError) {
@@ -230,6 +250,12 @@ export async function invitationsRoutes(fastify: FastifyInstance) {
           request.user.id,
           organizationId
         );
+
+        await auditLogService.record({
+          action: 'user.invite_resent',
+          target: { type: 'invitation', id: invitationId },
+          organizationId,
+        });
 
         // Email is queued in the service
 

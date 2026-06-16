@@ -10,6 +10,24 @@ import { correlationService, type IdentifierMatch } from '../correlation/service
 import { piiMaskingService } from '../pii-masking/service.js';
 import { projectsService } from '../projects/service.js';
 import { extractHostname } from './routes.js';
+import { recordLogIngestion, metering } from '../metering/index.js';
+import { assertWithinUsageQuota } from '../../capabilities/index.js';
+import { context } from '@logtide/shared/context';
+import { hooks, HookExecutionError } from '../../hooks/index.js';
+import type { BeforeIngestContext } from '../../hooks/index.js';
+import { hub } from '@logtide/core';
+import { isInternalLoggingEnabled } from '../../utils/internal-logger.js';
+
+export interface IngestRejection {
+  /** Index of the record in the submitted batch. */
+  index: number;
+  reason: 'pii_masking_failed';
+}
+
+export interface IngestResult {
+  received: number;
+  rejected: IngestRejection[];
+}
 
 /**
  * Remove null characters (\u0000) that PostgreSQL doesn't support in text fields.
@@ -36,9 +54,9 @@ export class IngestionService {
   /**
    * Ingest logs in batch
    */
-  async ingestLogs(logs: LogInput[], projectId: string): Promise<number> {
+  async ingestLogs(logs: LogInput[], projectId: string): Promise<IngestResult> {
     if (logs.length === 0) {
-      return 0;
+      return { received: 0, rejected: [] };
     }
 
     // Get project to find organization_id for custom patterns
@@ -52,7 +70,7 @@ export class IngestionService {
 
     // Extract identifiers from logs before insertion (using org-specific patterns)
     // Note: org_id and project_id are excluded from extraction to avoid storing useless data
-    const identifiersByLog = new Map<number, IdentifierMatch[]>();
+    let identifiersByLog = new Map<number, IdentifierMatch[]>();
     for (let i = 0; i < logs.length; i++) {
       try {
         const identifiers = organizationId
@@ -62,24 +80,83 @@ export class IngestionService {
           identifiersByLog.set(i, identifiers);
         }
       } catch (err) {
-        // Don't fail ingestion if identifier extraction fails
+        // Don't fail ingestion if identifier extraction fails (enrichment, not safety)
         console.warn('[Ingestion] Failed to extract identifiers from log:', err);
+        if (organizationId) {
+          metering.record({
+            type: 'ingestion.identifier_failed',
+            quantity: 1,
+            organizationId,
+            projectId,
+            metadata: { stage: 'extract' },
+          });
+        }
       }
     }
 
-    // PII masking: apply before DB insert so sensitive data never touches disk
+    // PII masking: apply before DB insert so sensitive data never touches disk.
+    // Fail-closed (WS1): records whose masking fails are rejected, never stored.
+    const rejected: IngestRejection[] = [];
     if (organizationId) {
-      try {
-        await piiMaskingService.maskLogBatch(logs, organizationId, projectId);
-      } catch (err) {
-        // Don't fail ingestion if PII masking fails
-        console.warn('[Ingestion] PII masking failed, proceeding with unmasked data:', err);
+      const failedIdx = await piiMaskingService.maskLogBatch(logs, organizationId, projectId);
+      if (failedIdx.length > 0) {
+        const failedSet = new Set(failedIdx);
+        rejected.push(
+          ...failedIdx.map((index) => ({ index, reason: 'pii_masking_failed' as const }))
+        );
+
+        const keptLogs: LogInput[] = [];
+        const keptIdentifiers = new Map<number, IdentifierMatch[]>();
+        logs.forEach((log, i) => {
+          if (failedSet.has(i)) return;
+          const ids = identifiersByLog.get(i);
+          if (ids) keptIdentifiers.set(keptLogs.length, ids);
+          keptLogs.push(log);
+        });
+        logs = keptLogs;
+        identifiersByLog = keptIdentifiers;
+
+        metering.record({
+          type: 'ingestion.pii_rejected',
+          quantity: rejected.length,
+          organizationId,
+          projectId,
+        });
+        if (isInternalLoggingEnabled()) {
+          hub.captureLog('error', '[Ingestion] Rejected logs: PII masking failed', {
+            organizationId,
+            projectId,
+            rejectedCount: rejected.length,
+          });
+        }
+
+        if (logs.length === 0) {
+          if (hooks.hasHandlers('afterIngest')) {
+            void hooks.runAfter('afterIngest', {
+              organizationId: organizationId ?? null,
+              projectId,
+              acceptedCount: 0,
+              rejectedCount: rejected.length,
+              rejectionReasons: [...new Set(rejected.map((r) => r.reason))],
+            });
+          }
+          return { received: 0, rejected };
+        }
       }
+    }
+
+    // Capability: hard-block ingestion when over a usage quota (#214).
+    // Reads only the in-memory over-quota flag (no DB on the hot path).
+    // Guarded: only assert when the request context org matches the project org; anonymous/missing-org ingestion is never blocked.
+    if (organizationId && context.currentOrNull()?.organizationId === organizationId) {
+      await assertWithinUsageQuota('ingestion.max_bytes_monthly');
+      await assertWithinUsageQuota('ingestion.max_events_monthly');
+      await assertWithinUsageQuota('storage.max_bytes');
     }
 
     // Convert logs to reservoir LogRecord format
     // Note: reservoir handles null byte sanitization internally
-    const records = logs.map((log) => {
+    let records: BeforeIngestContext['records'] = logs.map((log) => {
       // Extract hostname if not already set in metadata
       const hostname = log.metadata?.hostname || extractHostname(log);
       
@@ -102,6 +179,78 @@ export class IngestionService {
         sessionId: sanitizeForPostgres((log as { session_id?: string }).session_id) || undefined,
       };
     });
+
+    // Lifecycle hook (#216): last interception point before the reservoir
+    // write. Hooks may reject (throw) or mutate/replace `records`.
+    // hasHandlers guard keeps the OSS no-hooks path at zero overhead
+    // (no byteSize computation, no ctx allocation).
+    if (hooks.hasHandlers('beforeIngest')) {
+      const originalRecords = records.slice();
+      const hookCtx: BeforeIngestContext = {
+        organizationId: organizationId ?? null,
+        projectId,
+        eventCount: records.length,
+        byteSize: Buffer.byteLength(JSON.stringify(records)),
+        records,
+      };
+      await hooks.run('beforeIngest', hookCtx);
+      records = hookCtx.records;
+
+      // Tenancy guard: a hook must never move records across projects.
+      // Fail closed rather than silently writing into another tenant.
+      if (records.some((r) => r.projectId !== projectId)) {
+        throw new HookExecutionError(
+          'beforeIngest',
+          new Error('beforeIngest hook changed record projectId')
+        );
+      }
+
+      if (records.length === 0) {
+        if (hooks.hasHandlers('afterIngest')) {
+          void hooks.runAfter('afterIngest', {
+            organizationId: organizationId ?? null,
+            projectId,
+            acceptedCount: 0,
+            rejectedCount: rejected.length,
+            rejectionReasons: [...new Set(rejected.map((r) => r.reason))],
+          });
+        }
+        return { received: 0, rejected };
+      }
+
+      // Realign the original logs view and identifier indexes with the
+      // (possibly filtered/reordered/replaced) records, so downstream
+      // consumers that pair logs[i] with insertedLogs[i] (sigma, exception
+      // parsing, pipelines, metering, correlation) never see phantom entries.
+      const changed =
+        records.length !== originalRecords.length ||
+        records.some((r, i) => originalRecords[i] !== r);
+      if (changed) {
+        const indexByRecord = new Map(originalRecords.map((r, i) => [r, i]));
+        const realignedLogs: LogInput[] = [];
+        const realignedIdentifiers = new Map<number, IdentifierMatch[]>();
+        records.forEach((r, newIndex) => {
+          const originalIndex = indexByRecord.get(r);
+          if (originalIndex !== undefined) {
+            realignedLogs.push(logs[originalIndex]);
+            const ids = identifiersByLog.get(originalIndex);
+            if (ids) realignedIdentifiers.set(newIndex, ids);
+          } else {
+            // Hook-created record: synthesize a log view for downstream consumers
+            realignedLogs.push({
+              time: r.time,
+              service: r.service,
+              level: r.level,
+              message: r.message,
+              metadata: r.metadata,
+              trace_id: r.traceId,
+            } as LogInput);
+          }
+        });
+        logs = realignedLogs;
+        identifiersByLog = realignedIdentifiers;
+      }
+    }
 
     // Insert via reservoir (raw parametrized SQL with RETURNING *)
     const ingestResult = await reservoir.ingestReturning(records);
@@ -157,7 +306,27 @@ export class IngestionService {
       console.error('[Ingestion] Failed to publish notification:', err);
     });
 
-    return insertedLogs.length;
+    // Record resource usage (#212). Fire-and-forget, never blocks ingestion.
+    if (organizationId) {
+      recordLogIngestion({
+        logs,
+        eventCount: insertedLogs.length,
+        organizationId,
+        projectId,
+      });
+    }
+
+    if (hooks.hasHandlers('afterIngest')) {
+      void hooks.runAfter('afterIngest', {
+        organizationId: organizationId ?? null,
+        projectId,
+        acceptedCount: insertedLogs.length,
+        rejectedCount: rejected.length,
+        rejectionReasons: [...new Set(rejected.map((r) => r.reason))],
+      });
+    }
+
+    return { received: insertedLogs.length, rejected };
   }
 
   /**
@@ -197,6 +366,12 @@ export class IngestionService {
       console.log(`[Ingestion] Stored ${totalIdentifiers} identifiers for ${identifiersByLog.size} logs`);
     } catch (error) {
       console.error('[Ingestion] Error storing identifiers:', error);
+      if (isInternalLoggingEnabled()) {
+        hub.captureLog('warn', '[Ingestion] Failed to store identifiers', {
+          projectId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       // Don't throw - ingestion should succeed even if identifier storage fails
     }
   }
@@ -229,14 +404,38 @@ export class IngestionService {
         time: log.time,
       }));
 
-      // Queue Sigma detection job
+      // Queue Sigma detection job. One immediate retry; a second failure is
+      // fail-open for a SIEM, so it must be loudly visible (WS1).
       const detectionQueue = createQueue('sigma-detection');
-
-      await detectionQueue.add('detect-logs', {
+      const jobPayload = {
         logs: logEntries,
         organizationId: project.organization_id,
         projectId,
-      });
+      };
+      try {
+        await detectionQueue.add('detect-logs', jobPayload);
+      } catch {
+        try {
+          await detectionQueue.add('detect-logs', jobPayload);
+        } catch (err) {
+          metering.record({
+            type: 'ingestion.detection_enqueue_failed',
+            quantity: logEntries.length,
+            organizationId: project.organization_id,
+            projectId,
+          });
+          if (isInternalLoggingEnabled()) {
+            hub.captureLog('error', '[Ingestion] Sigma detection enqueue failed after retry', {
+              organizationId: project.organization_id,
+              projectId,
+              logCount: logEntries.length,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          console.error('[Ingestion] Sigma detection enqueue failed after retry:', err);
+          return;
+        }
+      }
 
       console.log(`[Ingestion] Queued Sigma detection for ${logs.length} logs`);
     } catch (error) {
@@ -278,14 +477,38 @@ export class IngestionService {
         return;
       }
 
-      // Queue exception parsing job
+      // Queue exception parsing job. One immediate retry; second failure is
+      // loudly visible (WS1).
       const exceptionQueue = createQueue('exception-parsing');
-
-      await exceptionQueue.add('parse-exceptions', {
+      const exceptionPayload = {
         logs: errorLogs,
         organizationId: project.organization_id,
         projectId,
-      });
+      };
+      try {
+        await exceptionQueue.add('parse-exceptions', exceptionPayload);
+      } catch {
+        try {
+          await exceptionQueue.add('parse-exceptions', exceptionPayload);
+        } catch (err) {
+          metering.record({
+            type: 'ingestion.exception_enqueue_failed',
+            quantity: errorLogs.length,
+            organizationId: project.organization_id,
+            projectId,
+          });
+          if (isInternalLoggingEnabled()) {
+            hub.captureLog('error', '[Ingestion] Exception parsing enqueue failed after retry', {
+              organizationId: project.organization_id,
+              projectId,
+              logCount: errorLogs.length,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          console.error('[Ingestion] Exception parsing enqueue failed after retry:', err);
+          return;
+        }
+      }
 
       console.log(`[Ingestion] Queued exception parsing for ${errorLogs.length} error/critical logs`);
     } catch (error) {

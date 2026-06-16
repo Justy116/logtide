@@ -24,6 +24,7 @@ vi.mock('../../../database/reservoir.js', () => {
 // Import AFTER mocking
 import { AdminService } from '../../../modules/admin/service.js';
 import { reservoir } from '../../../database/reservoir.js';
+import { GLOBAL_SCOPE } from '@logtide/reservoir';
 
 describe('AdminService - ClickHouse code paths', () => {
     let adminService: AdminService;
@@ -85,6 +86,7 @@ describe('AdminService - ClickHouse code paths', () => {
             const stats = await adminService.getDatabaseStats();
 
             expect(reservoir.count).toHaveBeenCalledWith({
+                projectId: GLOBAL_SCOPE,
                 from: expect.any(Date),
                 to: expect.any(Date),
             });

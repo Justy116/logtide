@@ -6,6 +6,7 @@ import { notificationsService } from '../../modules/notifications/service.js';
 import { notificationChannelsService } from '../../modules/notification-channels/index.js';
 import { createQueue } from '../connection.js';
 import { generateIncidentEmail, getFrontendUrl } from '../../lib/email-templates.js';
+import { webhookDispatcher, buildEnvelope } from '../../modules/webhooks/index.js';
 import type { Severity } from '../../database/types.js';
 import type { EmailChannelConfig, WebhookChannelConfig } from '@logtide/shared';
 
@@ -55,14 +56,14 @@ function createTransporter() {
 async function sendIncidentWebhook(url: string, job: IncidentNotificationJob, orgName: string): Promise<void> {
   const frontendUrl = getFrontendUrl();
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'LogTide/1.0',
-    },
-    body: JSON.stringify({
-      event_type: 'incident',
+  // Wrap in the unified envelope (WS3). organization{id,name} object stays in
+  // data. event_type/timestamp superseded by envelope.type/occurredAt.
+  // No project on incidents, so projectId is null.
+  const envelope = buildEnvelope({
+    type: 'incident.created',
+    organizationId: job.organizationId,
+    projectId: null,
+    data: {
       title: job.title,
       message: job.description || `Security incident: ${job.title}`,
       severity: job.severity,
@@ -73,14 +74,18 @@ async function sendIncidentWebhook(url: string, job: IncidentNotificationJob, or
       incident_id: job.incidentId,
       affected_services: job.affectedServices,
       link: `${frontendUrl}/dashboard/security/incidents/${job.incidentId}`,
-      timestamp: new Date().toISOString(),
-    }),
-    signal: AbortSignal.timeout(10000),
+    },
   });
 
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
+  // Route through the centralized dispatcher (#218): SSRF guard, HMAC signing,
+  // retry/backoff, DLQ, and delivery logging.
+  await webhookDispatcher.enqueue({
+    url,
+    organizationId: job.organizationId,
+    eventType: 'incident.created',
+    eventId: `${job.incidentId}:${url}`,
+    payload: envelope,
+  });
 }
 
 /**

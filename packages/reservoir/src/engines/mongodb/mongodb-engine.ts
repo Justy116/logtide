@@ -1,5 +1,6 @@
 import { MongoClient, type Db, type Collection, type Document, MongoBulkWriteError, type WriteError } from 'mongodb';
 import { randomUUID } from 'crypto';
+import { currentOrNull } from '@logtide/shared/context';
 import { StorageEngine } from '../../core/storage-engine.js';
 import type {
   LogRecord,
@@ -71,6 +72,8 @@ export interface MongoDBEngineOptions {
   skipInitialize?: boolean;
   /** Force time-series collections on/off; undefined = auto-detect */
   useTimeSeries?: boolean;
+  /** Use an existing Db instance (test/injection) */
+  db?: Db;
 }
 
 /** Interval to $dateTrunc unit/binSize for MongoDB 5.0+ */
@@ -101,6 +104,31 @@ const PERCENTILE_FRACTIONS: Record<string, number> = {
   p95: 0.95,
   p99: 0.99,
 };
+
+// =============================================================================
+// Context comment helpers
+// =============================================================================
+
+const MONGO_SAFE_RE = /[^a-zA-Z0-9_:-]/g;
+function mongoSafe(v: string | null | undefined): string {
+  if (!v) return '-';
+  const c = v.replace(MONGO_SAFE_RE, '');
+  return c.length > 0 ? c : '-';
+}
+function mongoCommentValue(): string | undefined {
+  if (process.env.LOGTIDE_CONTEXT_SQL_COMMENT === 'false') return undefined;
+  const ctx = currentOrNull();
+  if (!ctx) return undefined;
+  return `req=${mongoSafe(ctx.requestId)} origin=${mongoSafe(ctx.origin)} org=${mongoSafe(
+    ctx.organizationId
+  )} actor=${mongoSafe(ctx.actor.type)}:${mongoSafe(ctx.actor.id)}`;
+}
+
+/** Spread into options to inject the $comment field if a context is active. */
+function ctxOpts(): { comment?: string } {
+  const c = mongoCommentValue();
+  return c ? { comment: c } : {};
+}
 
 export class MongoDBEngine extends StorageEngine {
   private mongoClient: MongoClient | null = null;
@@ -267,7 +295,7 @@ export class MongoDBEngine extends StorageEngine {
 
     try {
       const docs = logs.map((log) => toMongoLogDoc(log, log.id ?? randomUUID()));
-      const result = await col.insertMany(docs, { ordered: false });
+      const result = await col.insertMany(docs, { ...ctxOpts(), ordered: false });
       return { ingested: result.insertedCount, failed: logs.length - result.insertedCount, durationMs: Date.now() - start };
     } catch (err) {
       if (err instanceof MongoBulkWriteError) {
@@ -297,7 +325,7 @@ export class MongoDBEngine extends StorageEngine {
 
     try {
       const docs = logsWithIds.map((log) => toMongoLogDoc(log, log.id));
-      await col.insertMany(docs, { ordered: false });
+      await col.insertMany(docs, { ...ctxOpts(), ordered: false });
 
       const rows: StoredLogRecord[] = logsWithIds.map((log) => ({
         id: log.id,
@@ -343,7 +371,7 @@ export class MongoDBEngine extends StorageEngine {
     const { limit, offset, sort } = native.metadata as { limit: number; offset: number; sort: Document };
 
     const docs = await col
-      .find(filter, { projection: { _id: 0 } })
+      .find(filter, { ...ctxOpts(), projection: { _id: 0 } })
       .sort(sort)
       .skip(offset)
       .limit(limit + 1)
@@ -390,7 +418,7 @@ export class MongoDBEngine extends StorageEngine {
       { $sort: { '_id.bucket': 1 } },
     ];
 
-    const rows = await col.aggregate(pipeline, { allowDiskUse: true }).toArray();
+    const rows = await col.aggregate(pipeline, { ...ctxOpts(), allowDiskUse: true }).toArray();
 
     const bucketMap = new Map<string, TimeBucket>();
     for (const row of rows) {
@@ -418,7 +446,7 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     const doc = await col.findOne(
       { id: params.id, project_id: params.projectId },
-      { projection: { _id: 0 } },
+      { ...ctxOpts(), projection: { _id: 0 } },
     );
     return doc ? mapDocToStoredLogRecord(doc) : null;
   }
@@ -429,7 +457,7 @@ export class MongoDBEngine extends StorageEngine {
     const docs = await col
       .find(
         { id: { $in: params.ids }, project_id: params.projectId },
-        { projection: { _id: 0 } },
+        { ...ctxOpts(), projection: { _id: 0 } },
       )
       .sort({ time: -1 })
       .toArray();
@@ -441,7 +469,7 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     const native = this.translator.translateCount(params);
     const filter = native.query as Document;
-    const count = await col.countDocuments(filter);
+    const count = await col.countDocuments(filter, { ...ctxOpts() });
     return { count, executionTimeMs: Date.now() - start };
   }
 
@@ -457,7 +485,7 @@ export class MongoDBEngine extends StorageEngine {
     // is usually the only way because estimatedDocumentCount doesn't take a filter.
     // However, we can add a timeout to prevent it from hanging on massive datasets.
     try {
-      const count = await col.countDocuments(filter, { maxTimeMS: 2000 });
+      const count = await col.countDocuments(filter, { ...ctxOpts(), maxTimeMS: 2000 });
       return { count, executionTimeMs: Date.now() - start };
     } catch (err) {
       // If it times out, return a large safe fallback or try explain()
@@ -484,7 +512,7 @@ export class MongoDBEngine extends StorageEngine {
       { $project: { value: '$_id', _id: 0 } },
     ];
 
-    const rows = await col.aggregate(pipeline).toArray();
+    const rows = await col.aggregate(pipeline, { ...ctxOpts() }).toArray();
     return {
       values: rows.map((r) => String(r.value)).filter((v) => v !== '' && v !== 'null'),
       executionTimeMs: Date.now() - start,
@@ -508,7 +536,7 @@ export class MongoDBEngine extends StorageEngine {
       { $project: { value: '$_id', count: 1, _id: 0 } },
     ];
 
-    const rows = await col.aggregate(pipeline).toArray();
+    const rows = await col.aggregate(pipeline, { ...ctxOpts() }).toArray();
     return {
       values: rows
         .filter((r) => r.value != null && String(r.value) !== '')
@@ -522,7 +550,7 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     const native = this.translator.translateDelete(params);
     const filter = native.query as Document;
-    const result = await col.deleteMany(filter);
+    const result = await col.deleteMany(filter, { ...ctxOpts() });
     return { deleted: result.deletedCount, executionTimeMs: Date.now() - start };
   }
 
@@ -538,7 +566,7 @@ export class MongoDBEngine extends StorageEngine {
 
     try {
       const docs = spans.map(toMongoSpanDoc);
-      const result = await col.insertMany(docs, { ordered: false });
+      const result = await col.insertMany(docs, { ...ctxOpts(), ordered: false });
       return { ingested: result.insertedCount, failed: spans.length - result.insertedCount, durationMs: Date.now() - start };
     } catch (err) {
       if (err instanceof MongoBulkWriteError) {
@@ -610,12 +638,12 @@ export class MongoDBEngine extends StorageEngine {
     const sortOrder = params.sortOrder === 'desc' ? -1 : 1;
 
     const [docs, total] = await Promise.all([
-      col.find(filter, { projection: { _id: 0 } })
+      col.find(filter, { ...ctxOpts(), projection: { _id: 0 } })
         .sort({ [sortBy]: sortOrder })
         .skip(offset)
         .limit(limit)
         .toArray(),
-      col.countDocuments(filter),
+      col.countDocuments(filter, { ...ctxOpts() }),
     ]);
 
     return {
@@ -631,7 +659,7 @@ export class MongoDBEngine extends StorageEngine {
   async getSpansByTraceId(traceId: string, projectId: string): Promise<SpanRecord[]> {
     const col = this.spansCol();
     const docs = await col
-      .find({ trace_id: traceId, project_id: projectId }, { projection: { _id: 0 } })
+      .find({ trace_id: traceId, project_id: projectId }, { ...ctxOpts(), projection: { _id: 0 } })
       .sort({ start_time: 1 })
       .toArray();
     return docs.map(mapDocToSpanRecord);
@@ -646,12 +674,12 @@ export class MongoDBEngine extends StorageEngine {
     const filter = this.buildTraceFilter(params);
 
     const [docs, total] = await Promise.all([
-      col.find(filter, { projection: { _id: 0 } })
+      col.find(filter, { ...ctxOpts(), projection: { _id: 0 } })
         .sort({ start_time: -1 })
         .skip(offset)
         .limit(limit)
         .toArray(),
-      col.countDocuments(filter),
+      col.countDocuments(filter, { ...ctxOpts() }),
     ]);
 
     return {
@@ -668,7 +696,7 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.tracesCol();
     const doc = await col.findOne(
       { trace_id: traceId, project_id: projectId },
-      { projection: { _id: 0 } },
+      { ...ctxOpts(), projection: { _id: 0 } },
     );
     return doc ? mapDocToTraceRecord(doc) : null;
   }
@@ -695,6 +723,7 @@ export class MongoDBEngine extends StorageEngine {
     // Fetch all spans with parent references - minimal projection
     const allSpans = await col
       .find(filter, {
+        ...ctxOpts(),
         projection: { span_id: 1, parent_span_id: 1, service_name: 1, trace_id: 1, _id: 0 },
       })
       .toArray();
@@ -708,7 +737,7 @@ export class MongoDBEngine extends StorageEngine {
     const parentSpans = await col
       .find(
         { project_id: projectId, span_id: { $in: parentSpanIds } },
-        { projection: { span_id: 1, service_name: 1, _id: 0 } },
+        { ...ctxOpts(), projection: { span_id: 1, service_name: 1, _id: 0 } },
       )
       .toArray();
 
@@ -761,7 +790,7 @@ export class MongoDBEngine extends StorageEngine {
       filter.service_name = { $in: svc };
     }
 
-    const result = await col.deleteMany(filter);
+    const result = await col.deleteMany(filter, { ...ctxOpts() });
     return { deleted: result.deletedCount, executionTimeMs: Date.now() - start };
   }
 
@@ -818,10 +847,10 @@ export class MongoDBEngine extends StorageEngine {
       }
 
       const insertOps: Promise<unknown>[] = [
-        db.collection('metrics').insertMany(metricDocs, { ordered: false }),
+        db.collection('metrics').insertMany(metricDocs, { ...ctxOpts(), ordered: false }),
       ];
       if (exemplarDocs.length > 0) {
-        insertOps.push(db.collection('metric_exemplars').insertMany(exemplarDocs, { ordered: false }));
+        insertOps.push(db.collection('metric_exemplars').insertMany(exemplarDocs, { ...ctxOpts(), ordered: false }));
       }
       await Promise.all(insertOps);
 
@@ -847,12 +876,12 @@ export class MongoDBEngine extends StorageEngine {
     const sortOrder = params.sortOrder === 'asc' ? 1 : -1;
 
     const [docs, total] = await Promise.all([
-      col.find(filter, { projection: { _id: 0 } })
+      col.find(filter, { ...ctxOpts(), projection: { _id: 0 } })
         .sort({ time: sortOrder })
         .skip(offset)
         .limit(limit)
         .toArray(),
-      col.countDocuments(filter),
+      col.countDocuments(filter, { ...ctxOpts() }),
     ]);
 
     let metricsResult = docs.map(mapDocToStoredMetricRecord);
@@ -863,7 +892,7 @@ export class MongoDBEngine extends StorageEngine {
       if (metricIds.length > 0) {
         const exemplarDocs = await db
           .collection('metric_exemplars')
-          .find({ metric_id: { $in: metricIds } }, { projection: { _id: 0 } })
+          .find({ metric_id: { $in: metricIds } }, { ...ctxOpts(), projection: { _id: 0 } })
           .sort({ time: 1 })
           .toArray();
 
@@ -955,7 +984,7 @@ export class MongoDBEngine extends StorageEngine {
 
     pipeline.push({ $sort: { '_id.bucket': 1 } });
 
-    const rows = await col.aggregate(pipeline, { allowDiskUse: true }).toArray();
+    const rows = await col.aggregate(pipeline, { ...ctxOpts(), allowDiskUse: true }).toArray();
 
     const timeseries = rows.map((row) => {
       const bucket: { bucket: Date; value: number; labels?: Record<string, string> } = {
@@ -980,7 +1009,7 @@ export class MongoDBEngine extends StorageEngine {
       const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
       const sample = await col.findOne(
         { metric_name: params.metricName, project_id: { $in: pids } },
-        { projection: { metric_type: 1, _id: 0 } },
+        { ...ctxOpts(), projection: { metric_type: 1, _id: 0 } },
       );
       if (sample?.metric_type) {
         metricType = sample.metric_type as MetricType;
@@ -1011,7 +1040,7 @@ export class MongoDBEngine extends StorageEngine {
       { $project: { name: '$_id.name', type: '$_id.type', _id: 0 } },
     ];
 
-    const rows = await col.aggregate(pipeline).toArray();
+    const rows = await col.aggregate(pipeline, { ...ctxOpts() }).toArray();
 
     return {
       names: rows.map((row) => ({
@@ -1039,7 +1068,7 @@ export class MongoDBEngine extends StorageEngine {
       { $limit: limit },
     ];
 
-    const rows = await col.aggregate(pipeline).toArray();
+    const rows = await col.aggregate(pipeline, { ...ctxOpts() }).toArray();
 
     return {
       keys: rows.map((r) => String(r._id)),
@@ -1063,7 +1092,7 @@ export class MongoDBEngine extends StorageEngine {
       { $limit: limit },
     ];
 
-    const rows = await col.aggregate(pipeline).toArray();
+    const rows = await col.aggregate(pipeline, { ...ctxOpts() }).toArray();
 
     return {
       values: rows.map((r) => String(r._id)),
@@ -1091,13 +1120,13 @@ export class MongoDBEngine extends StorageEngine {
     }
 
     // Delete metrics
-    const result = await db.collection('metrics').deleteMany(filter);
+    const result = await db.collection('metrics').deleteMany(filter, { ...ctxOpts() });
 
     // Delete exemplars for same time range + project
     await db.collection('metric_exemplars').deleteMany({
       project_id: { $in: pids },
       time: { $gte: params.from, $lte: params.to },
-    });
+    }, { ...ctxOpts() });
 
     return { deleted: result.deletedCount, executionTimeMs: Date.now() - start };
   }
@@ -1132,7 +1161,7 @@ export class MongoDBEngine extends StorageEngine {
       { $sort: { '_id.service_name': 1 as const, '_id.metric_name': 1 as const } },
     ];
 
-    const cursor = db.collection('metrics').aggregate(pipeline, { allowDiskUse: true });
+    const cursor = db.collection('metrics').aggregate(pipeline, { ...ctxOpts(), allowDiskUse: true });
     const docs = await cursor.toArray();
 
     const serviceMap = new Map<string, MetricOverviewItem[]>();
@@ -1166,6 +1195,7 @@ export class MongoDBEngine extends StorageEngine {
   // =========================================================================
 
   private getDb(): Db {
+    if (this.options?.db) return this.options.db;
     if (!this.mongoClient) {
       throw new Error('Not connected. Call connect() first.');
     }

@@ -1,0 +1,566 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createTestContext } from '../../helpers/index.js';
+import { db } from '../../../database/index.js';
+import { reservoir } from '../../../database/reservoir.js';
+
+// ---------------------------------------------------------------------------
+// Mock safeFetch (and keep SsrfBlockedError real for throw/catch assertions)
+// ---------------------------------------------------------------------------
+const { safeFetchMock } = vi.hoisted(() => ({ safeFetchMock: vi.fn() }));
+vi.mock('../../../utils/ssrf-guard.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../utils/ssrf-guard.js')>(
+    '../../../utils/ssrf-guard.js'
+  );
+  return { ...actual, safeFetch: safeFetchMock };
+});
+
+// Mock resolveAndValidateHost so TCP tests don't do real DNS
+const { resolveAndValidateMock } = vi.hoisted(() => ({ resolveAndValidateMock: vi.fn() }));
+vi.mock('../../../utils/ssrf-guard.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../utils/ssrf-guard.js')>(
+    '../../../utils/ssrf-guard.js'
+  );
+  return {
+    ...actual,
+    safeFetch: safeFetchMock,
+    resolveAndValidateHost: resolveAndValidateMock,
+  };
+});
+
+// Mock net.createConnection so TCP tests don't open real sockets
+import { EventEmitter } from 'events';
+const { createConnectionMock } = vi.hoisted(() => ({ createConnectionMock: vi.fn() }));
+vi.mock('net', async () => {
+  const actual = await vi.importActual<typeof import('net')>('net');
+  return { ...actual, createConnection: createConnectionMock };
+});
+
+import {
+  parseTcpTarget,
+  runHttpCheck,
+  runTcpCheck,
+  runHeartbeatCheck,
+  runLogHeartbeatCheck,
+} from '../../../modules/monitoring/checker.js';
+import { SsrfBlockedError } from '../../../utils/ssrf-guard.js';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function makeResponse(status: number, text = 'ok') {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: 'OK',
+    text: async () => text,
+  };
+}
+
+/** Build a minimal fake socket (EventEmitter + destroy). */
+function makeFakeSocket() {
+  const socket = new EventEmitter() as EventEmitter & { destroy: () => void };
+  socket.destroy = vi.fn();
+  return socket;
+}
+
+beforeEach(() => {
+  safeFetchMock.mockReset();
+  resolveAndValidateMock.mockReset();
+  createConnectionMock.mockReset();
+});
+
+afterEach(() => vi.restoreAllMocks());
+
+// ===========================================================================
+// parseTcpTarget
+// ===========================================================================
+describe('parseTcpTarget', () => {
+  it('parses host:port', () => {
+    expect(parseTcpTarget('example.com:443')).toEqual({ host: 'example.com', port: 443 });
+  });
+
+  it('parses 127.0.0.1:5432', () => {
+    expect(parseTcpTarget('127.0.0.1:5432')).toEqual({ host: '127.0.0.1', port: 5432 });
+  });
+
+  it('parses IPv6 bracket form [::1]:5432', () => {
+    expect(parseTcpTarget('[::1]:5432')).toEqual({ host: '::1', port: 5432 });
+  });
+
+  it('parses IPv6 bracket form [2001:db8::1]:80', () => {
+    expect(parseTcpTarget('[2001:db8::1]:80')).toEqual({ host: '2001:db8::1', port: 80 });
+  });
+
+  it('throws when port is missing', () => {
+    expect(() => parseTcpTarget('example.com')).toThrow('TCP target must be host:port');
+  });
+
+  it('throws for empty string', () => {
+    expect(() => parseTcpTarget('')).toThrow('TCP target must be host:port');
+  });
+});
+
+// ===========================================================================
+// runHttpCheck
+// ===========================================================================
+describe('runHttpCheck', () => {
+  it('returns up with statusCode when response matches expectedStatus', async () => {
+    safeFetchMock.mockResolvedValue(makeResponse(200));
+    const result = await runHttpCheck('https://example.com', 10);
+    expect(result.status).toBe('up');
+    expect(result.statusCode).toBe(200);
+    expect(result.errorCode).toBeNull();
+    expect(result.responseTimeMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('returns down with http_error when status does not match expected', async () => {
+    safeFetchMock.mockResolvedValue(makeResponse(500));
+    const result = await runHttpCheck('https://example.com', 10);
+    expect(result.status).toBe('down');
+    expect(result.statusCode).toBe(500);
+    expect(result.errorCode).toBe('http_error');
+  });
+
+  it('returns down with http_error for 404 when expected is 200', async () => {
+    safeFetchMock.mockResolvedValue(makeResponse(404));
+    const result = await runHttpCheck('https://example.com', 10);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('http_error');
+  });
+
+  it('accepts custom expectedStatus', async () => {
+    safeFetchMock.mockResolvedValue(makeResponse(201));
+    const result = await runHttpCheck('https://example.com', 10, { expectedStatus: 201 });
+    expect(result.status).toBe('up');
+  });
+
+  it('returns blocked when SsrfBlockedError is thrown', async () => {
+    safeFetchMock.mockRejectedValue(new SsrfBlockedError('blocked'));
+    const result = await runHttpCheck('http://169.254.169.254', 10);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('blocked');
+    expect(result.statusCode).toBeNull();
+  });
+
+  it('returns timeout when AbortError is thrown', async () => {
+    const abortErr = new Error('aborted');
+    abortErr.name = 'AbortError';
+    safeFetchMock.mockRejectedValue(abortErr);
+    const result = await runHttpCheck('https://example.com', 10);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('timeout');
+  });
+
+  it('returns connection_refused when ECONNREFUSED error is thrown', async () => {
+    safeFetchMock.mockRejectedValue(new Error('ECONNREFUSED 127.0.0.1:80'));
+    const result = await runHttpCheck('https://example.com', 10);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('connection_refused');
+  });
+
+  it('returns dns_error when ENOTFOUND error is thrown', async () => {
+    safeFetchMock.mockRejectedValue(new Error('ENOTFOUND example.invalid'));
+    const result = await runHttpCheck('https://example.invalid', 10);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('dns_error');
+  });
+
+  it('returns dns_error when EAI_ error is thrown', async () => {
+    safeFetchMock.mockRejectedValue(new Error('EAI_AGAIN host lookup failure'));
+    const result = await runHttpCheck('https://example.invalid', 10);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('dns_error');
+  });
+
+  it('returns ssl_error when SSL error is thrown', async () => {
+    safeFetchMock.mockRejectedValue(new Error('SSL certificate verification failed'));
+    const result = await runHttpCheck('https://bad-cert.example.com', 10);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('ssl_error');
+  });
+
+  it('returns ssl_error for CERT_ errors', async () => {
+    safeFetchMock.mockRejectedValue(new Error('CERT_HAS_EXPIRED'));
+    const result = await runHttpCheck('https://expired.example.com', 10);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('ssl_error');
+  });
+
+  it('returns unexpected for unknown errors', async () => {
+    safeFetchMock.mockRejectedValue(new Error('some random problem'));
+    const result = await runHttpCheck('https://example.com', 10);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('unexpected');
+  });
+
+  it('returns unexpected when non-Error is thrown', async () => {
+    safeFetchMock.mockRejectedValue('string error');
+    const result = await runHttpCheck('https://example.com', 10);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('unexpected');
+  });
+
+  // bodyAssertion: contains
+  it('up when body contains expected keyword', async () => {
+    safeFetchMock.mockResolvedValue(makeResponse(200, 'server is healthy'));
+    const result = await runHttpCheck('https://example.com', 10, {
+      bodyAssertion: { type: 'contains', value: 'healthy' },
+    });
+    expect(result.status).toBe('up');
+  });
+
+  it('down when body does not contain expected keyword', async () => {
+    safeFetchMock.mockResolvedValue(makeResponse(200, 'server is degraded'));
+    const result = await runHttpCheck('https://example.com', 10, {
+      bodyAssertion: { type: 'contains', value: 'healthy' },
+    });
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('http_error');
+  });
+
+  // bodyAssertion: regex
+  it('up when body matches regex pattern', async () => {
+    safeFetchMock.mockResolvedValue(makeResponse(200, 'status: ok'));
+    const result = await runHttpCheck('https://example.com', 10, {
+      bodyAssertion: { type: 'regex', pattern: 'status: \\w+' },
+    });
+    expect(result.status).toBe('up');
+  });
+
+  it('down when body does not match regex pattern', async () => {
+    safeFetchMock.mockResolvedValue(makeResponse(200, 'error state'));
+    const result = await runHttpCheck('https://example.com', 10, {
+      bodyAssertion: { type: 'regex', pattern: '^status:' },
+    });
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('http_error');
+  });
+
+  it('down (http_error) when regex is flagged as unsafe (ReDoS guard)', async () => {
+    // A catastrophic backtracking pattern that safe-regex2 should flag
+    safeFetchMock.mockResolvedValue(makeResponse(200, 'aaaaaaaaaaaaaaaaaaaaaaaab'));
+    const result = await runHttpCheck('https://example.com', 10, {
+      bodyAssertion: { type: 'regex', pattern: '(a+)+$' },
+    });
+    // safe-regex2 flags this; result must be down, not up
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('http_error');
+  });
+
+  it('down (http_error) when regex is invalid (throws during compile)', async () => {
+    safeFetchMock.mockResolvedValue(makeResponse(200, 'hello'));
+    const result = await runHttpCheck('https://example.com', 10, {
+      bodyAssertion: { type: 'regex', pattern: '[invalid' },
+    });
+    // safe-regex2 may or may not flag it, but invalid regex throws and is caught
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('http_error');
+  });
+});
+
+// ===========================================================================
+// runTcpCheck
+// ===========================================================================
+describe('runTcpCheck', () => {
+  it('returns up when socket emits connect', async () => {
+    resolveAndValidateMock.mockResolvedValue(['1.2.3.4']);
+    const socket = makeFakeSocket();
+    createConnectionMock.mockReturnValue(socket);
+
+    const promise = runTcpCheck('example.com', 443, 10);
+    // emit connect on next tick
+    setImmediate(() => socket.emit('connect'));
+    const result = await promise;
+
+    expect(result.status).toBe('up');
+    expect(result.errorCode).toBeNull();
+    expect(result.responseTimeMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('returns down with connection_refused on ECONNREFUSED', async () => {
+    resolveAndValidateMock.mockResolvedValue(['1.2.3.4']);
+    const socket = makeFakeSocket();
+    createConnectionMock.mockReturnValue(socket);
+
+    const promise = runTcpCheck('example.com', 9999, 10);
+    setImmediate(() => socket.emit('error', Object.assign(new Error('ECONNREFUSED 1.2.3.4:9999'), {})));
+    const result = await promise;
+
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('connection_refused');
+  });
+
+  it('returns down with dns_error on ENOTFOUND', async () => {
+    resolveAndValidateMock.mockResolvedValue(['1.2.3.4']);
+    const socket = makeFakeSocket();
+    createConnectionMock.mockReturnValue(socket);
+
+    const promise = runTcpCheck('missing.invalid', 80, 10);
+    setImmediate(() => socket.emit('error', new Error('ENOTFOUND missing.invalid')));
+    const result = await promise;
+
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('dns_error');
+  });
+
+  it('returns down with unexpected for unrecognized socket errors', async () => {
+    resolveAndValidateMock.mockResolvedValue(['1.2.3.4']);
+    const socket = makeFakeSocket();
+    createConnectionMock.mockReturnValue(socket);
+
+    const promise = runTcpCheck('example.com', 80, 10);
+    setImmediate(() => socket.emit('error', new Error('some weird TCP error')));
+    const result = await promise;
+
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('unexpected');
+  });
+
+  it('returns down with timeout when socket times out', async () => {
+    resolveAndValidateMock.mockResolvedValue(['1.2.3.4']);
+    const socket = makeFakeSocket();
+    createConnectionMock.mockReturnValue(socket);
+
+    // Use 0.001 s (1 ms) timeout so the real setTimeout fires immediately.
+    // The socket never emits 'connect' or 'error', so the timer wins.
+    const result = await runTcpCheck('example.com', 443, 0.001);
+
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('timeout');
+  }, 5000);
+
+  it('returns blocked when resolveAndValidateHost throws SsrfBlockedError', async () => {
+    resolveAndValidateMock.mockRejectedValue(new SsrfBlockedError('private address'));
+    const result = await runTcpCheck('10.0.0.1', 22, 10);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('blocked');
+  });
+
+  it('returns blocked when resolveAndValidateHost rejects with a generic error', async () => {
+    resolveAndValidateMock.mockRejectedValue(new Error('cannot resolve'));
+    const result = await runTcpCheck('internal.host', 22, 10);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('blocked');
+  });
+});
+
+// ===========================================================================
+// runHeartbeatCheck  (real test DB)
+// ===========================================================================
+describe('runHeartbeatCheck', () => {
+  let ctx: Awaited<ReturnType<typeof createTestContext>>;
+  let monitorId: string;
+
+  beforeEach(async () => {
+    ctx = await createTestContext();
+
+    // Create a monitor row so FK constraints are satisfied
+    const monitor = await db
+      .insertInto('monitors')
+      .values({
+        organization_id: ctx.organization.id,
+        project_id: ctx.project.id,
+        name: 'hb-test',
+        type: 'heartbeat',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    monitorId = monitor.id;
+  });
+
+  it('returns up when a recent heartbeat exists', async () => {
+    // Insert a heartbeat result just now
+    await db
+      .insertInto('monitor_results')
+      .values({
+        monitor_id: monitorId,
+        organization_id: ctx.organization.id,
+        project_id: ctx.project.id,
+        status: 'up',
+        is_heartbeat: true,
+        response_time_ms: null,
+        status_code: null,
+        error_code: null,
+        time: new Date(),
+      })
+      .execute();
+
+    // intervalSeconds=60 -> graceMs=90_000 ms; heartbeat is <1s old
+    const result = await runHeartbeatCheck(monitorId, 60, db);
+    expect(result.status).toBe('up');
+    expect(result.errorCode).toBeNull();
+  });
+
+  it('returns down when no heartbeat exists', async () => {
+    const result = await runHeartbeatCheck(monitorId, 60, db);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('no_heartbeat');
+  });
+
+  it('returns down when the only heartbeat is older than the grace window', async () => {
+    // Grace = 60 * 1.5 * 1000 = 90000 ms; insert a result from 2 minutes ago
+    const old = new Date(Date.now() - 2 * 60 * 1000);
+    await db
+      .insertInto('monitor_results')
+      .values({
+        monitor_id: monitorId,
+        organization_id: ctx.organization.id,
+        project_id: ctx.project.id,
+        status: 'up',
+        is_heartbeat: true,
+        response_time_ms: null,
+        status_code: null,
+        error_code: null,
+        time: old,
+      })
+      .execute();
+
+    const result = await runHeartbeatCheck(monitorId, 60, db);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('no_heartbeat');
+  });
+
+  it('ignores non-heartbeat results', async () => {
+    // Insert a regular (non-heartbeat) result
+    await db
+      .insertInto('monitor_results')
+      .values({
+        monitor_id: monitorId,
+        organization_id: ctx.organization.id,
+        project_id: ctx.project.id,
+        status: 'up',
+        is_heartbeat: false,
+        response_time_ms: 50,
+        status_code: 200,
+        error_code: null,
+        time: new Date(),
+      })
+      .execute();
+
+    const result = await runHeartbeatCheck(monitorId, 60, db);
+    expect(result.status).toBe('down'); // no heartbeat rows
+  });
+
+  it('ignores heartbeat results with status=down', async () => {
+    await db
+      .insertInto('monitor_results')
+      .values({
+        monitor_id: monitorId,
+        organization_id: ctx.organization.id,
+        project_id: ctx.project.id,
+        status: 'down',
+        is_heartbeat: true,
+        response_time_ms: null,
+        status_code: null,
+        error_code: 'timeout',
+        time: new Date(),
+      })
+      .execute();
+
+    const result = await runHeartbeatCheck(monitorId, 60, db);
+    expect(result.status).toBe('down');
+  });
+
+  it('returns responseTimeMs null and statusCode null when up', async () => {
+    await db
+      .insertInto('monitor_results')
+      .values({
+        monitor_id: monitorId,
+        organization_id: ctx.organization.id,
+        project_id: ctx.project.id,
+        status: 'up',
+        is_heartbeat: true,
+        response_time_ms: null,
+        status_code: null,
+        error_code: null,
+        time: new Date(),
+      })
+      .execute();
+
+    const result = await runHeartbeatCheck(monitorId, 60, db);
+    expect(result.responseTimeMs).toBeNull();
+    expect(result.statusCode).toBeNull();
+  });
+});
+
+// ===========================================================================
+// runLogHeartbeatCheck  (real reservoir)
+// ===========================================================================
+describe('runLogHeartbeatCheck', () => {
+  let ctx: Awaited<ReturnType<typeof createTestContext>>;
+
+  beforeEach(async () => {
+    ctx = await createTestContext();
+  });
+
+  it('returns up when a recent log from the service exists', async () => {
+    // Ingest a log via the reservoir so it can be queried back
+    await reservoir.ingest([
+      {
+        projectId: ctx.project.id,
+        service: 'heartbeat-svc',
+        level: 'info',
+        message: 'heartbeat ping',
+        time: new Date().toISOString(),
+        metadata: null,
+        traceId: null,
+        spanId: null,
+        sessionId: null,
+      },
+    ]);
+
+    // graceSeconds=60 -> graceMs=60000; log is <1s old
+    const result = await runLogHeartbeatCheck('heartbeat-svc', ctx.project.id, 60, reservoir);
+    expect(result.status).toBe('up');
+    expect(result.errorCode).toBeNull();
+  });
+
+  it('returns down when no log from the service exists within the grace window', async () => {
+    // No logs seeded for this service
+    const result = await runLogHeartbeatCheck('ghost-svc', ctx.project.id, 60, reservoir);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('no_heartbeat');
+  });
+
+  it('returns down when logs exist but are older than the grace window', async () => {
+    // Ingest a log with a timestamp well before the grace window (2 minutes ago)
+    const twoMinAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    await reservoir.ingest([
+      {
+        projectId: ctx.project.id,
+        service: 'old-svc',
+        level: 'info',
+        message: 'old heartbeat',
+        time: twoMinAgo,
+        metadata: null,
+        traceId: null,
+        spanId: null,
+        sessionId: null,
+      },
+    ]);
+
+    // graceSeconds=30 -> grace = 30s; log is 2m old -> should be stale
+    const result = await runLogHeartbeatCheck('old-svc', ctx.project.id, 30, reservoir);
+    expect(result.status).toBe('down');
+    expect(result.errorCode).toBe('no_heartbeat');
+  });
+
+  it('returns down for a different projectId even if service name matches', async () => {
+    await reservoir.ingest([
+      {
+        projectId: ctx.project.id,
+        service: 'shared-svc',
+        level: 'info',
+        message: 'ping',
+        time: new Date().toISOString(),
+        metadata: null,
+        traceId: null,
+        spanId: null,
+        sessionId: null,
+      },
+    ]);
+
+    const result = await runLogHeartbeatCheck('shared-svc', '00000000-0000-0000-0000-000000000000', 60, reservoir);
+    expect(result.status).toBe('down');
+  });
+});

@@ -1,6 +1,28 @@
-import { createClient, type ClickHouseClient } from '@clickhouse/client';
+﻿import { createClient, type ClickHouseClient, type DataFormat, type InsertParams } from '@clickhouse/client';
 import { randomUUID } from 'crypto';
+import { currentOrNull } from '@logtide/shared/context';
 import { StorageEngine } from '../../core/storage-engine.js';
+
+const CH_SAFE_RE = /[^a-zA-Z0-9_:-]/g;
+function chSafe(v: string | null | undefined): string {
+  if (!v) return '-';
+  const c = v.replace(CH_SAFE_RE, '');
+  return c.length > 0 ? c : '-';
+}
+function chCtxComment(): string {
+  if (process.env.LOGTIDE_CONTEXT_SQL_COMMENT === 'false') return '';
+  const ctx = currentOrNull();
+  if (!ctx) return '';
+  return `/* req=${chSafe(ctx.requestId)} origin=${chSafe(ctx.origin)} org=${chSafe(
+    ctx.organizationId
+  )} actor=${chSafe(ctx.actor.type)}:${chSafe(ctx.actor.id)} */ `;
+}
+function chQueryId(operation: string): string | undefined {
+  const ctx = currentOrNull();
+  if (!ctx) return undefined;
+  // ClickHouse query_id has a 100-char limit; keep it tight.
+  return `${chSafe(ctx.requestId)}-${chSafe(operation)}`.slice(0, 100);
+}
 import type {
   LogRecord,
   LogLevel,
@@ -118,7 +140,7 @@ export class ClickHouseEngine extends StorageEngine {
   async healthCheck(): Promise<HealthStatus> {
     const start = Date.now();
     try {
-      await this.getClient().query({ query: 'SELECT 1', format: 'JSONEachRow' });
+      await this.runQuery({ query: 'SELECT 1', format: 'JSONEachRow' }, 'health-check');
       const responseTimeMs = Date.now() - start;
       let status: HealthStatus['status'] = 'healthy';
       if (responseTimeMs >= 200) status = 'unhealthy';
@@ -152,10 +174,9 @@ export class ClickHouseEngine extends StorageEngine {
       await bootstrapClient.close();
     }
 
-    const client = this.getClient();
     const t = this.tableName;
 
-    await client.command({
+    await this.runCommand({
       query: `
         CREATE TABLE IF NOT EXISTS ${t} (
           id UUID DEFAULT generateUUIDv4(),
@@ -177,7 +198,7 @@ export class ClickHouseEngine extends StorageEngine {
     });
 
     try {
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_message_fulltext message TYPE ngrambf_v1(3, 32768, 3, 0) GRANULARITY 1`,
       });
     } catch {
@@ -185,7 +206,7 @@ export class ClickHouseEngine extends StorageEngine {
     }
 
     try {
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_trace_id trace_id TYPE bloom_filter(0.01) GRANULARITY 1`,
       });
     } catch {
@@ -195,10 +216,10 @@ export class ClickHouseEngine extends StorageEngine {
     // Bloom filter on id - lets getByIds skip data granules that don't contain
     // any of the requested UUIDs without a full project scan.
     try {
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_id id TYPE bloom_filter(0.01) GRANULARITY 1`,
       });
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE ${t} MATERIALIZE INDEX idx_id`,
       });
     } catch {
@@ -206,7 +227,7 @@ export class ClickHouseEngine extends StorageEngine {
     }
 
     try {
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_span_id span_id TYPE bloom_filter(0.01) GRANULARITY 1`,
       });
     } catch {
@@ -215,10 +236,10 @@ export class ClickHouseEngine extends StorageEngine {
 
     // Projection for fast service+level filtered queries
     try {
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE ${t} ADD PROJECTION IF NOT EXISTS proj_service_time (SELECT * ORDER BY project_id, service, level, time)`,
       });
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE ${t} MATERIALIZE PROJECTION proj_service_time`,
       });
     } catch {
@@ -229,10 +250,10 @@ export class ClickHouseEngine extends StorageEngine {
     // Eliminates JSONExtractString() calls on every DISTINCT/filter query row.
     // MATERIALIZE backfills existing data parts asynchronously during merges.
     try {
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS hostname String MATERIALIZED JSONExtractString(metadata, 'hostname')`,
       });
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE ${t} MATERIALIZE COLUMN hostname`,
       });
     } catch {
@@ -240,7 +261,7 @@ export class ClickHouseEngine extends StorageEngine {
     }
 
     // Spans table
-    await client.command({
+    await this.runCommand({
       query: `
         CREATE TABLE IF NOT EXISTS spans (
           time DateTime64(3) NOT NULL,
@@ -270,29 +291,29 @@ export class ClickHouseEngine extends StorageEngine {
     });
 
     try {
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_spans_trace_id trace_id TYPE bloom_filter(0.01) GRANULARITY 1`,
       });
     } catch { /* index may already exist */ }
 
     try {
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_spans_parent parent_span_id TYPE bloom_filter(0.01) GRANULARITY 1`,
       });
     } catch { /* index may already exist */ }
 
     // Projection for fast service_name filtered span queries
     try {
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE spans ADD PROJECTION IF NOT EXISTS proj_service_time (SELECT * ORDER BY project_id, service_name, status_code, time)`,
       });
-      await client.command({
+      await this.runCommand({
         query: `ALTER TABLE spans MATERIALIZE PROJECTION proj_service_time`,
       });
     } catch { /* projection may already exist */ }
 
     // Traces table (ReplacingMergeTree for upsert semantics)
-    await client.command({
+    await this.runCommand({
       query: `
         CREATE TABLE IF NOT EXISTS traces (
           trace_id String NOT NULL,
@@ -315,7 +336,7 @@ export class ClickHouseEngine extends StorageEngine {
     });
 
     // Metrics table
-    await client.command({
+    await this.runCommand({
       query: `
         CREATE TABLE IF NOT EXISTS metrics (
           time            DateTime64(3) NOT NULL,
@@ -340,7 +361,7 @@ export class ClickHouseEngine extends StorageEngine {
     });
 
     // Metric exemplars table
-    await client.command({
+    await this.runCommand({
       query: `
         CREATE TABLE IF NOT EXISTS metric_exemplars (
           time            DateTime64(3) NOT NULL,
@@ -362,7 +383,7 @@ export class ClickHouseEngine extends StorageEngine {
     });
 
     // Metrics hourly rollup (target table for materialized view)
-    await client.command({
+    await this.runCommand({
       query: `
         CREATE TABLE IF NOT EXISTS metrics_hourly_rollup (
           bucket DateTime NOT NULL,
@@ -382,7 +403,7 @@ export class ClickHouseEngine extends StorageEngine {
     });
 
     // Materialized view: auto-populates hourly rollup on insert to metrics
-    await client.command({
+    await this.runCommand({
       query: `
         CREATE MATERIALIZED VIEW IF NOT EXISTS metrics_hourly_rollup_mv
         TO metrics_hourly_rollup AS
@@ -402,7 +423,7 @@ export class ClickHouseEngine extends StorageEngine {
     });
 
     // Metrics daily rollup
-    await client.command({
+    await this.runCommand({
       query: `
         CREATE TABLE IF NOT EXISTS metrics_daily_rollup (
           bucket DateTime NOT NULL,
@@ -422,7 +443,7 @@ export class ClickHouseEngine extends StorageEngine {
     });
 
     // Materialized view: auto-populates daily rollup on insert to metrics
-    await client.command({
+    await this.runCommand({
       query: `
         CREATE MATERIALIZED VIEW IF NOT EXISTS metrics_daily_rollup_mv
         TO metrics_daily_rollup AS
@@ -452,11 +473,10 @@ export class ClickHouseEngine extends StorageEngine {
     }
 
     const start = Date.now();
-    const client = this.getClient();
 
     try {
       const values = logs.map((log) => this.toClickHouseRow(log));
-      await client.insert({ table: this.tableName, values, format: 'JSONEachRow' });
+      await this.runInsert({ table: this.tableName, values, format: 'JSONEachRow' }, 'ingest-logs');
       return { ingested: logs.length, failed: 0, durationMs: Date.now() - start };
     } catch (err) {
       return {
@@ -474,7 +494,6 @@ export class ClickHouseEngine extends StorageEngine {
     }
 
     const start = Date.now();
-    const client = this.getClient();
 
     // Use provided IDs or generate client-side since ClickHouse has no RETURNING
     const logsWithIds = logs.map((log) => ({
@@ -483,7 +502,7 @@ export class ClickHouseEngine extends StorageEngine {
     }));
 
     try {
-      await client.insert({ table: this.tableName, values: logsWithIds, format: 'JSONEachRow' });
+      await this.runInsert({ table: this.tableName, values: logsWithIds, format: 'JSONEachRow' }, 'ingest-logs-returning');
 
       const rows: StoredLogRecord[] = logsWithIds.map((row, i) => ({
         id: row.id,
@@ -512,12 +531,11 @@ export class ClickHouseEngine extends StorageEngine {
 
   async query(params: QueryParams): Promise<QueryResult<StoredLogRecord>> {
     const start = Date.now();
-    const client = this.getClient();
     const native = this.translator.translateQuery(params);
     const limit = (native.metadata?.limit as number) ?? 50;
     const offset = params.offset ?? 0;
 
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: native.query as string,
       query_params: (native.parameters as Record<string, unknown>[])[0],
       format: 'JSONEachRow',
@@ -549,10 +567,9 @@ export class ClickHouseEngine extends StorageEngine {
 
   async aggregate(params: AggregateParams): Promise<AggregateResult> {
     const start = Date.now();
-    const client = this.getClient();
     const native = this.translator.translateAggregate(params);
 
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: native.query as string,
       query_params: (native.parameters as Record<string, unknown>[])[0],
       format: 'JSONEachRow',
@@ -587,8 +604,7 @@ export class ClickHouseEngine extends StorageEngine {
   }
 
   async getById(params: GetByIdParams): Promise<StoredLogRecord | null> {
-    const client = this.getClient();
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: `SELECT * FROM ${this.tableName} WHERE id = {p_id:UUID} AND project_id = {p_project_id:String} LIMIT 1`,
       query_params: { p_id: params.id, p_project_id: params.projectId },
       format: 'JSONEachRow',
@@ -599,8 +615,7 @@ export class ClickHouseEngine extends StorageEngine {
 
   async getByIds(params: GetByIdsParams): Promise<StoredLogRecord[]> {
     if (params.ids.length === 0) return [];
-    const client = this.getClient();
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: `SELECT * FROM ${this.tableName} WHERE id IN {p_ids:Array(UUID)} AND project_id = {p_project_id:String} ORDER BY time DESC`,
       query_params: { p_ids: params.ids, p_project_id: params.projectId },
       format: 'JSONEachRow',
@@ -611,9 +626,8 @@ export class ClickHouseEngine extends StorageEngine {
 
   async count(params: CountParams): Promise<CountResult> {
     const start = Date.now();
-    const client = this.getClient();
     const native = this.translator.translateCount(params);
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: native.query as string,
       query_params: (native.parameters as Record<string, unknown>[])[0],
       format: 'JSONEachRow',
@@ -638,9 +652,8 @@ export class ClickHouseEngine extends StorageEngine {
 
   async distinct(params: DistinctParams): Promise<DistinctResult> {
     const start = Date.now();
-    const client = this.getClient();
     const native = this.translator.translateDistinct(params);
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: native.query as string,
       query_params: (native.parameters as Record<string, unknown>[])[0],
       format: 'JSONEachRow',
@@ -654,9 +667,8 @@ export class ClickHouseEngine extends StorageEngine {
 
   async topValues(params: TopValuesParams): Promise<TopValuesResult> {
     const start = Date.now();
-    const client = this.getClient();
     const native = this.translator.translateTopValues(params);
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: native.query as string,
       query_params: (native.parameters as Record<string, unknown>[])[0],
       format: 'JSONEachRow',
@@ -673,10 +685,9 @@ export class ClickHouseEngine extends StorageEngine {
 
   async deleteByTimeRange(params: DeleteByTimeRangeParams): Promise<DeleteResult> {
     const start = Date.now();
-    const client = this.getClient();
     const native = this.translator.translateDelete(params);
     // ClickHouse mutations are async - the command returns immediately
-    await client.command({
+    await this.runCommand({
       query: native.query as string,
       query_params: (native.parameters as Record<string, unknown>[])[0],
     });
@@ -713,6 +724,40 @@ export class ClickHouseEngine extends StorageEngine {
     return this.client;
   }
 
+  private async runCommand(args: Parameters<ClickHouseClient['command']>[0], op = 'cmd') {
+    const client = this.getClient();
+    const final = { ...args, query: chCtxComment() + args.query, query_id: (args as any).query_id ?? chQueryId(op) };
+    return client.command(final);
+  }
+
+  private async runQuery<Format extends DataFormat>(
+    args: { query: string; format?: Format; [k: string]: unknown },
+    op = 'query',
+  ) {
+    const client = this.getClient();
+    const final = { ...args, query: chCtxComment() + args.query, query_id: (args as any).query_id ?? chQueryId(op) };
+    // The spread loses the format literal; cast via `any` to preserve the Format generic
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return client.query<Format>(final as any);
+  }
+
+  private async runInsert(args: InsertParams<import('stream').Readable>, op = 'insert') {
+    const client = this.getClient();
+    const queryId = chQueryId(op);
+    const final: typeof args = { ...args };
+    if (queryId) {
+      (final as any).query_id = queryId;
+    }
+    const comment = chCtxComment().trim();
+    if (comment) {
+      (final as any).clickhouse_settings = {
+        ...((args as any).clickhouse_settings as object | undefined),
+        log_comment: comment,
+      };
+    }
+    return client.insert(final);
+  }
+
   private toClickHouseRow(log: LogRecord): Record<string, unknown> {
     const row: Record<string, unknown> = {
       time: log.time.getTime(),
@@ -739,7 +784,6 @@ export class ClickHouseEngine extends StorageEngine {
     if (spans.length === 0) return { ingested: 0, failed: 0, durationMs: 0 };
 
     const start = Date.now();
-    const client = this.getClient();
 
     try {
       const values = spans.map((span) => ({
@@ -763,7 +807,7 @@ export class ClickHouseEngine extends StorageEngine {
         resource_attributes: span.resourceAttributes ? JSON.stringify(span.resourceAttributes) : '{}',
       }));
 
-      await client.insert({ table: 'spans', values, format: 'JSONEachRow' });
+      await this.runInsert({ table: 'spans', values, format: 'JSONEachRow' }, 'ingest-spans');
       return { ingested: spans.length, failed: 0, durationMs: Date.now() - start };
     } catch (err) {
       return {
@@ -776,11 +820,9 @@ export class ClickHouseEngine extends StorageEngine {
   }
 
   async upsertTrace(trace: TraceRecord): Promise<void> {
-    const client = this.getClient();
-
     // ReplacingMergeTree handles dedup by (project_id, trace_id) using updated_at
     // We read the existing row, merge, and insert the merged version
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: `SELECT trace_id, start_time, end_time, span_count, error
               FROM traces FINAL
               WHERE trace_id = {traceId:String} AND project_id = {projectId:String}`,
@@ -811,7 +853,7 @@ export class ClickHouseEngine extends StorageEngine {
 
     const durationMs = endTime.getTime() - startTime.getTime();
 
-    await client.insert({
+    await this.runInsert({
       table: 'traces',
       values: [{
         trace_id: trace.traceId,
@@ -827,12 +869,11 @@ export class ClickHouseEngine extends StorageEngine {
         error: error ? 1 : 0,
       }],
       format: 'JSONEachRow',
-    });
+    }, 'upsert-trace');
   }
 
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {
     const start = Date.now();
-    const client = this.getClient();
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
 
@@ -879,14 +920,14 @@ export class ClickHouseEngine extends StorageEngine {
     const sortBy = ALLOWED_SORT_COLUMNS.has(params.sortBy ?? '') ? params.sortBy! : 'start_time';
     const sortOrder = ALLOWED_SORT_ORDERS.has((params.sortOrder ?? '').toLowerCase()) ? params.sortOrder!.toUpperCase() : 'ASC';
 
-    const countResult = await client.query({
+    const countResult = await this.runQuery({
       query: `SELECT count() AS count FROM spans ${where}`,
       query_params: queryParams,
       format: 'JSONEachRow',
     });
     const total = Number((await countResult.json<{ count: string }>())[0]?.count ?? 0);
 
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: `SELECT * FROM spans ${where} ORDER BY ${sortBy} ${sortOrder} LIMIT ${limit} OFFSET ${offset}`,
       query_params: queryParams,
       format: 'JSONEachRow',
@@ -904,8 +945,7 @@ export class ClickHouseEngine extends StorageEngine {
   }
 
   async getSpansByTraceId(traceId: string, projectId: string): Promise<SpanRecord[]> {
-    const client = this.getClient();
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: `SELECT * FROM spans WHERE trace_id = {traceId:String} AND project_id = {projectId:String} ORDER BY start_time ASC`,
       query_params: { traceId, projectId },
       format: 'JSONEachRow',
@@ -916,7 +956,6 @@ export class ClickHouseEngine extends StorageEngine {
 
   async queryTraces(params: TraceQueryParams): Promise<TraceQueryResult> {
     const start = Date.now();
-    const client = this.getClient();
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
 
@@ -954,14 +993,14 @@ export class ClickHouseEngine extends StorageEngine {
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     // Use FINAL to get deduplicated rows from ReplacingMergeTree
-    const countResult = await client.query({
+    const countResult = await this.runQuery({
       query: `SELECT count() AS count FROM traces FINAL ${where}`,
       query_params: queryParams,
       format: 'JSONEachRow',
     });
     const total = Number((await countResult.json<{ count: string }>())[0]?.count ?? 0);
 
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: `SELECT * FROM traces FINAL ${where} ORDER BY start_time DESC LIMIT ${limit} OFFSET ${offset}`,
       query_params: queryParams,
       format: 'JSONEachRow',
@@ -979,8 +1018,7 @@ export class ClickHouseEngine extends StorageEngine {
   }
 
   async getTraceById(traceId: string, projectId: string): Promise<TraceRecord | null> {
-    const client = this.getClient();
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: `SELECT * FROM traces FINAL WHERE trace_id = {traceId:String} AND project_id = {projectId:String}`,
       query_params: { traceId, projectId },
       format: 'JSONEachRow',
@@ -994,7 +1032,6 @@ export class ClickHouseEngine extends StorageEngine {
     from?: Date,
     to?: Date,
   ): Promise<ServiceDependencyResult> {
-    const client = this.getClient();
     const queryParams: Record<string, unknown> = { projectId };
     let timeFilter = '';
 
@@ -1007,7 +1044,7 @@ export class ClickHouseEngine extends StorageEngine {
       queryParams.p_to = toDateTime64(to);
     }
 
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: `
         SELECT
           parent.service_name AS source_service,
@@ -1052,7 +1089,6 @@ export class ClickHouseEngine extends StorageEngine {
 
   async deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult> {
     const start = Date.now();
-    const client = this.getClient();
     const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
 
     const conditions = [
@@ -1073,7 +1109,7 @@ export class ClickHouseEngine extends StorageEngine {
     }
 
     // ClickHouse mutations are async
-    await client.command({
+    await this.runCommand({
       query: `ALTER TABLE spans DELETE WHERE ${conditions.join(' AND ')}`,
       query_params: queryParams,
     });
@@ -1089,7 +1125,6 @@ export class ClickHouseEngine extends StorageEngine {
     if (metrics.length === 0) return { ingested: 0, failed: 0, durationMs: 0 };
 
     const start = Date.now();
-    const client = this.getClient();
 
     try {
       const metricRows: Record<string, unknown>[] = [];
@@ -1132,10 +1167,10 @@ export class ClickHouseEngine extends StorageEngine {
         }
       }
 
-      await client.insert({ table: 'metrics', values: metricRows, format: 'JSONEachRow' });
+      await this.runInsert({ table: 'metrics', values: metricRows, format: 'JSONEachRow' }, 'ingest-metrics');
 
       if (exemplarRows.length > 0) {
-        await client.insert({ table: 'metric_exemplars', values: exemplarRows, format: 'JSONEachRow' });
+        await this.runInsert({ table: 'metric_exemplars', values: exemplarRows, format: 'JSONEachRow' }, 'ingest-metric-exemplars');
       }
 
       return { ingested: metrics.length, failed: 0, durationMs: Date.now() - start };
@@ -1151,7 +1186,6 @@ export class ClickHouseEngine extends StorageEngine {
 
   async queryMetrics(params: MetricQueryParams): Promise<MetricQueryResult> {
     const start = Date.now();
-    const client = this.getClient();
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
 
@@ -1207,7 +1241,7 @@ export class ClickHouseEngine extends StorageEngine {
     const sortOrder = params.sortOrder ?? 'desc';
 
     // Count total
-    const countResult = await client.query({
+    const countResult = await this.runQuery({
       query: `SELECT count() AS count FROM metrics ${where}`,
       query_params: queryParams,
       format: 'JSONEachRow',
@@ -1215,7 +1249,7 @@ export class ClickHouseEngine extends StorageEngine {
     const total = Number((await countResult.json<{ count: string }>())[0]?.count ?? 0);
 
     // Fetch rows
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: `SELECT * FROM metrics ${where} ORDER BY time ${sortOrder} LIMIT ${limit} OFFSET ${offset}`,
       query_params: queryParams,
       format: 'JSONEachRow',
@@ -1228,7 +1262,7 @@ export class ClickHouseEngine extends StorageEngine {
     if (params.includeExemplars) {
       const metricIds = metricsResult.filter(m => m.hasExemplars).map(m => m.id);
       if (metricIds.length > 0) {
-        const exemplarResult = await client.query({
+        const exemplarResult = await this.runQuery({
           query: `SELECT * FROM metric_exemplars WHERE metric_id IN {p_mids:Array(String)} ORDER BY time ASC`,
           query_params: { p_mids: metricIds },
           format: 'JSONEachRow',
@@ -1274,8 +1308,6 @@ export class ClickHouseEngine extends StorageEngine {
     if (this.canUseMetricRollup(params)) {
       return this.aggregateMetricsFromRollup(params, start);
     }
-
-    const client = this.getClient();
 
     const intervalMap: Record<AggregationInterval, string> = {
       '1m': '1 MINUTE',
@@ -1368,7 +1400,7 @@ export class ClickHouseEngine extends StorageEngine {
 
     const query = `SELECT ${selectCols} FROM metrics ${where} GROUP BY ${groupByColumns.join(', ')} ORDER BY bucket ASC`;
 
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query,
       query_params: queryParams,
       format: 'JSONEachRow',
@@ -1395,7 +1427,7 @@ export class ClickHouseEngine extends StorageEngine {
     // Determine metricType: use param or query DB
     let metricType: MetricType = params.metricType ?? 'gauge';
     if (!params.metricType) {
-      const typeResult = await client.query({
+      const typeResult = await this.runQuery({
         query: `SELECT metric_type FROM metrics WHERE metric_name = {p_name:String} AND project_id IN {p_pids:Array(String)} LIMIT 1`,
         query_params: { p_name: params.metricName, p_pids: pids },
         format: 'JSONEachRow',
@@ -1426,8 +1458,6 @@ export class ClickHouseEngine extends StorageEngine {
     params: MetricAggregateParams,
     start: number,
   ): Promise<MetricAggregateResult> {
-    const client = this.getClient();
-
     const rollupTable = params.interval === '1d'
       ? 'metrics_daily_rollup'
       : 'metrics_hourly_rollup';
@@ -1473,7 +1503,7 @@ export class ClickHouseEngine extends StorageEngine {
       ORDER BY bucket ASC
     `;
 
-    const result = await client.query({
+    const result = await this.runQuery({
       query: sql,
       query_params: queryParams,
       format: 'JSONEachRow',
@@ -1495,7 +1525,6 @@ export class ClickHouseEngine extends StorageEngine {
 
   async getMetricNames(params: MetricNamesParams): Promise<MetricNamesResult> {
     const start = Date.now();
-    const client = this.getClient();
     const limit = params.limit ?? 1000;
 
     const conditions: string[] = [];
@@ -1526,7 +1555,7 @@ export class ClickHouseEngine extends StorageEngine {
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: `SELECT metric_name, metric_type FROM metrics ${where} GROUP BY metric_name, metric_type ORDER BY metric_name ASC LIMIT ${limit}`,
       query_params: queryParams,
       format: 'JSONEachRow',
@@ -1544,7 +1573,6 @@ export class ClickHouseEngine extends StorageEngine {
 
   async getMetricLabelKeys(params: MetricLabelParams): Promise<MetricLabelResult> {
     const start = Date.now();
-    const client = this.getClient();
     const limit = params.limit ?? 100;
 
     const conditions: string[] = [];
@@ -1575,7 +1603,7 @@ export class ClickHouseEngine extends StorageEngine {
 
     // ClickHouse has no native JSONB keys function, so we sample rows
     // and extract keys client-side using JSONExtractKeys
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: `SELECT DISTINCT arrayJoin(JSONExtractKeys(attributes)) AS key FROM metrics ${where} LIMIT ${limit}`,
       query_params: queryParams,
       format: 'JSONEachRow',
@@ -1590,7 +1618,6 @@ export class ClickHouseEngine extends StorageEngine {
 
   async getMetricLabelValues(params: MetricLabelParams, labelKey: string): Promise<MetricLabelResult> {
     const start = Date.now();
-    const client = this.getClient();
     const limit = params.limit ?? 100;
 
     const conditions: string[] = [];
@@ -1619,7 +1646,7 @@ export class ClickHouseEngine extends StorageEngine {
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const resultSet = await client.query({
+    const resultSet = await this.runQuery({
       query: `SELECT DISTINCT JSONExtractString(attributes, {p_label_key:String}) AS val FROM metrics ${where} HAVING val != '' LIMIT ${limit}`,
       query_params: { ...queryParams, p_label_key: labelKey },
       format: 'JSONEachRow',
@@ -1634,7 +1661,6 @@ export class ClickHouseEngine extends StorageEngine {
 
   async deleteMetricsByTimeRange(params: DeleteMetricsByTimeRangeParams): Promise<DeleteResult> {
     const start = Date.now();
-    const client = this.getClient();
     const pids = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
 
     const conditions = [
@@ -1660,7 +1686,7 @@ export class ClickHouseEngine extends StorageEngine {
     }
 
     // Delete from metrics table (async mutation)
-    await client.command({
+    await this.runCommand({
       query: `ALTER TABLE metrics DELETE WHERE ${conditions.join(' AND ')}`,
       query_params: queryParams,
     });
@@ -1671,7 +1697,7 @@ export class ClickHouseEngine extends StorageEngine {
       `time >= {p_from:DateTime64(3)}`,
       `time <= {p_to:DateTime64(3)}`,
     ];
-    await client.command({
+    await this.runCommand({
       query: `ALTER TABLE metric_exemplars DELETE WHERE ${exemplarConditions.join(' AND ')}`,
       query_params: {
         p_pids: pids,
@@ -1685,7 +1711,6 @@ export class ClickHouseEngine extends StorageEngine {
 
   async getMetricsOverview(params: MetricsOverviewParams): Promise<MetricsOverviewResult> {
     const start = Date.now();
-    const client = this.getClient();
     const projectIds = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
     const queryParams: Record<string, unknown> = {
       p_pids: projectIds,
@@ -1717,7 +1742,7 @@ export class ClickHouseEngine extends StorageEngine {
       ORDER BY service_name, metric_name
     `;
 
-    const result = await client.query({
+    const result = await this.runQuery({
       query: sql,
       query_params: queryParams,
       format: 'JSONEachRow',

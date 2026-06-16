@@ -123,16 +123,10 @@ export async function settingsRoutes(fastify: FastifyInstance) {
 
         const user = (request as any).user;
         if (user) {
-          auditLogService.log({
+          await auditLogService.record({
+            action: 'settings.updated',
+            target: { type: 'system_setting', id: key },
             organizationId: null,
-            userId: user.id,
-            userEmail: user.email,
-            action: 'update_system_setting',
-            category: 'config_change',
-            resourceType: 'system_setting',
-            resourceId: key,
-            ipAddress: request.ip,
-            userAgent: request.headers['user-agent'],
             metadata: { value: body.value },
           });
         }
@@ -169,17 +163,11 @@ export async function settingsRoutes(fastify: FastifyInstance) {
 
         const user = (request as any).user;
         if (user) {
-          auditLogService.log({
+          await auditLogService.record({
+            action: 'settings.updated',
+            target: { type: 'system_setting', id: 'multiple' },
             organizationId: null,
-            userId: user.id,
-            userEmail: user.email,
-            action: 'update_system_settings_bulk',
-            category: 'config_change',
-            resourceType: 'system_setting',
-            resourceId: 'multiple',
-            ipAddress: request.ip,
-            userAgent: request.headers['user-agent'],
-            metadata: { keys: Object.keys(body) },
+            metadata: { keys: Object.keys(body), bulk: true },
           });
         }
 
@@ -222,17 +210,10 @@ export async function settingsRoutes(fastify: FastifyInstance) {
 
         const user = (request as any).user;
         if (user) {
-          auditLogService.log({
+          await auditLogService.record({
+            action: 'settings.reset',
+            target: { type: 'system_setting', id: key },
             organizationId: null,
-            userId: user.id,
-            userEmail: user.email,
-            action: 'reset_system_setting',
-            category: 'config_change',
-            resourceType: 'system_setting',
-            resourceId: key,
-            ipAddress: request.ip,
-            userAgent: request.headers['user-agent'],
-            metadata: {},
           });
         }
 

@@ -142,7 +142,7 @@ describe('OTLP Transformer', () => {
       });
     });
 
-    it('should include resource attributes in metadata', () => {
+    it('should include resource attributes namespaced under metadata.resource', () => {
       const request: OtlpExportLogsRequest = {
         resourceLogs: [
           {
@@ -164,11 +164,221 @@ describe('OTLP Transformer', () => {
 
       const result = transformOtlpToLogTide(request);
 
-      expect(result[0].metadata).toMatchObject({
+      // resource attrs go under metadata.resource, not flat at top level
+      expect(result[0].metadata?.resource).toMatchObject({
         'service.name': 'my-service',
         'service.version': '2.0.0',
         'host.name': 'server-1',
       });
+      // must NOT be flat at top level
+      expect(result[0].metadata).not.toHaveProperty('service.version');
+      expect(result[0].metadata).not.toHaveProperty('host.name');
+    });
+
+    // --- new tests for structured body preservation ---
+
+    it('should preserve kvlist body structure under metadata[otel.body]', () => {
+      const request: OtlpExportLogsRequest = {
+        resourceLogs: [
+          {
+            resource: {
+              attributes: [
+                { key: 'service.name', value: { stringValue: 'svc' } },
+              ],
+            },
+            scopeLogs: [
+              {
+                logRecords: [
+                  {
+                    body: {
+                      kvlistValue: {
+                        values: [
+                          { key: 'user', value: { stringValue: 'a' } },
+                          { key: 'count', value: { intValue: 3 } },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = transformOtlpToLogTide(request);
+      const log = result[0];
+
+      // message is still the JSON string (existing behavior unchanged)
+      expect(log.message).toBe('{"user":"a","count":3}');
+      // structured body also preserved as decoded object
+      expect(log.metadata?.['otel.body']).toEqual({ user: 'a', count: 3 });
+    });
+
+    it('should preserve array body structure under metadata[otel.body]', () => {
+      const request: OtlpExportLogsRequest = {
+        resourceLogs: [
+          {
+            resource: {
+              attributes: [
+                { key: 'service.name', value: { stringValue: 'svc' } },
+              ],
+            },
+            scopeLogs: [
+              {
+                logRecords: [
+                  {
+                    body: {
+                      arrayValue: {
+                        values: [
+                          { stringValue: 'x' },
+                          { intValue: 1 },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = transformOtlpToLogTide(request);
+      const log = result[0];
+
+      // metadata['otel.body'] should be the decoded array
+      expect(log.metadata?.['otel.body']).toEqual(['x', 1]);
+    });
+
+    it('should NOT add otel.body for string bodies', () => {
+      const request: OtlpExportLogsRequest = {
+        resourceLogs: [
+          {
+            resource: {
+              attributes: [
+                { key: 'service.name', value: { stringValue: 'svc' } },
+              ],
+            },
+            scopeLogs: [
+              {
+                logRecords: [
+                  {
+                    body: { stringValue: 'just a string' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = transformOtlpToLogTide(request);
+      const log = result[0];
+
+      expect(log.message).toBe('just a string');
+      expect(log.metadata).not.toHaveProperty('otel.body');
+    });
+
+    it('should namespace resource attrs and keep log attrs flat', () => {
+      const request: OtlpExportLogsRequest = {
+        resourceLogs: [
+          {
+            resource: {
+              attributes: [
+                { key: 'service.name', value: { stringValue: 'svc' } },
+                { key: 'host.name', value: { stringValue: 'h1' } },
+              ],
+            },
+            scopeLogs: [
+              {
+                logRecords: [
+                  {
+                    body: { stringValue: 'msg' },
+                    attributes: [
+                      { key: 'http.method', value: { stringValue: 'GET' } },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = transformOtlpToLogTide(request);
+      const meta = result[0].metadata!;
+
+      expect(meta.resource).toMatchObject({ 'service.name': 'svc', 'host.name': 'h1' });
+      expect(meta['http.method']).toBe('GET');
+      // resource keys must NOT be flat at top level
+      expect(meta).not.toHaveProperty('host.name');
+    });
+
+    it('should handle collision: log attr wins flat space, resource attr preserved under resource', () => {
+      const request: OtlpExportLogsRequest = {
+        resourceLogs: [
+          {
+            resource: {
+              attributes: [
+                { key: 'service.name', value: { stringValue: 'svc' } },
+                { key: 'env', value: { stringValue: 'prod' } },
+              ],
+            },
+            scopeLogs: [
+              {
+                logRecords: [
+                  {
+                    body: { stringValue: 'msg' },
+                    attributes: [
+                      { key: 'env', value: { stringValue: 'dev' } },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = transformOtlpToLogTide(request);
+      const meta = result[0].metadata!;
+
+      // log attr wins the flat space
+      expect(meta['env']).toBe('dev');
+      // resource attr preserved under resource
+      expect((meta.resource as Record<string, unknown>)['env']).toBe('prod');
+    });
+
+    it('should keep otel.scope.* keys flat in metadata', () => {
+      const request: OtlpExportLogsRequest = {
+        resourceLogs: [
+          {
+            resource: {
+              attributes: [
+                { key: 'service.name', value: { stringValue: 'svc' } },
+              ],
+            },
+            scopeLogs: [
+              {
+                scope: {
+                  name: 'my-lib',
+                  version: '1.2.3',
+                },
+                logRecords: [
+                  { body: { stringValue: 'msg' } },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      const result = transformOtlpToLogTide(request);
+      const meta = result[0].metadata!;
+
+      expect(meta['otel.scope.name']).toBe('my-lib');
+      expect(meta['otel.scope.version']).toBe('1.2.3');
     });
   });
 

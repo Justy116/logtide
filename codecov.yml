@@ -13,3 +13,7 @@ comment:
   layout: "reach,diff,flags,files"
   behavior: default
   require_changes: true
+
+# CLI tooling / scripts are not unit-tested; exclude from coverage like src/scripts.
+ignore:
+  - "packages/backend/scripts"

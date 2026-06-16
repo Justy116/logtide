@@ -7,6 +7,9 @@ import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { notificationChannelsService } from '../notification-channels/index.js';
 import { auditLogService } from '../audit-log/service.js';
+import { context } from '@logtide/shared/context';
+import { assertWithinLimit } from '../../capabilities/index.js';
+import { CapabilityError } from '../../capabilities/errors.js';
 
 const sigmaService = new SigmaService();
 const organizationsService = new OrganizationsService();
@@ -90,6 +93,14 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
           });
         }
 
+        // Cap on enabled sigma rules (#214 follow-up, WS2)
+        await context.runAsSystem('sigma:import-limit-check', async () => {
+          await context.with({ organizationId: body.organizationId }, async () => {
+            const activeCount = await sigmaService.countActiveRules(body.organizationId);
+            await assertWithinLimit('sigma.max_active_rules', activeCount);
+          });
+        });
+
         const result = await sigmaService.importSigmaRule(importData);
 
         // Associate channels with the sigma rule if import was successful
@@ -101,21 +112,18 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
           return reply.code(400).send(result);
         }
 
-        auditLogService.log({
+        await auditLogService.record({
+          action: 'rule.imported',
+          target: { type: 'sigma_rule', id: result.sigmaRule?.id ?? null },
           organizationId: body.organizationId,
-          userId: request.user.id,
-          userEmail: request.user.email,
-          action: 'import_sigma_rule',
-          category: 'config_change',
-          resourceType: 'sigma_rule',
-          resourceId: result.sigmaRule?.id,
-          ipAddress: request.ip,
-          userAgent: request.headers['user-agent'],
           metadata: { title: result.sigmaRule?.title },
         });
 
         return reply.send(result);
       } catch (error) {
+        if (error instanceof CapabilityError) {
+          throw error;
+        }
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',
@@ -304,6 +312,26 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
 
       // Update enabled status if provided
       if (body.enabled !== undefined) {
+        if (body.enabled === true) {
+          // Pre-fetch current state to avoid false positives on already-enabled rules
+          const existingRule = await sigmaService.getRuleEnabledState(
+            params.id,
+            body.organizationId
+          );
+          if (!existingRule) {
+            return reply.code(404).send({ error: 'Sigma rule not found' });
+          }
+          // Cap on enabled sigma rules - only check when actually transitioning disabled -> enabled
+          if (!existingRule.enabled) {
+            await context.runAsSystem('sigma:enable-limit-check', async () => {
+              await context.with({ organizationId: body.organizationId }, async () => {
+                const activeCount = await sigmaService.countActiveRules(body.organizationId);
+                await assertWithinLimit('sigma.max_active_rules', activeCount);
+              });
+            });
+          }
+        }
+
         rule = await sigmaService.toggleSigmaRule(
           params.id,
           body.organizationId,
@@ -334,16 +362,11 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
       // Fetch updated rule to return
       const updatedRule = await sigmaService.getSigmaRuleById(params.id, body.organizationId);
 
-      auditLogService.log({
+      const sigmaAction = body.enabled === true ? 'rule.enabled' as const : body.enabled === false ? 'rule.disabled' as const : 'rule.updated' as const;
+      await auditLogService.record({
+        action: sigmaAction,
+        target: { type: 'sigma_rule', id: params.id },
         organizationId: body.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: body.enabled !== undefined ? (body.enabled ? 'enable_sigma_rule' : 'disable_sigma_rule') : 'update_sigma_rule',
-        category: 'config_change',
-        resourceType: 'sigma_rule',
-        resourceId: params.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { enabled: body.enabled, channelIds: body.channelIds },
       });
 
@@ -387,6 +410,12 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
               error: { type: 'string' },
             },
           },
+          404: {
+            type: 'object',
+            properties: {
+              error: { type: 'string' },
+            },
+          },
         },
       },
     },
@@ -415,22 +444,23 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
         });
       }
 
-      await sigmaService.deleteSigmaRule(
-        params.id,
-        query.organizationId,
-        query.deleteAlertRule
-      );
+      try {
+        await sigmaService.deleteSigmaRule(
+          params.id,
+          query.organizationId,
+          query.deleteAlertRule
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message === 'Sigma rule not found') {
+          return reply.code(404).send({ error: 'Sigma rule not found' });
+        }
+        throw error;
+      }
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'rule.deleted',
+        target: { type: 'sigma_rule', id: params.id },
         organizationId: query.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'delete_sigma_rule',
-        category: 'config_change',
-        resourceType: 'sigma_rule',
-        resourceId: params.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
       });
 
       return reply.send({ success: true });
@@ -522,6 +552,9 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
 
         return reply.send(result);
       } catch (error) {
+        if (error instanceof CapabilityError) {
+          throw error;
+        }
         if (error instanceof z.ZodError) {
           return reply.status(400).send({
             error: 'Validation error',

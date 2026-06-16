@@ -1,9 +1,11 @@
 import { db, getPoolStats } from '../../database/index.js';
 import { sql } from 'kysely';
 import { reservoir } from '../../database/reservoir.js';
+import { GLOBAL_SCOPE } from '@logtide/reservoir';
 import { getConnection, isRedisAvailable } from '../../queue/connection.js';
 import { CacheManager, type CacheStats, isCacheEnabled } from '../../utils/cache.js';
 import { settingsService, type UpdateChannel } from '../settings/service.js';
+import { enrichmentService } from '../siem/enrichment-service.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -310,7 +312,7 @@ export class AdminService {
                     );
                     logsCount = r.rows[0]?.count ?? 0;
                 } else {
-                    const r = await reservoir.count({ from: new Date(0), to: new Date() });
+                    const r = await reservoir.count({ projectId: GLOBAL_SCOPE, from: new Date(0), to: new Date() });
                     logsCount = r.count;
                 }
 
@@ -481,10 +483,10 @@ export class AdminService {
                 `.compile(db)
             ),
 
-            reservoir.count({ from: oneHourAgo, to: now })
+            reservoir.count({ projectId: GLOBAL_SCOPE, from: oneHourAgo, to: now })
                 .then((r: { count: number }) => ({ count: r.count })),
 
-            reservoir.count({ from: oneDayAgo, to: now })
+            reservoir.count({ projectId: GLOBAL_SCOPE, from: oneDayAgo, to: now })
                 .then((r: { count: number }) => ({ count: r.count })),
         ]);
 
@@ -537,7 +539,7 @@ export class AdminService {
 
         const [totalResult, logsPerDayResult, logsLastHour, logsLastDay] = await Promise.all([
             // Total logs (count is fast on ClickHouse MergeTree)
-            reservoir.count({ from: new Date(0), to: now }),
+            reservoir.count({ projectId: GLOBAL_SCOPE, from: new Date(0), to: now }),
 
             // Logs per day via reservoir aggregate
             reservoir.aggregate({
@@ -547,8 +549,8 @@ export class AdminService {
                 interval: '1d',
             }),
 
-            reservoir.count({ from: oneHourAgo, to: now }),
-            reservoir.count({ from: oneDayAgo, to: now }),
+            reservoir.count({ projectId: GLOBAL_SCOPE, from: oneHourAgo, to: now }),
+            reservoir.count({ projectId: GLOBAL_SCOPE, from: oneDayAgo, to: now }),
         ]);
 
         // Per-day counts from aggregate
@@ -621,7 +623,7 @@ export class AdminService {
         const now = new Date();
         const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
-        const logsLastHour = await reservoir.count({ from: oneHourAgo, to: now });
+        const logsLastHour = await reservoir.count({ projectId: GLOBAL_SCOPE, from: oneHourAgo, to: now });
         const throughput = logsLastHour.count / 3600;
 
         if (reservoir.getEngineType() === 'timescale') {
@@ -1218,6 +1220,41 @@ export class AdminService {
     }
 
     /**
+     * Ingestion health counters (WS1): fail-closed PII rejections and
+     * enqueue failures over the last 24h, plus SIEM enrichment availability.
+     */
+    async getIngestionHealthStats() {
+        const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const rows = await db
+            .selectFrom('metering_events')
+            .select((eb) => ['type' as const, eb.fn.sum<number>('quantity').as('total')])
+            .where('time', '>=', since)
+            .where('type', 'in', [
+                'ingestion.pii_rejected',
+                'ingestion.detection_enqueue_failed',
+                'ingestion.exception_enqueue_failed',
+                'ingestion.identifier_failed',
+            ])
+            .groupBy('type')
+            .execute();
+
+        const byType: Record<string, number> = {};
+        for (const row of rows) {
+            byType[row.type] = Number(row.total);
+        }
+
+        return {
+            counters24h: {
+                piiRejected: byType['ingestion.pii_rejected'] ?? 0,
+                detectionEnqueueFailed: byType['ingestion.detection_enqueue_failed'] ?? 0,
+                exceptionEnqueueFailed: byType['ingestion.exception_enqueue_failed'] ?? 0,
+                identifierFailed: byType['ingestion.identifier_failed'] ?? 0,
+            },
+            enrichment: enrichmentService.getStatus(),
+        };
+    }
+
+    /**
      * Get paginated list of users with optional search
      */
     async getUsers(page: number = 1, limit: number = 50, search?: string) {
@@ -1519,6 +1556,7 @@ export class AdminService {
                 'name',
                 'slug',
                 'retention_days',
+                'audit_retention_days',
                 'created_at',
                 'updated_at',
             ])
@@ -1557,6 +1595,7 @@ export class AdminService {
         return {
             ...org,
             retentionDays: org.retention_days,
+            auditRetentionDays: org.audit_retention_days ?? null,
             members,
             projects,
         };

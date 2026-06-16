@@ -230,10 +230,50 @@ jobs:
       - name: Typecheck backend
         run: pnpm --filter '@logtide/backend' typecheck
 
+      - name: Tenant scoping check
+        working-directory: packages/backend
+        run: npm run check:tenant-scoping
+
       - name: Typecheck frontend
         env:
           PUBLIC_API_URL: http://localhost:8080
         run: pnpm --filter '@logtide/frontend' typecheck
+
+  # ====================
+  # Shared + Frontend Unit Tests
+  # ====================
+  unit-test-shared-frontend:
+    name: Shared + Frontend Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        run: pnpm --filter '@logtide/shared' build
+
+      - name: Run shared unit tests
+        run: pnpm --filter '@logtide/shared' test
+
+      - name: Run frontend unit tests
+        env:
+          PUBLIC_API_URL: http://localhost:8080
+        run: pnpm --filter '@logtide/frontend' test
 
   # ====================
   # E2E Tests (Playwright)

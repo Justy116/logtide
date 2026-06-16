@@ -1,12 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { LOG_LEVELS, metadataFiltersSchema } from '@logtide/shared';
+import { context } from '@logtide/shared/context';
 import { alertsService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { OrganizationsService } from '../organizations/service.js';
 import { projectsService } from '../projects/service.js';
 import { notificationChannelsService } from '../notification-channels/index.js';
 import { auditLogService } from '../audit-log/index.js';
+import { assertWithinLimit } from '../../capabilities/index.js';
 
 const organizationsService = new OrganizationsService();
 
@@ -78,6 +80,7 @@ const alertRuleIdSchema = z.object({
 });
 
 const getAlertsQuerySchema = z.object({
+  organizationId: z.string().uuid('organizationId must be a valid uuid'),
   projectId: z.string().uuid().optional(),
   enabledOnly: z
     .string()
@@ -93,6 +96,7 @@ const parsePositiveInt = (val: string | undefined, fallback: number, max: number
 };
 
 const getHistoryQuerySchema = z.object({
+  organizationId: z.string().uuid('organizationId must be a valid uuid'),
   projectId: z.string().uuid().optional(),
   limit: z
     .string()
@@ -102,6 +106,10 @@ const getHistoryQuerySchema = z.object({
     .string()
     .optional()
     .transform((val) => parsePositiveInt(val, 0, 100000)),
+});
+
+const orgQuerySchema = z.object({
+  organizationId: z.string().uuid('organizationId must be a valid uuid'),
 });
 
 const previewAlertRuleSchema = z.object({
@@ -172,6 +180,19 @@ export async function alertsRoutes(fastify: FastifyInstance) {
         });
       }
 
+      // Capability: enforce the alerts.max_rules static cap before creating.
+      // Session-auth requests don't populate request.organizationId in the ALS
+      // context, so we establish a scoped system context with the org from the
+      // validated body. Same pattern as otlp/trace-routes.ts.
+      // Note: count -> insert is not atomic; a concurrent create can briefly
+      // exceed the cap by one. Acceptable for user-initiated rule creation.
+      await context.runAsSystem('alerts:create-limit-check', async () => {
+        await context.with({ organizationId: body.organizationId }, async () => {
+          const currentRuleCount = await alertsService.countAlertRules(body.organizationId);
+          await assertWithinLimit('alerts.max_rules', currentRuleCount);
+        });
+      });
+
       const { channelIds, alertType, baselineType, deviationMultiplier, minBaselineValue, cooldownMinutes, sustainedMinutes, metadataFilters, ...alertData } = body;
       const alertRule = await alertsService.createAlertRule({
         ...alertData,
@@ -192,16 +213,10 @@ export async function alertsRoutes(fastify: FastifyInstance) {
 
       const enrichedRule = await enrichAlertRuleWithChannels(alertRule);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'rule.created',
+        target: { type: 'alert_rule', id: alertRule.id },
         organizationId: body.organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'create_alert_rule',
-        category: 'config_change',
-        resourceType: 'alert_rule',
-        resourceId: alertRule.id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { name: alertRule.name, threshold: alertRule.threshold },
       });
 
@@ -222,13 +237,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
   fastify.get('/', async (request: any, reply) => {
     try {
       const query = getAlertsQuerySchema.parse(request.query);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
+      const { organizationId } = query;
 
       // Check if user is member of organization
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
@@ -261,13 +270,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
   fastify.get('/history', async (request: any, reply) => {
     try {
       const query = getHistoryQuerySchema.parse(request.query);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
+      const { organizationId } = query;
 
       // Check if user is member of organization
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
@@ -337,13 +340,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
   fastify.get('/:id', async (request: any, reply) => {
     try {
       const { id } = alertRuleIdSchema.parse(request.params);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       // Check if user is member of organization
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
@@ -379,13 +376,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
     try {
       const { id } = alertRuleIdSchema.parse(request.params);
       const body = updateAlertRuleSchema.parse(request.body);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       // Check if user is member of organization
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
@@ -423,16 +414,10 @@ export async function alertsRoutes(fastify: FastifyInstance) {
 
       const enrichedRule = await enrichAlertRuleWithChannels(alertRule);
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'rule.updated',
+        target: { type: 'alert_rule', id },
         organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'update_alert_rule',
-        category: 'config_change',
-        resourceType: 'alert_rule',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
         metadata: { updatedFields: Object.keys(body) },
       });
 
@@ -453,13 +438,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
   fastify.delete('/:id', async (request: any, reply) => {
     try {
       const { id } = alertRuleIdSchema.parse(request.params);
-      const organizationId = request.query.organizationId as string;
-
-      if (!organizationId) {
-        return reply.status(400).send({
-          error: 'organizationId query parameter is required',
-        });
-      }
+      const { organizationId } = orgQuerySchema.parse(request.query);
 
       // Check if user is member of organization
       const isMember = await checkOrganizationMembership(request.user.id, organizationId);
@@ -477,16 +456,10 @@ export async function alertsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      auditLogService.log({
+      await auditLogService.record({
+        action: 'rule.deleted',
+        target: { type: 'alert_rule', id },
         organizationId,
-        userId: request.user.id,
-        userEmail: request.user.email,
-        action: 'delete_alert_rule',
-        category: 'config_change',
-        resourceType: 'alert_rule',
-        resourceId: id,
-        ipAddress: request.ip,
-        userAgent: request.headers['user-agent'],
       });
 
       return reply.status(204).send();

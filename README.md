@@ -6,7 +6,7 @@
   </p>
 
   <p>
-    <a href="https://logtide.dev"><strong>☁️ Try Cloud (Free Alpha)</strong></a> •
+    <a href="https://logtide.dev"><strong>☁️ Try Cloud (Free Beta)</strong></a> •
     <a href="#self-hosting">Self-Host</a> •
     <a href="#sdks--integrations">SDKs</a> •
     <a href="https://logtide.dev/docs">Docs</a>
@@ -16,14 +16,14 @@
   <a href="https://codecov.io/gh/logtide-dev/logtide"><img src="https://codecov.io/gh/logtide-dev/logtide/branch/main/graph/badge.svg" alt="Coverage"></a>
   <a href="https://hub.docker.com/r/logtide/backend"><img src="https://img.shields.io/docker/v/logtide/backend?label=docker&logo=docker" alt="Docker"></a>
   <a href="https://artifacthub.io/packages/helm/logtide/logtide"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/logtide" alt="Artifact Hub"></a>
-  <img src="https://img.shields.io/badge/version-0.9.7-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/license-AGPLv3-blue.svg" alt="License">
-  <img src="https://img.shields.io/badge/status-stable_alpha-success.svg" alt="Status">
+  <img src="https://img.shields.io/badge/status-beta-success.svg" alt="Status">
 </div>
 
 <br />
 
-> **🚀 RELEASE 0.9.1:** LogTide now ships with **Uptime Monitoring & Status Pages**, **Log Parsing Pipelines**, and **Custom Dashboards**.
+> **🌊 LogTide 1.0.0 (public beta):** unified **Logs, Traces & Metrics** with a built-in **SIEM**, multi-engine storage (TimescaleDB / ClickHouse / MongoDB), uptime monitoring, parsing pipelines, and custom dashboards.
 
 ---
 
@@ -46,7 +46,7 @@ Designed for teams that need **GDPR compliance**, **full data ownership**, and *
 ### Logs Explorer
 ![LogTide Logs](docs/images/logs.png)
 
-### Performance & Metrics (New in 0.9.1)
+### Performance & Metrics
 ![LogTide Metrics](docs/images/metrics.png)
 
 ### Distributed Tracing
@@ -124,9 +124,9 @@ We host it for you. Perfect for testing. [**Sign up at logtide.dev**](https://lo
 
 ---
 
-## ✨ Core Features (v0.9.7)
+## ✨ Core Features (v1.0.0)
 
-### 🆕 New in 0.9.1
+### Monitoring, Pipelines & Dashboards
 * 🩺 **Uptime Monitoring & Status Pages:** HTTP/TCP/heartbeat monitors with configurable thresholds, auto-created SIEM incidents on failure, scheduled maintenances, and public Uptime-Kuma-style status pages per project.
 * 🔧 **Log Parsing Pipelines:** Async enrichment with 5 built-in parsers (nginx, apache, syslog, logfmt, JSON), custom **grok** patterns (`%{PATTERN:field}`), and **GeoIP** enrichment from any IP field. YAML import/export.
 * 📊 **Custom Dashboards:** Drag-and-drop panels with 9 types (time series, top-N, live stream, metric charts, trace latency, detection events, monitor status, and more). Per-user or shared, with YAML round-trip.

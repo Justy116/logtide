@@ -15,6 +15,8 @@ import { parseOtlpRequest, detectContentType, decompressGzip, isGzipCompressed }
 import { transformOtlpToLogTide } from './transformer.js';
 import { ingestionService } from '../ingestion/service.js';
 import { config } from '../../config/index.js';
+import { db } from '../../database/index.js';
+import { context } from '@logtide/shared/context';
 
 /**
  * Helper to collect chunks from a stream into a buffer.
@@ -132,6 +134,18 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
             error: { type: 'string' },
           },
         },
+        429: {
+          type: 'object',
+          properties: {
+            partialSuccess: {
+              type: 'object',
+              properties: {
+                rejectedLogRecords: { type: 'number' },
+                errorMessage: { type: 'string' },
+              },
+            },
+          },
+        },
       },
     },
     handler: async (request: any, reply) => {
@@ -143,6 +157,22 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
           partialSuccess: {
             rejectedLogRecords: -1,
             errorMessage: 'Unauthorized: Missing or invalid API key',
+          },
+        });
+      }
+
+      // Get organization_id for the project so quota enforcement has org context.
+      const project = await db
+        .selectFrom('projects')
+        .select(['organization_id'])
+        .where('id', '=', projectId)
+        .executeTakeFirst();
+
+      if (!project) {
+        return reply.code(401).send({
+          partialSuccess: {
+            rejectedLogRecords: -1,
+            errorMessage: 'Unauthorized: Project not found',
           },
         });
       }
@@ -189,7 +219,8 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
           };
         }
 
-        // Ingest logs using existing service
+        // Ingest logs using existing service.
+        // Wrap in org context so the ingestion service quota guard can read organizationId.
         // Convert TransformedLog to LogInput format
         const logInputs = logs.map((log) => ({
           time: log.time,
@@ -201,18 +232,50 @@ const otlpRoutes: FastifyPluginAsync = async (fastify) => {
           span_id: log.span_id,
         }));
 
-        await ingestionService.ingestLogs(logInputs, projectId);
+        let ingestResult = { received: 0, rejected: [] as Array<{ index: number; reason: string }> };
+        await context.runAsSystem('otlp:log-ingest', async () => {
+          await context.with({ organizationId: project.organization_id }, async () => {
+            ingestResult = await ingestionService.ingestLogs(logInputs, projectId);
+          });
+        });
 
         return {
           partialSuccess: {
-            rejectedLogRecords: 0,
-            errorMessage: '',
+            rejectedLogRecords: ingestResult.rejected.length,
+            errorMessage: ingestResult.rejected.length > 0 ? 'pii_masking_failed' : '',
           },
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const statusCode = typeof (error as { statusCode?: unknown }).statusCode === 'number'
+          ? (error as { statusCode: number }).statusCode
+          : undefined;
+
+        // Client-addressable rejections (quota 429, hook policy 4xx) keep
+        // their status so OTLP exporters can react appropriately.
+        if (statusCode && statusCode >= 400 && statusCode < 500) {
+          // Cast needed: schema only enumerates 400/401/429 but hook
+          // rejections can carry arbitrary 4xx codes (e.g. 403).
+          return (reply as any).code(statusCode).send({
+            partialSuccess: {
+              rejectedLogRecords: -1,
+              errorMessage,
+            },
+          });
+        }
 
         console.error('[OTLP] Ingestion error:', errorMessage);
+
+        // Server-side failures (e.g. a broken hook failing closed) are
+        // retryable: 503, not 400 (400 makes OTLP exporters drop the batch).
+        if (statusCode && statusCode >= 500) {
+          return (reply as any).code(503).send({
+            partialSuccess: {
+              rejectedLogRecords: -1,
+              errorMessage: 'temporary ingestion failure',
+            },
+          });
+        }
 
         return reply.code(400).send({
           partialSuccess: {

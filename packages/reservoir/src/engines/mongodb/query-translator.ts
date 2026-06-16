@@ -1,4 +1,5 @@
 import { QueryTranslator, type NativeQuery } from '../../core/query-translator.js';
+import { GLOBAL_SCOPE } from '../../core/types.js';
 import type {
   AggregateParams,
   AggregationInterval,
@@ -218,12 +219,12 @@ export class MongoDBQueryTranslator extends QueryTranslator {
   }
 
   /**
-   * Build base filter with projectId, organizationId, time range, service, level.
+   * Build base filter with projectId, time range, service, level.
    * Shared across query, aggregate, count, distinct, topValues.
+   * When projectId === GLOBAL_SCOPE the project_id filter is omitted (admin queries).
    */
   private buildBaseFilter(params: {
-    organizationId?: string | string[];
-    projectId?: string | string[];
+    projectId: string | string[] | typeof GLOBAL_SCOPE;
     service?: string | string[];
     level?: string | string[];
     from: Date;
@@ -233,12 +234,8 @@ export class MongoDBQueryTranslator extends QueryTranslator {
   }): Record<string, unknown> {
     const filter: Record<string, unknown> = {};
 
-    if (params.projectId !== undefined) {
+    if (params.projectId !== GLOBAL_SCOPE) {
       filter.project_id = this.toMongoFilter(params.projectId);
-    }
-
-    if (params.organizationId !== undefined) {
-      filter.organization_id = this.toMongoFilter(params.organizationId);
     }
 
     // Time range
