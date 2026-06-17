@@ -20,11 +20,15 @@ const parseNdjson = (body: string): object[] => {
   });
 };
 
-// Detect if this is a systemd-journald formatted log
+// Detect if this is a systemd-journald formatted log.
+// Only the journald-specific trusted fields (underscore-prefixed) and
+// SYSLOG_IDENTIFIER are reliable signals. `MESSAGE`/`PRIORITY` alone are NOT:
+// an ordinary structured log can legitimately carry an uppercase MESSAGE or
+// PRIORITY field and must not be misrouted to the journald parser.
 const isJournaldFormat = (data: any): boolean => {
-  return data._SYSTEMD_UNIT || data._COMM || data._EXE ||
-         data.SYSLOG_IDENTIFIER || data.MESSAGE !== undefined ||
-         data.PRIORITY !== undefined || data._HOSTNAME;
+  return Boolean(
+    data._SYSTEMD_UNIT || data._COMM || data._EXE || data._HOSTNAME || data.SYSLOG_IDENTIFIER
+  );
 };
 
 // Extract service name from journald fields
