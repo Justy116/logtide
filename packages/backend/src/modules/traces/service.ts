@@ -203,7 +203,10 @@ export class TracesService {
       return result.map((r) => r.service_name);
     }
 
-    // ClickHouse: query via reservoir
+    // ClickHouse: derive distinct services from traces. KNOWN LIMITATION: this
+    // pages at most 10000 traces, so a service that only appears in traces beyond
+    // that cap is not listed. A dedicated SELECT DISTINCT service_name query in the
+    // ClickHouse engine would remove the cap (tracked for the reservoir API).
     const result = await reservoir.queryTraces({
       projectId,
       from: effectiveFrom,
@@ -338,6 +341,10 @@ export class TracesService {
         sql<number>`CASE WHEN SUM(span_count) > 0
           THEN SUM(COALESCE(duration_avg_ms, 0) * span_count) / SUM(span_count)
           ELSE 0 END`.as('avg_latency_ms'),
+        // APPROXIMATION: this is the max of the per-bucket p95s, not a true window
+        // p95 (the hourly/daily aggregate stores only a per-bucket p95, which is
+        // not mergeable). It is an upper-bound estimate; a true p95 would require a
+        // mergeable quantile sketch (t-digest) in the continuous aggregate.
         db.fn.max<number>('duration_p95_ms').as('p95_latency_ms'),
       ])
       .where('project_id', '=', projectId)
