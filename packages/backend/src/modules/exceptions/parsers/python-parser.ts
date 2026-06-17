@@ -81,7 +81,14 @@ export class PythonExceptionParser extends BaseExceptionParser {
 
     if (frames.length === 0) return null;
 
+    // Python tracebacks list the oldest call first; reverse so the most recent
+    // frame is first, then assign frameIndex to that order. Without assigning it,
+    // every frame would be stored with an undefined frame_index and the order
+    // (this reverse) would be lost on retrieval.
     frames.reverse();
+    frames.forEach((frame, index) => {
+      frame.frameIndex = index;
+    });
 
     return {
       exceptionType,
