@@ -110,8 +110,14 @@ export class DbCapabilityResolver implements CapabilityResolver {
   }
 
   async list(organizationId: string): Promise<Record<CapabilityName, EntitlementValue>> {
-    // Shallow copy: callers must not be able to mutate the cached map.
-    return { ...(await this.load(organizationId)) };
+    // Copy the map AND each value: a shallow map copy still shares the cached
+    // EntitlementValue objects, so a caller mutating one would corrupt the cache.
+    const loaded = await this.load(organizationId);
+    const out = {} as Record<CapabilityName, EntitlementValue>;
+    for (const key of Object.keys(loaded) as CapabilityName[]) {
+      out[key] = { ...loaded[key] };
+    }
+    return out;
   }
 
   invalidate(organizationId: string): void {
