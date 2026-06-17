@@ -1377,12 +1377,25 @@ export class AdminService {
             throw new Error('User not found');
         }
 
-        // If disabling, delete all active sessions
+        // If disabling, revoke all active sessions. Deleting the DB rows is not
+        // enough: validateSession caches the UserProfile by token, so a disabled
+        // user would keep access until the cache TTL expires. Invalidate the cache
+        // for each token as well.
         if (disabled) {
+            const sessions = await db
+                .selectFrom('sessions')
+                .select('token')
+                .where('user_id', '=', userId)
+                .execute();
+
             await db
                 .deleteFrom('sessions')
                 .where('user_id', '=', userId)
                 .execute();
+
+            await Promise.all(
+                sessions.map((s) => CacheManager.invalidateSession(s.token))
+            );
         }
 
         return user;
