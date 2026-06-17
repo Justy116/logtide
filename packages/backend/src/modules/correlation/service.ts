@@ -258,6 +258,18 @@ export class CorrelationService {
     const logIds = identifierRows.map((row) => row.log_id);
     const identifierType = identifierRows[0].identifier_type;
 
+    // The log fetch above is capped at `limit`; count all matches in the window so
+    // `total` reflects the true number, not just the returned page.
+    const countRow = await db
+      .selectFrom('log_identifiers')
+      .select((eb) => eb.fn.countAll().as('count'))
+      .where('identifier_value', '=', identifierValue)
+      .where('project_id', '=', projectId)
+      .where('log_time', '>=', from)
+      .where('log_time', '<=', to)
+      .executeTakeFirst();
+    const total = Number(countRow?.count ?? 0);
+
     // Fetch actual logs (reservoir: works with any engine)
     const logsResult = await reservoir.getByIds({ ids: logIds, projectId });
     // Sort chronologically (getByIds returns in unspecified order)
@@ -278,7 +290,7 @@ export class CorrelationService {
         traceId: log.traceId ?? null,
         projectId: log.projectId ?? null,
       })),
-      total: sortedLogs.length,
+      total,
       timeWindow: { from, to },
     };
   }
