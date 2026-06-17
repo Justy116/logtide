@@ -362,12 +362,17 @@
       traces = response.traces;
       totalTraces = response.total;
 
-      const statsResponse = await tracesAPI.getStats(
-        selectedProject,
-        timeRange.from.toISOString(),
-        timeRange.to.toISOString()
-      );
-      stats = statsResponse;
+      // Stats are auxiliary: a stats failure must not discard the loaded traces,
+      // so fetch them in their own try/catch rather than the outer one.
+      try {
+        stats = await tracesAPI.getStats(
+          selectedProject,
+          timeRange.from.toISOString(),
+          timeRange.to.toISOString()
+        );
+      } catch (e) {
+        console.error("Failed to load trace stats:", e);
+      }
     } catch (e) {
       console.error("Failed to load traces:", e);
       toastStore.error('Failed to load traces');
