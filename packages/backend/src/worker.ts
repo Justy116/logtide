@@ -375,7 +375,11 @@ async function checkAlerts() {
         const notificationQueue = createQueue('alert-notifications');
 
         for (const alert of triggeredAlerts) {
-          await notificationQueue.add('send-notification', alert);
+          // Dedup by the alert_history id so an overlapping evaluation that
+          // re-enqueues the same trigger does not send duplicate notifications.
+          await notificationQueue.add('send-notification', alert, {
+            jobKey: `alert-notif-${alert.historyId}`,
+          });
 
           if (isInternalLoggingEnabled()) {
             hub.captureLog('info', `Alert notification queued`, {
