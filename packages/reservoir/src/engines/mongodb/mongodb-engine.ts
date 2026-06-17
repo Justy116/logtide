@@ -712,6 +712,19 @@ export class MongoDBEngine extends StorageEngine {
     return doc ? mapDocToTraceRecord(doc) : null;
   }
 
+  async getTraceServices(projectId: string, from?: Date, to?: Date): Promise<string[]> {
+    const col = this.tracesCol();
+    const filter: Document = { project_id: projectId };
+    if (from || to) {
+      const timeFilter: Document = {};
+      if (from) timeFilter.$gte = from;
+      if (to) timeFilter.$lte = to;
+      filter.start_time = timeFilter;
+    }
+    const values = await col.distinct('service_name', filter, { ...ctxOpts() });
+    return (values as string[]).filter((v) => v != null && v !== '').sort();
+  }
+
   async getServiceDependencies(
     projectId: string,
     from?: Date,

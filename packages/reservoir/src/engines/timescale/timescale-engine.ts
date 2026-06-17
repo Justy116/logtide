@@ -812,6 +812,23 @@ export class TimescaleEngine extends StorageEngine {
     return result.rows.length > 0 ? mapRowToTraceRecord(result.rows[0]) : null;
   }
 
+  async getTraceServices(projectId: string, from?: Date, to?: Date): Promise<string[]> {
+    const s = this.schema;
+    const conditions = ['project_id = $1'];
+    const values: unknown[] = [projectId];
+    let idx = 2;
+    if (from) { conditions.push(`start_time >= $${idx++}`); values.push(from); }
+    if (to) { conditions.push(`start_time <= $${idx++}`); values.push(to); }
+
+    const result = await this.runQuery(
+      `SELECT DISTINCT service_name FROM ${s}.traces WHERE ${conditions.join(' AND ')} ORDER BY service_name ASC`,
+      values,
+    );
+    return result.rows
+      .map((r) => r.service_name as string)
+      .filter((v) => v != null && v !== '');
+  }
+
   async getServiceDependencies(
     projectId: string,
     from?: Date,

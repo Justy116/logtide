@@ -206,6 +206,11 @@ export class Reservoir implements IReservoir {
     return this.engine.getServiceDependencies(projectId, from, to);
   }
 
+  async getTraceServices(projectId: string, from?: Date, to?: Date): Promise<string[]> {
+    this.ensureInitialized();
+    return this.engine.getTraceServices(projectId, from, to);
+  }
+
   async deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult> {
     this.ensureInitialized();
     return this.engine.deleteSpansByTimeRange(params);

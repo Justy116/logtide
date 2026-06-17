@@ -902,6 +902,25 @@ describe('ClickHouseEngine (integration)', () => {
     });
   });
 
+  describe('getTraceServices', () => {
+    beforeEach(async () => {
+      await client.command({ query: 'TRUNCATE TABLE IF EXISTS traces' });
+      await engine.upsertTrace(makeTrace({ traceId: 't-svc-1', serviceName: 'api' }));
+      await engine.upsertTrace(makeTrace({ traceId: 't-svc-2', serviceName: 'worker' }));
+      await engine.upsertTrace(makeTrace({ traceId: 't-svc-3', serviceName: 'api' }));
+    });
+
+    it('returns distinct service names across all traces', async () => {
+      const services = await engine.getTraceServices('proj-1');
+      expect(services.sort()).toEqual(['api', 'worker']);
+    });
+
+    it('scopes by project', async () => {
+      const services = await engine.getTraceServices('other-project');
+      expect(services).toEqual([]);
+    });
+  });
+
   describe('getServiceDependencies', () => {
     beforeEach(async () => {
       await client.command({ query: 'TRUNCATE TABLE IF EXISTS spans' });

@@ -1047,6 +1047,21 @@ export class ClickHouseEngine extends StorageEngine {
     return rows.length > 0 ? mapClickHouseRowToTraceRecord(rows[0]) : null;
   }
 
+  async getTraceServices(projectId: string, from?: Date, to?: Date): Promise<string[]> {
+    const conditions = ['project_id = {p_pid:String}'];
+    const queryParams: Record<string, unknown> = { p_pid: projectId };
+    if (from) { conditions.push('start_time >= {p_from:DateTime64(3)}'); queryParams.p_from = toDateTime64(from); }
+    if (to) { conditions.push('start_time <= {p_to:DateTime64(3)}'); queryParams.p_to = toDateTime64(to); }
+
+    const resultSet = await this.runQuery({
+      query: `SELECT DISTINCT service_name FROM traces WHERE ${conditions.join(' AND ')} ORDER BY service_name`,
+      query_params: queryParams,
+      format: 'JSONEachRow',
+    });
+    const rows = await resultSet.json<{ service_name: string }>();
+    return rows.map((r) => r.service_name).filter((s) => s != null && s !== '');
+  }
+
   async getServiceDependencies(
     projectId: string,
     from?: Date,

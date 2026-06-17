@@ -189,32 +189,10 @@ export class TracesService {
   async getServices(projectId: string, from?: Date): Promise<string[]> {
     const effectiveFrom = from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-    // Query traces for distinct services - stays in Kysely for timescale,
-    // uses reservoir queryTraces for clickhouse
-    if (reservoir.getEngineType() === 'timescale') {
-      const result = await db
-        .selectFrom('traces')
-        .select('service_name')
-        .where('project_id', '=', projectId)
-        .where('start_time', '>=', effectiveFrom)
-        .groupBy('service_name')
-        .orderBy('service_name', 'asc')
-        .execute();
-      return result.map((r) => r.service_name);
-    }
-
-    // ClickHouse: derive distinct services from traces. KNOWN LIMITATION: this
-    // pages at most 10000 traces, so a service that only appears in traces beyond
-    // that cap is not listed. A dedicated SELECT DISTINCT service_name query in the
-    // ClickHouse engine would remove the cap (tracked for the reservoir API).
-    const result = await reservoir.queryTraces({
-      projectId,
-      from: effectiveFrom,
-      to: new Date(),
-      limit: 10000,
-    });
-    const serviceSet = new Set(result.traces.map((t: { serviceName: string }) => t.serviceName));
-    return Array.from(serviceSet).sort() as string[];
+    // Distinct service names straight from the storage engine (SELECT DISTINCT /
+    // collection.distinct), so no result cap can drop services - works on all engines.
+    const services = await reservoir.getTraceServices(projectId, effectiveFrom, new Date());
+    return [...services].sort();
   }
 
   async getServiceDependencies(projectId: string, from?: Date, to?: Date) {
