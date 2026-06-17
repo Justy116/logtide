@@ -503,12 +503,23 @@ const metricStatFetcher: PanelDataSource<MetricStatConfig, MetricStatData> = {
       serviceName: config.serviceName ?? undefined,
     });
 
-    // Pick the latest non-null bucket
-    const latest = [...result.timeseries].reverse().find((b) => b.value != null);
+    // The window can span more than one bucket (e.g. a 24h range crossing midnight
+    // at 1d interval). For additive aggregations (sum/count) the buckets must be
+    // summed, otherwise only the latest day is counted and the stat undercounts.
+    // For avg/min/max/last/percentiles the tile shows the most recent bucket.
+    const nonNull = result.timeseries.filter((b) => b.value != null);
+    let value: number | null = null;
+    if (nonNull.length > 0) {
+      if (config.aggregation === 'sum' || config.aggregation === 'count') {
+        value = nonNull.reduce((acc, b) => acc + Number(b.value), 0);
+      } else {
+        value = Number(nonNull[nonNull.length - 1].value);
+      }
+    }
 
     return {
       metricName: result.metricName,
-      value: latest ? Number(latest.value) : null,
+      value,
       unit: config.unit,
       aggregation: config.aggregation,
     };
