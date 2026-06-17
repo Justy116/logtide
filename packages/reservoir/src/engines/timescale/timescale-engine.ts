@@ -402,16 +402,21 @@ export class TimescaleEngine extends StorageEngine {
         const fieldName = params.field; // safe, validated above
         const projectIds = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
 
+        // Honor the exclusive-bound flags so this fast path matches the standard
+        // distinct path (operators are not user input).
+        const fromOp = params.fromExclusive ? '>' : '>=';
+        const toOp = params.toExclusive ? '<' : '<=';
+
         // Use a recursive CTE to jump through the b-tree index
         // ORDER BY field only (not project_id) so we get the globally smallest value first
         const query = `
           WITH RECURSIVE t AS (
              (SELECT ${fieldName} AS value FROM ${this.schema}.${this.tableName}
-              WHERE project_id = ANY($1) AND time >= $2 AND time <= $3
+              WHERE project_id = ANY($1) AND time ${fromOp} $2 AND time ${toOp} $3
               ORDER BY ${fieldName}, time DESC LIMIT 1)
              UNION ALL
              SELECT (SELECT ${fieldName} AS value FROM ${this.schema}.${this.tableName}
-                     WHERE project_id = ANY($1) AND time >= $2 AND time <= $3 AND ${fieldName} > t.value
+                     WHERE project_id = ANY($1) AND time ${fromOp} $2 AND time ${toOp} $3 AND ${fieldName} > t.value
                      ORDER BY ${fieldName}, time DESC LIMIT 1)
              FROM t
              WHERE t.value IS NOT NULL
