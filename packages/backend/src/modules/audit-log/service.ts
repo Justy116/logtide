@@ -178,7 +178,14 @@ export class AuditLogService {
         .execute();
     } catch (err) {
       console.error('[AuditLog] flush error:', err);
+      // Re-queue the failed rows, but never let the buffer grow without bound on a
+      // persistent DB failure: cap at BUFFER_MAX, dropping the oldest excess.
       this.buffer.unshift(...toInsert);
+      if (this.buffer.length > BUFFER_MAX) {
+        const dropped = this.buffer.length - BUFFER_MAX;
+        this.buffer.splice(0, dropped);
+        console.error(`[AuditLog] buffer overflow on flush failure, dropped ${dropped} oldest audit rows`);
+      }
     } finally {
       this.flushing = false;
     }
