@@ -299,19 +299,26 @@ const topNTableFetcher: PanelDataSource<TopNTableConfig, TopNTableData> = {
     const intervalMs = intervalToMs(config.interval);
     const from = new Date(now.getTime() - intervalMs);
 
-    const top = await reservoir.topValues({
-      field: 'message',
-      projectId: projectIds,
-      from,
-      to: now,
-      level: ['error', 'critical'],
-      limit: config.limit,
-    });
+    const [top, totalResult] = await Promise.all([
+      reservoir.topValues({
+        field: 'message',
+        projectId: projectIds,
+        from,
+        to: now,
+        level: ['error', 'critical'],
+        limit: config.limit,
+      }),
+      // True total of all error/critical logs in the window, so percentages are a
+      // share of the whole, not of just the top-N rows that fit the limit.
+      reservoir.count({
+        projectId: projectIds,
+        from,
+        to: now,
+        level: ['error', 'critical'],
+      }),
+    ]);
 
-    const total = top.values.reduce(
-      (sum: number, v: { count: number }) => sum + v.count,
-      0
-    );
+    const total = totalResult.count;
 
     return {
       rows: top.values.map((v: { value: string; count: number }) => ({
