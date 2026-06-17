@@ -1045,6 +1045,14 @@ describe('ClickHouseEngine metric operations (unit)', () => {
   // ===========================================================================
 
   describe('getMetricsOverview', () => {
+    // getMetricsOverview now issues a second query (latest value from raw metrics)
+    // alongside the rollup query. Default any un-queued call to an empty result so
+    // the per-test mockResolvedValueOnce drives the first (rollup) query and the
+    // latest query falls through to empty.
+    beforeEach(() => {
+      mockQuery.mockResolvedValue(mockQueryResult([]));
+    });
+
     it('should return metrics grouped by service', async () => {
       mockQuery.mockResolvedValueOnce(
         mockQueryResult([

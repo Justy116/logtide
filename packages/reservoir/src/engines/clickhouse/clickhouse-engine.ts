@@ -841,36 +841,35 @@ export class ClickHouseEngine extends StorageEngine {
   }
 
   async upsertTrace(trace: TraceRecord): Promise<void> {
-    // ReplacingMergeTree handles dedup by (project_id, trace_id) using updated_at
-    // We read the existing row, merge, and insert the merged version
+    // Recompute the trace summary directly from the spans table (the source of
+    // truth) instead of read-modify-writing the existing traces row. The old
+    // approach (SELECT existing -> existing.span_count + delta -> INSERT) lost
+    // concurrent increments under a race. Aggregating from spans is idempotent and
+    // race-free: spans are always inserted before the upsert, so whichever upsert
+    // runs last writes the correct totals. The ReplacingMergeTree then keeps that
+    // latest (correct) row. Falls back to the payload when no spans are present.
     const resultSet = await this.runQuery({
-      query: `SELECT trace_id, start_time, end_time, span_count, error
-              FROM traces FINAL
+      query: `SELECT count() AS span_count,
+                     min(start_time) AS start_time,
+                     max(end_time) AS end_time,
+                     max(status_code = 'ERROR') AS error
+              FROM spans
               WHERE trace_id = {traceId:String} AND project_id = {projectId:String}`,
       query_params: { traceId: trace.traceId, projectId: trace.projectId },
       format: 'JSONEachRow',
     });
-    const existing = (await resultSet.json<{
-      trace_id: string;
+    const agg = (await resultSet.json<{
+      span_count: number;
       start_time: string;
       end_time: string;
-      span_count: number;
       error: number;
     }>())[0];
 
-    let startTime = trace.startTime;
-    let endTime = trace.endTime;
-    let spanCount = trace.spanCount;
-    let error = trace.error;
-
-    if (existing) {
-      const existingStart = parseClickHouseTime(existing.start_time);
-      const existingEnd = parseClickHouseTime(existing.end_time);
-      startTime = trace.startTime < existingStart ? trace.startTime : existingStart;
-      endTime = trace.endTime > existingEnd ? trace.endTime : existingEnd;
-      spanCount = existing.span_count + trace.spanCount;
-      error = !!existing.error || trace.error;
-    }
+    const haveSpans = agg && Number(agg.span_count) > 0;
+    const startTime = haveSpans ? parseClickHouseTime(agg.start_time) : trace.startTime;
+    const endTime = haveSpans ? parseClickHouseTime(agg.end_time) : trace.endTime;
+    const spanCount = haveSpans ? Number(agg.span_count) : trace.spanCount;
+    const error = haveSpans ? !!agg.error : trace.error;
 
     const durationMs = endTime.getTime() - startTime.getTime();
 

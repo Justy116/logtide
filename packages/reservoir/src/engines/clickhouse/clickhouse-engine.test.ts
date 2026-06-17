@@ -686,7 +686,14 @@ describe('ClickHouseEngine (integration)', () => {
       expect(trace!.error).toBe(false);
     });
 
-    it('merges times and span count on update', async () => {
+    it('merges times and span count from spans on update', async () => {
+      // The trace summary is recomputed from the spans table (race-free), so spans
+      // are ingested across two batches and each batch re-upserts the trace. The
+      // final summary must reflect ALL spans (count and the widest time range).
+      await engine.ingestSpans([
+        makeSpan({ spanId: 'm1', traceId: 'trace-merge', startTime: new Date('2025-01-15T12:00:01Z'), endTime: new Date('2025-01-15T12:00:03Z') }),
+        makeSpan({ spanId: 'm2', traceId: 'trace-merge', startTime: new Date('2025-01-15T12:00:02Z'), endTime: new Date('2025-01-15T12:00:04Z') }),
+      ]);
       await engine.upsertTrace(makeTrace({
         traceId: 'trace-merge',
         startTime: new Date('2025-01-15T12:00:01Z'),
@@ -694,7 +701,9 @@ describe('ClickHouseEngine (integration)', () => {
         spanCount: 2,
       }));
 
-
+      await engine.ingestSpans([
+        makeSpan({ spanId: 'm3', traceId: 'trace-merge', startTime: new Date('2025-01-15T12:00:00Z'), endTime: new Date('2025-01-15T12:00:05Z') }),
+      ]);
       await engine.upsertTrace(makeTrace({
         traceId: 'trace-merge',
         startTime: new Date('2025-01-15T12:00:00Z'),
@@ -702,11 +711,10 @@ describe('ClickHouseEngine (integration)', () => {
         spanCount: 1,
       }));
 
-
       const trace = await engine.getTraceById('trace-merge', 'proj-1');
       expect(trace).not.toBeNull();
       expect(trace!.spanCount).toBe(3);
-      // Duration should cover the wider range
+      // Duration should cover the wider range (00 -> 05 = 5s)
       expect(trace!.durationMs).toBeGreaterThanOrEqual(4000);
     });
   });
