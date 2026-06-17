@@ -329,26 +329,39 @@ export class QueryService {
     try {
       if (reservoir.getEngineType() !== 'timescale') throw new Error('skip aggregate');
 
-      // Fast path: use continuous aggregate (TimescaleDB only)
+      // Fast path: use continuous aggregate (TimescaleDB only). Split the window
+      // at oneDayAgo: the historical part comes from logs_daily_stats, the recent
+      // part from raw data. Both halves must honor the requested [from, to] bounds.
       const { sql } = await import('kysely');
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const toDate = to ?? new Date();
+
+      // Historical upper bound is min(oneDayAgo, to); recent lower bound is
+      // max(oneDayAgo, from). Either half may be empty for a fully-recent or
+      // fully-historical window.
+      const historicalUpper = toDate < oneDayAgo ? toDate : oneDayAgo;
+      const recentFrom = effectiveFrom > oneDayAgo ? effectiveFrom : oneDayAgo;
+
+      const historicalPromise =
+        effectiveFrom < historicalUpper
+          ? db
+              .selectFrom('logs_daily_stats')
+              .select(['service', sql<string>`SUM(log_count)`.as('count')])
+              .where('project_id', '=', projectId)
+              .where('bucket', '>=', effectiveFrom)
+              .where('bucket', '<', historicalUpper)
+              .groupBy('service')
+              .execute()
+          : Promise.resolve([] as Array<{ service: string; count: string }>);
+
+      const recentPromise =
+        toDate > recentFrom
+          ? reservoir.topValues({ field: 'service', projectId, from: recentFrom, to: toDate, limit: 100 })
+          : Promise.resolve({ values: [] as Array<{ value: string; count: number }> });
 
       const [historicalServices, recentServices] = await Promise.all([
-        db
-          .selectFrom('logs_daily_stats')
-          .select(['service', sql<string>`SUM(log_count)`.as('count')])
-          .where('project_id', '=', projectId)
-          .where('bucket', '>=', effectiveFrom)
-          .where('bucket', '<', oneDayAgo)
-          .groupBy('service')
-          .execute(),
-        reservoir.topValues({
-          field: 'service',
-          projectId,
-          from: oneDayAgo,
-          to: to ?? new Date(),
-          limit: 100,
-        }),
+        historicalPromise,
+        recentPromise,
       ]);
 
       const serviceMap = new Map<string, number>();
