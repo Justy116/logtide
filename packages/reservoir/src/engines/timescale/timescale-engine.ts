@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { randomUUID } from 'crypto';
 import { currentOrNull } from '@logtide/shared/context';
 import { StorageEngine } from '../../core/storage-engine.js';
 import type {
@@ -497,7 +498,10 @@ export class TimescaleEngine extends StorageEngine {
   private buildInsertQuery(logs: LogRecord[], returning = false): { query: string; values: unknown[] } {
     const s = this.schema;
     const t = this.tableName;
-    const hasIds = logs.length > 0 && logs[0].id != null;
+    // Use the id-path if ANY log carries an id (not just the first): a mixed batch
+    // must not push `undefined` into the id array. Missing ids are generated so the
+    // UNNEST arrays stay aligned and provided ids are preserved.
+    const hasIds = logs.length > 0 && logs.some((l) => l.id != null);
 
     const ids: string[] = [];
     const times: Date[] = [];
@@ -511,7 +515,7 @@ export class TimescaleEngine extends StorageEngine {
     const sessionIds: (string | null)[] = [];
 
     for (const log of logs) {
-      if (hasIds) ids.push(log.id!);
+      if (hasIds) ids.push(log.id ?? randomUUID());
       times.push(log.time);
       projectIds.push(sanitizeNull(log.projectId));
       services.push(sanitizeNull(log.service));
