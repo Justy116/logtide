@@ -185,15 +185,21 @@ export class MonitorService {
   // HEARTBEAT
   // ============================================================================
 
-  async recordHeartbeat(monitorId: string, organizationId: string): Promise<void> {
-    const monitor = await this.db
+  async recordHeartbeat(monitorId: string, organizationId: string, projectId?: string): Promise<void> {
+    let query = this.db
       .selectFrom('monitors')
       .select(['id', 'type', 'project_id'])
       .where('id', '=', monitorId)
       .where('organization_id', '=', organizationId)
       .where('type', '=', 'heartbeat')
-      .where('enabled', '=', true)
-      .executeTakeFirst();
+      .where('enabled', '=', true);
+
+    // A project-scoped API key may only ping monitors of its own project.
+    if (projectId) {
+      query = query.where('project_id', '=', projectId);
+    }
+
+    const monitor = await query.executeTakeFirst();
 
     if (!monitor) {
       throw new Error('Heartbeat monitor not found or not enabled');
