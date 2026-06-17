@@ -423,13 +423,18 @@
           const data = JSON.parse(event.data);
           if (data.type === 'trace') {
             const incoming = data.data as TraceRecord;
-            // Prepend and dedupe by trace_id; cap at liveTailLimit.
+            // Prepend and dedupe by trace_id; cap the displayed list at liveTailLimit.
             const existing = traces.findIndex((t) => t.trace_id === incoming.trace_id);
             const next = existing >= 0
               ? [incoming, ...traces.filter((_, i) => i !== existing)]
               : [incoming, ...traces];
             traces = next.slice(0, liveTailLimit);
-            totalTraces = traces.length;
+            // Only the rendered list is capped at liveTailLimit; do NOT overwrite
+            // totalTraces with the capped length (that corrupts pagination). Bump
+            // the running total when a genuinely new trace arrives.
+            if (existing < 0) {
+              totalTraces += 1;
+            }
           }
         } catch (e) {
           console.error('[TracesLiveTail] parse error', e);
