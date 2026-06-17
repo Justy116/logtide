@@ -195,6 +195,7 @@ export class ClickHouseEngine extends StorageEngine {
           metadata String DEFAULT '{}',
           trace_id Nullable(String) DEFAULT NULL,
           span_id Nullable(String) DEFAULT NULL,
+          session_id Nullable(String) DEFAULT NULL,
           created_at DateTime DEFAULT now()
         )
         ENGINE = MergeTree()
@@ -239,6 +240,19 @@ export class ClickHouseEngine extends StorageEngine {
       });
     } catch {
       // index may already exist
+    }
+
+    // session_id: the engine writes and filters on it, so existing installs that
+    // predate this column need it added. New tables already have it from CREATE.
+    try {
+      await this.runCommand({
+        query: `ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS session_id Nullable(String) DEFAULT NULL`,
+      });
+      await this.runCommand({
+        query: `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_session_id session_id TYPE bloom_filter(0.01) GRANULARITY 1`,
+      });
+    } catch {
+      // column/index may already exist
     }
 
     // Projection for fast service+level filtered queries
@@ -1788,9 +1802,15 @@ function parseClickHouseTime(value: unknown): Date {
   const str = String(value);
   // ClickHouse DateTime64(3) can return as epoch seconds (number) or ISO string
   const num = Number(str);
-  if (!isNaN(num)) {
+  if (!isNaN(num) && str.trim() !== '') {
     // If it looks like epoch seconds (< year 10000), convert
     return num < 1e12 ? new Date(num * 1000) : new Date(num);
+  }
+  // A space-separated ClickHouse datetime like "2025-01-15 12:00:00.000" carries
+  // no timezone and would be parsed as LOCAL time by Date. Treat the zone-less
+  // form as UTC by normalizing it to an ISO string with a 'Z' suffix.
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(str)) {
+    return new Date(`${str.replace(' ', 'T')}Z`);
   }
   return new Date(str);
 }
