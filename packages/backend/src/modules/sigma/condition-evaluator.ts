@@ -85,7 +85,12 @@ export class SigmaConditionEvaluator {
   }
 
   /**
-   * Parse and evaluate expression (recursive descent parser)
+   * Parse and evaluate an OR expression (lowest precedence).
+   *
+   * Sigma follows standard boolean precedence: NOT binds tighter than AND, which
+   * binds tighter than OR. So `a or b and c` is `a or (b and c)`, not `(a or b)
+   * and c`. This is implemented as parseExpression(OR) -> parseAndExpression(AND)
+   * -> parseTerm(NOT/group/quantifier/identifier).
    */
   private static parseExpression(
     tokens: string[],
@@ -94,35 +99,51 @@ export class SigmaConditionEvaluator {
     detectionBlock: Record<string, any>,
     caseSensitive: boolean
   ): { result: boolean; nextIndex: number } {
-    let result = false;
-    let i = startIndex;
+    const first = this.parseAndExpression(tokens, startIndex, logData, detectionBlock, caseSensitive);
+    let result = first.result;
+    let i = first.nextIndex;
 
-    // Parse first term
-    const first = this.parseTerm(tokens, i, logData, detectionBlock, caseSensitive);
-    result = first.result;
-    i = first.nextIndex;
-
-    // Handle operators (AND, OR)
     while (i < tokens.length) {
       const operator = tokens[i];
-
-      if (operator === ')') {
-        // End of grouped expression
+      if (operator === ')') break; // end of a grouped expression
+      if (operator === 'OR') {
+        i++;
+        const next = this.parseAndExpression(tokens, i, logData, detectionBlock, caseSensitive);
+        result = result || next.result;
+        i = next.nextIndex;
+      } else {
+        // Anything else (e.g. a dangling token) ends this expression.
         break;
       }
+    }
 
+    return { result, nextIndex: i };
+  }
+
+  /**
+   * Parse and evaluate an AND expression (higher precedence than OR). Stops at OR,
+   * a closing parenthesis, or the end of input so the OR level can take over.
+   */
+  private static parseAndExpression(
+    tokens: string[],
+    startIndex: number,
+    logData: Record<string, any>,
+    detectionBlock: Record<string, any>,
+    caseSensitive: boolean
+  ): { result: boolean; nextIndex: number } {
+    const first = this.parseTerm(tokens, startIndex, logData, detectionBlock, caseSensitive);
+    let result = first.result;
+    let i = first.nextIndex;
+
+    while (i < tokens.length) {
+      const operator = tokens[i];
       if (operator === 'AND') {
         i++;
         const next = this.parseTerm(tokens, i, logData, detectionBlock, caseSensitive);
         result = result && next.result;
         i = next.nextIndex;
-      } else if (operator === 'OR') {
-        i++;
-        const next = this.parseTerm(tokens, i, logData, detectionBlock, caseSensitive);
-        result = result || next.result;
-        i = next.nextIndex;
       } else {
-        // Unknown operator or end of expression
+        // OR, ')', or unknown: hand back to the OR level.
         break;
       }
     }

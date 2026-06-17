@@ -484,6 +484,36 @@ describe('Sigma Condition Evaluator', () => {
         });
     });
 
+    describe('Operator Precedence', () => {
+        // t=true, f1=false, f2=false against logData below.
+        const detectionBlock = {
+            t: { service: 'sshd' },
+            f1: { service: 'nope' },
+            f2: { service: 'nah' },
+        };
+        const logData = { service: 'sshd' };
+
+        it('binds AND tighter than OR: "t or f1 and f2" is true', () => {
+            // t or (f1 and f2) = true. Left-to-right (t or f1) and f2 would be false.
+            expect(
+                SigmaConditionEvaluator.evaluateDetection({ ...detectionBlock, condition: 't or f1 and f2' }, logData)
+            ).toBe(true);
+        });
+
+        it('respects explicit grouping: "(t or f1) and f2" is false', () => {
+            expect(
+                SigmaConditionEvaluator.evaluateDetection({ ...detectionBlock, condition: '(t or f1) and f2' }, logData)
+            ).toBe(false);
+        });
+
+        it('handles "f1 and t or f2" as (f1 and t) or f2', () => {
+            // (false and true) or false = false
+            expect(
+                SigmaConditionEvaluator.evaluateDetection({ ...detectionBlock, condition: 'f1 and t or f2' }, logData)
+            ).toBe(false);
+        });
+    });
+
     describe('Case Sensitivity', () => {
         it('should respect case-sensitive flag', () => {
             const detectionBlock = {
