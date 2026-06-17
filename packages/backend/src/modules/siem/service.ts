@@ -311,11 +311,23 @@ export class SiemService {
   ): Promise<void> {
     if (detectionEventIds.length === 0) return;
 
+    // Only link detection events that actually belong to this organization.
+    // Otherwise the incident_alerts insert would link cross-tenant events and the
+    // detection_count would be inflated by events that were never updated.
+    const owned = await this.db
+      .selectFrom('detection_events')
+      .select('id')
+      .where('id', 'in', detectionEventIds)
+      .where('organization_id', '=', organizationId)
+      .execute();
+    const ownedIds = owned.map((r) => r.id);
+    if (ownedIds.length === 0) return;
+
     // Insert incident_alerts entries
     await this.db
       .insertInto('incident_alerts')
       .values(
-        detectionEventIds.map((eventId) => ({
+        ownedIds.map((eventId) => ({
           incident_id: incidentId,
           detection_event_id: eventId,
           alert_history_id: null,
@@ -327,7 +339,7 @@ export class SiemService {
     await this.db
       .updateTable('detection_events')
       .set({ incident_id: incidentId })
-      .where('id', 'in', detectionEventIds)
+      .where('id', 'in', ownedIds)
       .where('organization_id', '=', organizationId)
       .execute();
 
@@ -335,7 +347,7 @@ export class SiemService {
     await this.db
       .updateTable('incidents')
       .set({
-        detection_count: sql`detection_count + ${detectionEventIds.length}`,
+        detection_count: sql`detection_count + ${ownedIds.length}`,
       })
       .where('id', '=', incidentId)
       .where('organization_id', '=', organizationId)
