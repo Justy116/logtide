@@ -462,7 +462,10 @@ export class TracesService {
       avg_duration_ms: Math.round(avgDuration),
       max_duration_ms: maxDuration,
       error_count: errorCount,
-      error_rate: totalTraces > 0 ? errorCount / totalTraces : 0,
+      // errorCount/avg/spans are computed over the analyzed page, so the rate must
+      // use the same denominator (traces.length), not the full total_traces, which
+      // would deflate the rate whenever the result set exceeds the query cap.
+      error_rate: traces.length > 0 ? errorCount / traces.length : 0,
     };
   }
 }
