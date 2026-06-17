@@ -408,6 +408,14 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: 'Only admins can update default channels' });
       }
 
+      // Channels must belong to this org: prevent setting defaults to another
+      // tenant's channels.
+      if (!(await notificationChannelsService.channelsBelongToOrg(channelIds, organizationId))) {
+        return reply
+          .status(400)
+          .send({ error: 'One or more channels do not belong to this organization' });
+      }
+
       await notificationChannelsService.setOrganizationDefaults(
         organizationId,
         eventType as NotificationEventType,

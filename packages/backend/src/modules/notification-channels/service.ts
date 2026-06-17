@@ -467,6 +467,19 @@ export class NotificationChannelsService {
   /**
    * Set default channels for an event type in an organization
    */
+  /** True if every channel id belongs to the given organization. */
+  async channelsBelongToOrg(channelIds: string[], organizationId: string): Promise<boolean> {
+    const unique = [...new Set(channelIds)];
+    if (unique.length === 0) return true;
+    const rows = await db
+      .selectFrom('notification_channels')
+      .select('id')
+      .where('id', 'in', unique)
+      .where('organization_id', '=', organizationId)
+      .execute();
+    return rows.length === unique.length;
+  }
+
   async setOrganizationDefaults(
     organizationId: string,
     eventType: NotificationEventType,
