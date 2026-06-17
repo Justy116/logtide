@@ -484,12 +484,15 @@ export class AlertsService {
       }
     }
 
-    // Calculate baseline
+    // Calculate baseline. Pass the rule's metadata filters so the baseline is
+    // computed over the same filtered population as the current rate; otherwise
+    // the deviation ratio is deflated when filters are present.
     const baseline = await baselineCalculator.calculate(
       rule.baseline_type,
       projectIds,
       rule.level,
       rule.service || null,
+      ruleMetadataFilters.length > 0 ? ruleMetadataFilters : undefined,
     );
 
     if (!baseline || baseline.value < minBaseline) {

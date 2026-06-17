@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import { db } from '../../../database/index.js';
 import { createTestContext, createTestLog } from '../../helpers/factories.js';
 import { BaselineCalculatorService } from '../../../modules/alerts/baseline-calculator.js';
+import type { MetadataFilter } from '@logtide/shared';
 
 describe('BaselineCalculatorService', () => {
     let service: BaselineCalculatorService;
@@ -92,6 +93,22 @@ describe('BaselineCalculatorService', () => {
         it('should dispatch to percentileP95', async () => {
             const result = await service.calculate('percentile_p95', [testProject.id], ['error'], null);
             expect(result).toBeNull();
+        });
+
+        it('applies metadata filters to the baseline (counts only matching logs)', async () => {
+            const anchor = midCurrentHour();
+            const yesterday = new Date(anchor.getTime() - 24 * 60 * 60 * 1000);
+            // 3 prod + 2 dev error logs in the same-time-yesterday bucket.
+            for (let i = 0; i < 3; i++) {
+                await createTestLog({ projectId: testProject.id, level: 'error', service: 'svc', message: `p${i}`, time: yesterday, metadata: { env: 'prod' } });
+            }
+            for (let i = 0; i < 2; i++) {
+                await createTestLog({ projectId: testProject.id, level: 'error', service: 'svc', message: `d${i}`, time: yesterday, metadata: { env: 'dev' } });
+            }
+
+            const filter: MetadataFilter[] = [{ key: 'env', op: 'equals', value: 'prod' }];
+            const filtered = await service.calculate('same_time_yesterday', [testProject.id], ['error'], null, filter);
+            expect(filtered?.value).toBe(3);
         });
 
         it('should return null for unknown method', async () => {

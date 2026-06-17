@@ -20,21 +20,46 @@ export class BaselineCalculatorService {
     projectIds: string[],
     levels: LogLevel[],
     service: string | null,
+    metadataFilters?: MetadataFilter[],
   ): Promise<BaselineResult | null> {
     if (projectIds.length === 0) return null;
 
     switch (method) {
       case 'same_time_yesterday':
-        return this.sameTimeYesterday(projectIds, levels, service);
+        return this.sameTimeYesterday(projectIds, levels, service, metadataFilters);
       case 'same_day_last_week':
-        return this.sameDayLastWeek(projectIds, levels, service);
+        return this.sameDayLastWeek(projectIds, levels, service, metadataFilters);
       case 'rolling_7d_avg':
-        return this.rolling7dAvg(projectIds, levels, service);
+        return this.rolling7dAvg(projectIds, levels, service, metadataFilters);
       case 'percentile_p95':
-        return this.percentileP95(projectIds, levels, service);
+        return this.percentileP95(projectIds, levels, service, metadataFilters);
       default:
         return null;
     }
+  }
+
+  /**
+   * Count logs in a single hour bucket honoring metadata filters. Used by the
+   * metadata-aware baseline path (the continuous aggregate / rollup has no
+   * metadata columns, so it cannot be used when filters are present).
+   */
+  private async countBucket(
+    projectIds: string[],
+    levels: LogLevel[],
+    service: string | null,
+    from: Date,
+    to: Date,
+    metadataFilters: MetadataFilter[],
+  ): Promise<number> {
+    const result = await reservoir.count({
+      projectId: projectIds,
+      from,
+      to,
+      level: levels as ReservoirLogLevel[],
+      ...(service ? { service: [service, 'unknown'] } : {}),
+      metadataFilters,
+    });
+    return result.count;
   }
 
   /**
@@ -70,6 +95,7 @@ export class BaselineCalculatorService {
     projectIds: string[],
     levels: LogLevel[],
     service: string | null,
+    metadataFilters?: MetadataFilter[],
   ): Promise<BaselineResult | null> {
     const now = new Date();
     // Get the hour bucket for 24h ago
@@ -77,6 +103,11 @@ export class BaselineCalculatorService {
     const bucketStart = new Date(yesterday);
     bucketStart.setMinutes(0, 0, 0);
     const bucketEnd = new Date(bucketStart.getTime() + 60 * 60 * 1000);
+
+    if (metadataFilters && metadataFilters.length > 0) {
+      const count = await this.countBucket(projectIds, levels, service, bucketStart, bucketEnd, metadataFilters);
+      return count > 0 ? { value: count, samplesUsed: 1 } : null;
+    }
 
     const result = await this.queryAggregate(bucketStart, bucketEnd, projectIds, levels, service);
     if (!result || result.samplesUsed === 0) return null;
@@ -90,12 +121,18 @@ export class BaselineCalculatorService {
     projectIds: string[],
     levels: LogLevel[],
     service: string | null,
+    metadataFilters?: MetadataFilter[],
   ): Promise<BaselineResult | null> {
     const now = new Date();
     const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const bucketStart = new Date(lastWeek);
     bucketStart.setMinutes(0, 0, 0);
     const bucketEnd = new Date(bucketStart.getTime() + 60 * 60 * 1000);
+
+    if (metadataFilters && metadataFilters.length > 0) {
+      const count = await this.countBucket(projectIds, levels, service, bucketStart, bucketEnd, metadataFilters);
+      return count > 0 ? { value: count, samplesUsed: 1 } : null;
+    }
 
     const result = await this.queryAggregate(bucketStart, bucketEnd, projectIds, levels, service);
     if (!result || result.samplesUsed === 0) return null;
@@ -111,6 +148,7 @@ export class BaselineCalculatorService {
     projectIds: string[],
     levels: LogLevel[],
     service: string | null,
+    metadataFilters?: MetadataFilter[],
   ): Promise<BaselineResult | null> {
     const now = new Date();
     const currentHour = new Date(now);
@@ -120,6 +158,27 @@ export class BaselineCalculatorService {
     const bucketTimes: Date[] = [];
     for (let i = 1; i <= 7; i++) {
       bucketTimes.push(new Date(currentHour.getTime() - i * 24 * 60 * 60 * 1000));
+    }
+
+    if (metadataFilters && metadataFilters.length > 0) {
+      // Metadata-aware path: count each of the 7 hour buckets via the reservoir
+      // (the continuous aggregate has no metadata columns). Average non-zero buckets.
+      const counts = await Promise.all(
+        bucketTimes.map((bucketStart) =>
+          this.countBucket(
+            projectIds, levels, service,
+            bucketStart, new Date(bucketStart.getTime() + 60 * 60 * 1000),
+            metadataFilters,
+          ),
+        ),
+      );
+      let total = 0;
+      let bucketCount = 0;
+      for (const c of counts) {
+        if (c > 0) { total += c; bucketCount++; }
+      }
+      if (bucketCount === 0) return null;
+      return { value: Math.round(total / bucketCount), samplesUsed: bucketCount };
     }
 
     if (reservoir.getEngineType() === 'timescale') {
@@ -201,11 +260,39 @@ export class BaselineCalculatorService {
     projectIds: string[],
     levels: LogLevel[],
     service: string | null,
+    metadataFilters?: MetadataFilter[],
   ): Promise<BaselineResult | null> {
     const fromTime = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const now = new Date();
 
     let counts: number[];
+
+    if (metadataFilters && metadataFilters.length > 0) {
+      // Metadata-aware path: count each hourly bucket over the last 7 days via the
+      // reservoir (no metadata columns in the rollup). Bounded concurrency so we
+      // don't open ~168 connections at once.
+      const currentHour = new Date(now);
+      currentHour.setMinutes(0, 0, 0);
+      const buckets: Date[] = [];
+      for (let i = 1; i <= 168; i++) {
+        buckets.push(new Date(currentHour.getTime() - i * 60 * 60 * 1000));
+      }
+      const hourly: number[] = [];
+      const CONCURRENCY = 12;
+      for (let i = 0; i < buckets.length; i += CONCURRENCY) {
+        const chunk = buckets.slice(i, i + CONCURRENCY);
+        const chunkCounts = await Promise.all(
+          chunk.map((b) =>
+            this.countBucket(projectIds, levels, service, b, new Date(b.getTime() + 60 * 60 * 1000), metadataFilters),
+          ),
+        );
+        hourly.push(...chunkCounts);
+      }
+      const nonZero = hourly.filter((c) => c > 0).sort((a, b) => a - b);
+      if (nonZero.length === 0) return null;
+      const idx = Math.min(Math.ceil(nonZero.length * 0.95) - 1, nonZero.length - 1);
+      return { value: nonZero[idx], samplesUsed: nonZero.length };
+    }
 
     if (reservoir.getEngineType() === 'timescale') {
       // Fast path: continuous aggregate (TimescaleDB only)
