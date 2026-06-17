@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { maintenanceService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { db } from '../../database/connection.js';
+import { projectsService } from '../projects/service.js';
 
 async function checkOrgAdmin(userId: string, organizationId: string): Promise<boolean> {
   const member = await db
@@ -82,6 +83,13 @@ export async function maintenanceRoutes(fastify: FastifyInstance) {
 
     if (!(await checkOrgAdmin(request.user.id, parse.data.organizationId))) {
       return reply.status(403).send({ error: 'Admin or owner role required' });
+    }
+
+    // The projectId is attacker-controlled in the body; ensure it belongs to the
+    // caller's organization, otherwise a maintenance with a victim project_id
+    // could be injected onto another tenant's public status page.
+    if (!(await projectsService.projectBelongsToOrg(parse.data.projectId, parse.data.organizationId))) {
+      return reply.status(400).send({ error: 'projectId does not belong to the organization' });
     }
 
     const maintenance = await maintenanceService.create({
