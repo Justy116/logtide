@@ -323,34 +323,43 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     const logsWithIds = logs.map((log) => ({ ...log, id: log.id ?? randomUUID() }));
 
+    const toRow = (log: (typeof logsWithIds)[number]): StoredLogRecord => ({
+      id: log.id,
+      time: log.time,
+      projectId: log.projectId,
+      organizationId: log.organizationId,
+      service: log.service,
+      level: log.level,
+      message: log.message,
+      metadata: log.metadata,
+      traceId: log.traceId,
+      spanId: log.spanId,
+      hostname: log.hostname,
+    });
+
     try {
       const docs = logsWithIds.map((log) => toMongoLogDoc(log, log.id));
       await col.insertMany(docs, { ...ctxOpts(), ordered: false });
 
-      const rows: StoredLogRecord[] = logsWithIds.map((log) => ({
-        id: log.id,
-        time: log.time,
-        projectId: log.projectId,
-        organizationId: log.organizationId,
-        service: log.service,
-        level: log.level,
-        message: log.message,
-        metadata: log.metadata,
-        traceId: log.traceId,
-        spanId: log.spanId,
-        hostname: log.hostname,
-      }));
+      const rows: StoredLogRecord[] = logsWithIds.map(toRow);
 
       return { ingested: logs.length, failed: 0, durationMs: Date.now() - start, rows };
     } catch (err) {
       if (err instanceof MongoBulkWriteError) {
         const inserted = err.result?.insertedCount ?? 0;
+        // With ordered:false every doc is attempted; the failed ones are reported
+        // with their indices. The inserted rows are therefore all inputs except
+        // those indices. Return them so downstream SIEM/pipeline processing still
+        // runs for the records that actually landed.
+        const writeErrors = extractWriteErrors(err);
+        const failedIdx = new Set(writeErrors.map((e) => e.index));
+        const rows = logsWithIds.filter((_, i) => !failedIdx.has(i)).map(toRow);
         return {
           ingested: inserted,
           failed: logs.length - inserted,
           durationMs: Date.now() - start,
-          rows: [], // cannot reliably determine which rows were inserted with ordered:false
-          errors: extractWriteErrors(err),
+          rows,
+          errors: writeErrors,
         };
       }
       return {
