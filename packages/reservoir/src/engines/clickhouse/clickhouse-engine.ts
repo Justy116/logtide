@@ -1790,6 +1790,13 @@ export class ClickHouseEngine extends StorageEngine {
     }
 
     const serviceMap = new Map<string, MetricOverviewItem[]>();
+    // `Number(x) ?? 0` does not catch NaN (Number() returns NaN, not nullish), so
+    // coerce explicitly and fall back to 0 for non-finite values.
+    const safeNum = (v: unknown): number => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+
     for (const row of rows) {
       const serviceName = row.service_name as string;
       const latestKey = `${row.metric_name as string}|${serviceName}`;
@@ -1797,11 +1804,11 @@ export class ClickHouseEngine extends StorageEngine {
         metricName: row.metric_name as string,
         metricType: (row.mt as MetricType) || 'gauge',
         serviceName,
-        latestValue: latestMap.has(latestKey) ? latestMap.get(latestKey)! : Number(row.avg_val) ?? 0,
-        avgValue: Number(row.avg_val) ?? 0,
-        minValue: Number(row.mn) ?? 0,
-        maxValue: Number(row.mx) ?? 0,
-        pointCount: Number(row.total_points) ?? 0,
+        latestValue: latestMap.has(latestKey) ? safeNum(latestMap.get(latestKey)) : safeNum(row.avg_val),
+        avgValue: safeNum(row.avg_val),
+        minValue: safeNum(row.mn),
+        maxValue: safeNum(row.mx),
+        pointCount: safeNum(row.total_points),
       };
       if (!serviceMap.has(serviceName)) serviceMap.set(serviceName, []);
       serviceMap.get(serviceName)!.push(item);
