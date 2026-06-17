@@ -276,7 +276,9 @@ export class SigmaHQClient {
       // Filter for .yml/.yaml files in the category
       if (
         item.type === 'blob' &&
-        item.path.startsWith(categoryPath) &&
+        // Require a path boundary so e.g. "rules/windows" does not also match the
+        // sibling "rules/windows_extra/...". Match the dir itself or its descendants.
+        (item.path === categoryPath || item.path.startsWith(`${categoryPath}/`)) &&
         (item.path.endsWith('.yml') || item.path.endsWith('.yaml'))
       ) {
         const fileName = item.path.split('/').pop() || item.path;
