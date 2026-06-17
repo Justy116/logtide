@@ -283,6 +283,8 @@ export class InvitationsService {
       ])
       .where('organization_invitations.token', '=', token)
       .where('organization_invitations.accepted_at', 'is', null)
+      // Do not surface expired invitations to the public preview endpoint.
+      .where('organization_invitations.expires_at', '>', new Date())
       .executeTakeFirst();
 
     if (!result) {
