@@ -24,6 +24,7 @@ export interface LogQueryParams {
   limit?: number;
   offset?: number;
   cursor?: string;
+  skipCache?: boolean; // Bypass the query cache (e.g. for per-second live tail polling)
 }
 
 export class QueryService {
@@ -61,6 +62,7 @@ export class QueryService {
       limit = 100,
       offset = 0,
       cursor,
+      skipCache = false,
     } = params;
 
     // PERFORMANCE: Default to last 24h if no time filter provided
@@ -83,7 +85,7 @@ export class QueryService {
       cursor: cursor || null,
     };
     const cacheKey = CacheManager.queryKey(projectId, cacheParams);
-    const cached = await CacheManager.get<any>(cacheKey);
+    const cached = skipCache ? null : await CacheManager.get<any>(cacheKey);
 
     if (cached && cached.total !== -1) {
       return {
@@ -144,7 +146,9 @@ export class QueryService {
       nextCursor: queryResult.nextCursor,
     };
 
-    await CacheManager.set(cacheKey, result, CACHE_TTL.QUERY);
+    if (!skipCache) {
+      await CacheManager.set(cacheKey, result, CACHE_TTL.QUERY);
+    }
 
     return result;
   }
