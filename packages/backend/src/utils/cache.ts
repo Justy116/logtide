@@ -65,8 +65,11 @@ export function isCacheEnabled(): boolean {
  * Get custom TTL from config or use default
  */
 export function getCacheTTL(defaultTTL: number): number {
-  // If a global TTL override is set and different from default, use it
-  if (config.CACHE_TTL && config.CACHE_TTL !== 60) {
+  // A global CACHE_TTL override only tunes the generic query cache. It must NOT
+  // clamp semantic TTLs (sessions, OIDC state, settings, provider config, etc.),
+  // which would otherwise shorten session lifetimes or stretch security-sensitive
+  // caches whenever an operator tunes the query cache.
+  if (config.CACHE_TTL && config.CACHE_TTL !== 60 && defaultTTL === CACHE_TTL.QUERY) {
     return config.CACHE_TTL;
   }
   return defaultTTL;
