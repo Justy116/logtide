@@ -1416,6 +1416,16 @@ export class AdminService {
             throw new Error('User not found');
         }
 
+        // The session cache stores is_admin, so a demotion/promotion would not take
+        // effect until the cache TTL expires. Invalidate the cached sessions so the
+        // new role is re-read on the next request (sessions themselves stay valid).
+        const sessions = await db
+            .selectFrom('sessions')
+            .select('token')
+            .where('user_id', '=', userId)
+            .execute();
+        await Promise.all(sessions.map((sn) => CacheManager.invalidateSession(sn.token)));
+
         return user;
     }
 
