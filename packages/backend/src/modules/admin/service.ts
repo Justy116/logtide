@@ -1470,11 +1470,20 @@ export class AdminService {
             throw new Error('User not found');
         }
 
-        // Delete all active sessions to force re-login
+        // Delete all active sessions to force re-login, and invalidate the session
+        // cache so the old tokens cannot keep working until the cache TTL expires.
+        const sessions = await db
+            .selectFrom('sessions')
+            .select('token')
+            .where('user_id', '=', userId)
+            .execute();
+
         await db
             .deleteFrom('sessions')
             .where('user_id', '=', userId)
             .execute();
+
+        await Promise.all(sessions.map((sn) => CacheManager.invalidateSession(sn.token)));
 
         return user;
     }
