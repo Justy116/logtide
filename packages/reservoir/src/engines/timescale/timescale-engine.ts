@@ -831,6 +831,7 @@ export class TimescaleEngine extends StorageEngine {
       INNER JOIN ${s}.spans parent
         ON child.parent_span_id = parent.span_id
         AND child.trace_id = parent.trace_id
+        AND parent.project_id = child.project_id
       WHERE child.project_id = $1
         AND child.service_name <> parent.service_name
         ${timeFilter}
