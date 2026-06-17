@@ -92,7 +92,7 @@ export const channelNotificationDataSchema = z
   .passthrough();
 
 export const webhookEnvelopeSchema = z.object({
-  id: z.string().regex(/^evt_[0-9a-f-]{36}$/),
+  id: z.string().regex(/^evt_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
   type: webhookEventTypeSchema,
   version: z.literal(1),
   occurredAt: z.string().datetime(),
