@@ -594,8 +594,10 @@ export class PiiMaskingService {
   // -------------------------------------------------------------------------
 
   private maskText(text: string, ruleSet: CompiledRuleSet): string {
-    // Early exit: very short strings or pure alphanumeric won't contain PII
-    if (text.length < 6 || /^[a-zA-Z0-9 _]+$/.test(text)) {
+    // Early exit only for strings too short to contain any supported PII. Do NOT
+    // skip pure-alphanumeric strings: credit card numbers, account numbers, phone
+    // numbers and similar are all-digit and must still run through the rules.
+    if (text.length < 6) {
       return text;
     }
 
