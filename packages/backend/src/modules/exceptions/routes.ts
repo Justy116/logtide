@@ -544,6 +544,12 @@ export async function exceptionsRoutes(fastify: FastifyInstance) {
           request.user.id
         );
 
+        // The row can disappear between the existence check and the update under
+        // concurrency; don't return 200 with a null body.
+        if (!group) {
+          return reply.status(404).send({ error: 'Error group not found' });
+        }
+
         return reply.send(group);
       } catch (error: any) {
         if (error instanceof z.ZodError) {
