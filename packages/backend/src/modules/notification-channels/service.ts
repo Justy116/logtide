@@ -218,8 +218,11 @@ export class NotificationChannelsService {
   /**
    * Get channels for an alert rule
    */
-  async getAlertRuleChannels(alertRuleId: string): Promise<NotificationChannel[]> {
-    const rows = await db
+  async getAlertRuleChannels(
+    alertRuleId: string,
+    organizationId?: string
+  ): Promise<NotificationChannel[]> {
+    let query = db
       .selectFrom('alert_rule_channels')
       .innerJoin(
         'notification_channels',
@@ -228,10 +231,26 @@ export class NotificationChannelsService {
       )
       .selectAll('notification_channels')
       .where('alert_rule_channels.alert_rule_id', '=', alertRuleId)
-      .where('notification_channels.enabled', '=', true)
-      .execute();
+      .where('notification_channels.enabled', '=', true);
+
+    // Optional org scoping: defense in depth for tenant-facing callers.
+    if (organizationId) {
+      query = query.where('notification_channels.organization_id', '=', organizationId);
+    }
+
+    const rows = await query.execute();
 
     return rows.map((r) => this.mapChannel(r));
+  }
+
+  /** Organization that owns an alert rule, or null if the rule does not exist. */
+  async getAlertRuleOrganizationId(alertRuleId: string): Promise<string | null> {
+    const row = await db
+      .selectFrom('alert_rules')
+      .select('organization_id')
+      .where('id', '=', alertRuleId)
+      .executeTakeFirst();
+    return row?.organization_id ?? null;
   }
 
   // ============================================================================
@@ -265,8 +284,11 @@ export class NotificationChannelsService {
   /**
    * Get channels for a sigma rule
    */
-  async getSigmaRuleChannels(sigmaRuleId: string): Promise<NotificationChannel[]> {
-    const rows = await db
+  async getSigmaRuleChannels(
+    sigmaRuleId: string,
+    organizationId?: string
+  ): Promise<NotificationChannel[]> {
+    let query = db
       .selectFrom('sigma_rule_channels')
       .innerJoin(
         'notification_channels',
@@ -275,10 +297,26 @@ export class NotificationChannelsService {
       )
       .selectAll('notification_channels')
       .where('sigma_rule_channels.sigma_rule_id', '=', sigmaRuleId)
-      .where('notification_channels.enabled', '=', true)
-      .execute();
+      .where('notification_channels.enabled', '=', true);
+
+    // Optional org scoping: defense in depth for tenant-facing callers.
+    if (organizationId) {
+      query = query.where('notification_channels.organization_id', '=', organizationId);
+    }
+
+    const rows = await query.execute();
 
     return rows.map((r) => this.mapChannel(r));
+  }
+
+  /** Organization that owns a sigma rule, or null if the rule does not exist. */
+  async getSigmaRuleOrganizationId(sigmaRuleId: string): Promise<string | null> {
+    const row = await db
+      .selectFrom('sigma_rules')
+      .select('organization_id')
+      .where('id', '=', sigmaRuleId)
+      .executeTakeFirst();
+    return row?.organization_id ?? null;
   }
 
   // ============================================================================

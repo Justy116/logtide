@@ -617,6 +617,34 @@ describe('Notification Channels Routes', () => {
       const body = JSON.parse(response.payload);
       expect(body.channels).toHaveLength(1);
     });
+
+    it('should not leak channels of an alert rule in another organization', async () => {
+      const otherOrg = await createTestOrganization();
+      const alertRule = await createTestAlertRule({ organizationId: otherOrg.id });
+      const [channel] = await db
+        .insertInto('notification_channels')
+        .values({
+          organization_id: otherOrg.id,
+          name: 'Other Org Channel',
+          type: 'webhook',
+          config: { url: 'https://evil.example.com/hook', auth: { token: 'secret' } },
+        })
+        .returningAll()
+        .execute();
+      await db
+        .insertInto('alert_rule_channels')
+        .values({ alert_rule_id: alertRule.id, channel_id: channel.id })
+        .execute();
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/notification-channels/alert-rules/${alertRule.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.payload).not.toContain('secret');
+    });
   });
 
   describe('GET /api/v1/notification-channels/sigma-rules/:sigmaRuleId', () => {
@@ -650,6 +678,34 @@ describe('Notification Channels Routes', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.payload);
       expect(body.channels).toHaveLength(1);
+    });
+
+    it('should not leak channels of a sigma rule in another organization', async () => {
+      const otherOrg = await createTestOrganization();
+      const sigmaRule = await createTestSigmaRule({ organizationId: otherOrg.id });
+      const [channel] = await db
+        .insertInto('notification_channels')
+        .values({
+          organization_id: otherOrg.id,
+          name: 'Other Org Sigma Channel',
+          type: 'webhook',
+          config: { url: 'https://evil.example.com/hook', auth: { token: 'secret' } },
+        })
+        .returningAll()
+        .execute();
+      await db
+        .insertInto('sigma_rule_channels')
+        .values({ sigma_rule_id: sigmaRule.id, channel_id: channel.id })
+        .execute();
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/notification-channels/sigma-rules/${sigmaRule.id}`,
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.payload).not.toContain('secret');
     });
   });
 
