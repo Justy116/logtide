@@ -1745,6 +1745,10 @@ export class ClickHouseEngine extends StorageEngine {
       serviceFilter = ' AND service_name = {p_service:String}';
     }
 
+    // Aggregates come from the hourly rollup. The rollup has no last-value column,
+    // so the true latest value is computed separately from the raw metrics table
+    // via argMax(value, time) instead of mislabeling the average as the latest.
+    // DateTime64(3) params match the fractional-second values from toDateTime64.
     const sql = `
       SELECT
         metric_name,
@@ -1756,28 +1760,44 @@ export class ClickHouseEngine extends StorageEngine {
         max(max_value) AS mx
       FROM metrics_hourly_rollup
       WHERE project_id IN {p_pids:Array(String)}
-        AND bucket >= {p_from:DateTime}
-        AND bucket <= {p_to:DateTime}
+        AND bucket >= {p_from:DateTime64(3)}
+        AND bucket <= {p_to:DateTime64(3)}
         ${serviceFilter}
       GROUP BY metric_name, service_name
       ORDER BY service_name, metric_name
     `;
 
-    const result = await this.runQuery({
-      query: sql,
-      query_params: queryParams,
-      format: 'JSONEachRow',
-    });
+    const latestSql = `
+      SELECT metric_name, service_name, argMax(value, time) AS latest_val
+      FROM metrics
+      WHERE project_id IN {p_pids:Array(String)}
+        AND time >= {p_from:DateTime64(3)}
+        AND time <= {p_to:DateTime64(3)}
+        ${serviceFilter}
+      GROUP BY metric_name, service_name
+    `;
+
+    const [result, latestResult] = await Promise.all([
+      this.runQuery({ query: sql, query_params: queryParams, format: 'JSONEachRow' }),
+      this.runQuery({ query: latestSql, query_params: queryParams, format: 'JSONEachRow' }),
+    ]);
     const rows = await result.json<Record<string, unknown>>();
+    const latestRows = await latestResult.json<Record<string, unknown>>();
+
+    const latestMap = new Map<string, number>();
+    for (const lr of latestRows) {
+      latestMap.set(`${lr.metric_name as string}|${lr.service_name as string}`, Number(lr.latest_val));
+    }
 
     const serviceMap = new Map<string, MetricOverviewItem[]>();
     for (const row of rows) {
       const serviceName = row.service_name as string;
+      const latestKey = `${row.metric_name as string}|${serviceName}`;
       const item: MetricOverviewItem = {
         metricName: row.metric_name as string,
         metricType: (row.mt as MetricType) || 'gauge',
         serviceName,
-        latestValue: Number(row.avg_val) ?? 0,
+        latestValue: latestMap.has(latestKey) ? latestMap.get(latestKey)! : Number(row.avg_val) ?? 0,
         avgValue: Number(row.avg_val) ?? 0,
         minValue: Number(row.mn) ?? 0,
         maxValue: Number(row.mx) ?? 0,
