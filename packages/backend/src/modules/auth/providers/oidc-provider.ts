@@ -209,6 +209,10 @@ export class OidcProvider implements AuthProvider {
         success: true,
         providerUserId: sub, // Use OIDC 'sub' claim as unique identifier
         email: email.toLowerCase().trim(),
+        // Only treat the email as verified when the IdP explicitly asserts it.
+        // A missing claim is treated as unverified so it cannot auto-link to an
+        // existing local account (account-takeover guard).
+        emailVerified: claims.email_verified === true,
         name: name || 'Unknown',
         metadata: {
           sub,

@@ -163,6 +163,7 @@ export class LdapProvider implements AuthProvider {
         success: true,
         providerUserId: userDn, // Use DN as unique identifier
         email: email.toLowerCase().trim(),
+        emailVerified: true, // LDAP directory is authoritative for the user's email
         name: name || username,
         metadata: {
           dn: userDn,
