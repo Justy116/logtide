@@ -344,7 +344,7 @@ describe('NotificationChannelsService', () => {
         config: { url: 'https://example.com/hook' },
       });
 
-      await service.setAlertRuleChannels(alertRule.id, [channel1.id, channel2.id]);
+      await service.setAlertRuleChannels(alertRule.id, [channel1.id, channel2.id], testOrganization.id);
 
       const channels = await service.getAlertRuleChannels(alertRule.id);
 
@@ -364,11 +364,11 @@ describe('NotificationChannelsService', () => {
         config: { recipients: ['test2@example.com'] },
       });
 
-      await service.setAlertRuleChannels(alertRule.id, [channel1.id]);
+      await service.setAlertRuleChannels(alertRule.id, [channel1.id], testOrganization.id);
       let channels = await service.getAlertRuleChannels(alertRule.id);
       expect(channels).toHaveLength(1);
 
-      await service.setAlertRuleChannels(alertRule.id, [channel2.id]);
+      await service.setAlertRuleChannels(alertRule.id, [channel2.id], testOrganization.id);
       channels = await service.getAlertRuleChannels(alertRule.id);
       expect(channels).toHaveLength(1);
       expect(channels[0].id).toBe(channel2.id);
@@ -388,7 +388,7 @@ describe('NotificationChannelsService', () => {
       });
 
       await service.updateChannel(channel2.id, testOrganization.id, { enabled: false });
-      await service.setAlertRuleChannels(alertRule.id, [channel1.id, channel2.id]);
+      await service.setAlertRuleChannels(alertRule.id, [channel1.id, channel2.id], testOrganization.id);
 
       const channels = await service.getAlertRuleChannels(alertRule.id);
       expect(channels).toHaveLength(1);
@@ -405,7 +405,7 @@ describe('NotificationChannelsService', () => {
         config: { recipients: ['test@example.com'] },
       });
 
-      await service.setSigmaRuleChannels(sigmaRule.id, [channel.id]);
+      await service.setSigmaRuleChannels(sigmaRule.id, [channel.id], testOrganization.id);
 
       const channels = await service.getSigmaRuleChannels(sigmaRule.id);
 
@@ -421,8 +421,8 @@ describe('NotificationChannelsService', () => {
         config: { recipients: ['test@example.com'] },
       });
 
-      await service.setSigmaRuleChannels(sigmaRule.id, [channel.id]);
-      await service.setSigmaRuleChannels(sigmaRule.id, []);
+      await service.setSigmaRuleChannels(sigmaRule.id, [channel.id], testOrganization.id);
+      await service.setSigmaRuleChannels(sigmaRule.id, [], testOrganization.id);
 
       const channels = await service.getSigmaRuleChannels(sigmaRule.id);
       expect(channels).toHaveLength(0);

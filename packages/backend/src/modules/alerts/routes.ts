@@ -208,7 +208,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
 
       // Associate channels with the alert rule
       if (channelIds && channelIds.length > 0) {
-        await notificationChannelsService.setAlertRuleChannels(alertRule.id, channelIds);
+        await notificationChannelsService.setAlertRuleChannels(alertRule.id, channelIds, body.organizationId);
       }
 
       const enrichedRule = await enrichAlertRuleWithChannels(alertRule);
@@ -409,7 +409,7 @@ export async function alertsRoutes(fastify: FastifyInstance) {
 
       // Update channels if provided
       if (channelIds !== undefined) {
-        await notificationChannelsService.setAlertRuleChannels(id, channelIds);
+        await notificationChannelsService.setAlertRuleChannels(id, channelIds, organizationId);
       }
 
       const enrichedRule = await enrichAlertRuleWithChannels(alertRule);

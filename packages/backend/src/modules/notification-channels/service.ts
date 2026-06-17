@@ -192,7 +192,14 @@ export class NotificationChannelsService {
   /**
    * Set channels for an alert rule (replaces existing)
    */
-  async setAlertRuleChannels(alertRuleId: string, channelIds: string[]): Promise<void> {
+  async setAlertRuleChannels(
+    alertRuleId: string,
+    channelIds: string[],
+    organizationId: string
+  ): Promise<void> {
+    if (channelIds.length > 0 && !(await this.channelsBelongToOrg(channelIds, organizationId))) {
+      throw new Error('One or more channels do not belong to this organization');
+    }
     await db.transaction().execute(async (trx) => {
       // Delete existing associations
       await trx
@@ -260,7 +267,14 @@ export class NotificationChannelsService {
   /**
    * Set channels for a sigma rule (replaces existing)
    */
-  async setSigmaRuleChannels(sigmaRuleId: string, channelIds: string[]): Promise<void> {
+  async setSigmaRuleChannels(
+    sigmaRuleId: string,
+    channelIds: string[],
+    organizationId: string
+  ): Promise<void> {
+    if (channelIds.length > 0 && !(await this.channelsBelongToOrg(channelIds, organizationId))) {
+      throw new Error('One or more channels do not belong to this organization');
+    }
     await db.transaction().execute(async (trx) => {
       await trx
         .deleteFrom('sigma_rule_channels')
@@ -326,7 +340,14 @@ export class NotificationChannelsService {
   /**
    * Set channels for a monitor (replaces existing)
    */
-  async setMonitorChannels(monitorId: string, channelIds: string[]): Promise<void> {
+  async setMonitorChannels(
+    monitorId: string,
+    channelIds: string[],
+    organizationId: string
+  ): Promise<void> {
+    if (channelIds.length > 0 && !(await this.channelsBelongToOrg(channelIds, organizationId))) {
+      throw new Error('One or more channels do not belong to this organization');
+    }
     await db.transaction().execute(async (trx) => {
       await trx
         .deleteFrom('monitor_channels')
