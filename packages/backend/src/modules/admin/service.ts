@@ -1494,21 +1494,24 @@ export class AdminService {
             ])
             .orderBy('organizations.created_at', 'desc');
 
+        let countQuery = db
+            .selectFrom('organizations')
+            .select(({ fn }) => [fn.count<number>('id').as('count')]);
+
         if (search) {
-            query = query.where((eb) =>
+            const applySearch = (eb: any) =>
                 eb.or([
                     eb('organizations.name', 'ilike', `%${search}%`),
                     eb('organizations.slug', 'ilike', `%${search}%`),
-                ])
-            );
+                ]);
+            query = query.where(applySearch);
+            // The count must apply the same filter, otherwise pagination is wrong.
+            countQuery = countQuery.where(applySearch);
         }
 
         const [organizations, countResult] = await Promise.all([
             query.limit(limit).offset(offset).execute(),
-            db
-                .selectFrom('organizations')
-                .select(({ fn }) => [fn.count<number>('id').as('count')])
-                .executeTakeFirst(),
+            countQuery.executeTakeFirst(),
         ]);
 
         const total = Number(countResult?.count || 0);
@@ -1642,21 +1645,25 @@ export class AdminService {
             ])
             .orderBy('projects.created_at', 'desc');
 
+        let countQuery = db
+            .selectFrom('projects')
+            .innerJoin('organizations', 'organizations.id', 'projects.organization_id')
+            .select(({ fn }) => [fn.count<number>('projects.id').as('count')]);
+
         if (search) {
-            query = query.where((eb) =>
+            const applySearch = (eb: any) =>
                 eb.or([
                     eb('projects.name', 'ilike', `%${search}%`),
                     eb('organizations.name', 'ilike', `%${search}%`),
-                ])
-            );
+                ]);
+            query = query.where(applySearch);
+            // The count must apply the same filter (and join), otherwise pagination is wrong.
+            countQuery = countQuery.where(applySearch);
         }
 
         const [projects, countResult] = await Promise.all([
             query.limit(limit).offset(offset).execute(),
-            db
-                .selectFrom('projects')
-                .select(({ fn }) => [fn.count<number>('id').as('count')])
-                .executeTakeFirst(),
+            countQuery.executeTakeFirst(),
         ]);
 
         const total = Number(countResult?.count || 0);
