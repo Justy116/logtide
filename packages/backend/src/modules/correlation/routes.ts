@@ -311,6 +311,9 @@ export default async function correlationRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       // Explicit auth check (authPlugin handles auth, this ensures static analysis sees it)
       if (!requireAuth(request, reply)) return;
+      // This reads log data, so require full (read) access like the sibling read
+      // endpoints; a write-only API key must not be able to read identifiers.
+      if (!await requireFullAccess(request, reply)) return;
 
       const { logIds } = request.body;
       const { projectId } = request.query;
