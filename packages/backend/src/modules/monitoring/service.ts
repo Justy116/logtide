@@ -270,7 +270,9 @@ export class MonitorService {
   // ============================================================================
 
   async getProjectByOrgAndSlug(orgSlug: string, projectSlug: string) {
-    return this.db
+    // `?? null` must apply to the resolved row, not the Promise (which is never
+    // nullish), so await first.
+    const row = await this.db
       .selectFrom('projects')
       .innerJoin('organizations', 'organizations.id', 'projects.organization_id')
       .select([
@@ -283,7 +285,8 @@ export class MonitorService {
       ])
       .where('organizations.slug', '=', orgSlug)
       .where('projects.slug', '=', projectSlug)
-      .executeTakeFirst() ?? null;
+      .executeTakeFirst();
+    return row ?? null;
   }
 
   async getPublicStatus(projectSlug: string, verifiedProjectId?: string): Promise<PublicStatusPage | null> {
