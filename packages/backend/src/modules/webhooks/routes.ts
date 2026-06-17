@@ -84,7 +84,7 @@ export async function webhookDeliveriesRoutes(fastify: FastifyInstance) {
 
   /**
    * POST /api/v1/webhooks/deliveries/:id/replay
-   * Re-enqueue a failed or dead delivery. Admin only.
+   * Re-enqueue a dead-letter delivery. Admin only.
    */
   fastify.post('/deliveries/:id/replay', async (request: any, reply) => {
     const { id } = request.params as { id: string };
@@ -97,8 +97,11 @@ export async function webhookDeliveriesRoutes(fastify: FastifyInstance) {
       return reply.status(403).send({ error: 'Only admins can replay deliveries' });
     }
 
-    if (delivery.status !== 'dead' && delivery.status !== 'failed') {
-      return reply.status(409).send({ error: 'Only failed or dead deliveries can be replayed' });
+    // Only terminal 'dead' (dead-letter) deliveries may be replayed. A 'failed'
+    // delivery still has a delayed retry job enqueued, so replaying it would
+    // double-deliver and race attempt_count with the in-flight retry.
+    if (delivery.status !== 'dead') {
+      return reply.status(409).send({ error: 'Only dead-letter deliveries can be replayed' });
     }
 
     const reset = await webhookDeliveryService.resetForReplay(id);
