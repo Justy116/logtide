@@ -622,42 +622,30 @@ export class TimescaleEngine extends StorageEngine {
   async upsertTrace(trace: TraceRecord): Promise<void> {
     const s = this.schema;
 
-    const existing = await this.runQuery(
-      `SELECT trace_id, start_time, end_time, span_count, error FROM ${s}.traces
-       WHERE trace_id = $1 AND project_id = $2`,
-      [trace.traceId, trace.projectId],
+    // Single atomic upsert on the (trace_id, project_id) primary key. Spans for one
+    // trace routinely arrive in concurrent ingest batches; a read-modify-write would
+    // race and lose span counts or insert duplicates. ON CONFLICT lets Postgres
+    // serialize the per-row merge, accumulating span_count and widening the time
+    // window with LEAST/GREATEST.
+    await this.runQuery(
+      `INSERT INTO ${s}.traces (
+        trace_id, organization_id, project_id, service_name, root_service_name, root_operation_name,
+        start_time, end_time, duration_ms, span_count, error
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ON CONFLICT (trace_id, project_id) DO UPDATE SET
+        start_time = LEAST(${s}.traces.start_time, EXCLUDED.start_time),
+        end_time = GREATEST(${s}.traces.end_time, EXCLUDED.end_time),
+        duration_ms = (EXTRACT(EPOCH FROM (
+          GREATEST(${s}.traces.end_time, EXCLUDED.end_time) - LEAST(${s}.traces.start_time, EXCLUDED.start_time)
+        )) * 1000)::integer,
+        span_count = ${s}.traces.span_count + EXCLUDED.span_count,
+        error = ${s}.traces.error OR EXCLUDED.error,
+        root_service_name = COALESCE(EXCLUDED.root_service_name, ${s}.traces.root_service_name),
+        root_operation_name = COALESCE(EXCLUDED.root_operation_name, ${s}.traces.root_operation_name)`,
+      [trace.traceId, trace.organizationId ?? null, trace.projectId, trace.serviceName,
+       trace.rootServiceName ?? null, trace.rootOperationName ?? null,
+       trace.startTime, trace.endTime, trace.durationMs, trace.spanCount, trace.error],
     );
-
-    if (existing.rows.length === 0) {
-      await this.runQuery(
-        `INSERT INTO ${s}.traces (
-          trace_id, organization_id, project_id, service_name, root_service_name, root_operation_name,
-          start_time, end_time, duration_ms, span_count, error
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [trace.traceId, trace.organizationId ?? null, trace.projectId, trace.serviceName,
-         trace.rootServiceName ?? null, trace.rootOperationName ?? null,
-         trace.startTime, trace.endTime, trace.durationMs, trace.spanCount, trace.error],
-      );
-    } else {
-      const row = existing.rows[0];
-      const existingStart = new Date(row.start_time);
-      const existingEnd = new Date(row.end_time);
-      const newStart = trace.startTime < existingStart ? trace.startTime : existingStart;
-      const newEnd = trace.endTime > existingEnd ? trace.endTime : existingEnd;
-      const newDuration = newEnd.getTime() - newStart.getTime();
-
-      await this.runQuery(
-        `UPDATE ${s}.traces SET
-          start_time = $1, end_time = $2, duration_ms = $3,
-          span_count = span_count + $4, error = error OR $5,
-          root_service_name = COALESCE($6, root_service_name),
-          root_operation_name = COALESCE($7, root_operation_name)
-        WHERE trace_id = $8 AND project_id = $9`,
-        [newStart, newEnd, newDuration, trace.spanCount, trace.error,
-         trace.rootServiceName ?? null, trace.rootOperationName ?? null,
-         trace.traceId, trace.projectId],
-      );
-    }
   }
 
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {
