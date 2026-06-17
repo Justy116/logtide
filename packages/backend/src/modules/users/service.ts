@@ -83,11 +83,15 @@ export class UsersService {
    * so the instance always has at least one user able to access admin settings.
    */
   async createUser(input: CreateUserInput): Promise<UserProfile> {
+    // Normalize email so registration/login are case-insensitive and consistent
+    // with the OIDC/invitation paths, preventing duplicate accounts.
+    const email = input.email.toLowerCase().trim();
+
     // Check if user already exists
     const existingUser = await db
       .selectFrom('users')
       .select('id')
-      .where('email', '=', input.email)
+      .where('email', '=', email)
       .executeTakeFirst();
 
     if (existingUser) {
@@ -100,14 +104,14 @@ export class UsersService {
     // Promote first user to admin if no admin exists yet
     const shouldBeAdmin = !(await this.hasAnyAdmin());
     if (shouldBeAdmin) {
-      console.log(`[Users] No admin exists yet. Promoting ${input.email} to admin on registration.`);
+      console.log(`[Users] No admin exists yet. Promoting ${email} to admin on registration.`);
     }
 
     // Insert the user
     const user = await db
       .insertInto('users')
       .values({
-        email: input.email,
+        email,
         password_hash: passwordHash,
         name: input.name,
         is_admin: shouldBeAdmin,
@@ -130,11 +134,11 @@ export class UsersService {
    * Authenticate a user and create a session
    */
   async login(input: LoginInput): Promise<SessionInfo> {
-    // Find user by email
+    // Find user by email (case-insensitive, matching how emails are stored)
     const user = await db
       .selectFrom('users')
       .select(['id', 'email', 'password_hash', 'disabled'])
-      .where('email', '=', input.email)
+      .where('email', '=', input.email.toLowerCase().trim())
       .executeTakeFirst();
 
     if (!user) {
@@ -327,12 +331,15 @@ export class UsersService {
       throw new Error('User not found');
     }
 
+    // Normalize a new email the same way as registration/login.
+    const normalizedEmail = input.email ? input.email.toLowerCase().trim() : undefined;
+
     // If changing email, check if new email already exists
-    if (input.email && input.email !== user.email) {
+    if (normalizedEmail && normalizedEmail !== user.email) {
       const existingUser = await db
         .selectFrom('users')
         .select('id')
-        .where('email', '=', input.email)
+        .where('email', '=', normalizedEmail)
         .executeTakeFirst();
 
       if (existingUser) {
@@ -373,7 +380,7 @@ export class UsersService {
     // Build update object
     const updateData: any = {};
     if (input.name) updateData.name = input.name;
-    if (input.email) updateData.email = input.email;
+    if (normalizedEmail) updateData.email = normalizedEmail;
     if (input.newPassword) {
       updateData.password_hash = await this.hashPassword(input.newPassword);
     }
