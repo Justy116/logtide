@@ -238,7 +238,15 @@ export class DigestGeneratorService {
       hub.captureLog('info', `[DigestGenerator] Email sent to ${recipient.email}`);
     });
 
-    await Promise.all(emailPromises);
+    // One recipient failing must not abort the rest. Send all, then report.
+    const results = await Promise.allSettled(emailPromises);
+    const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failures.length > 0) {
+      hub.captureLog(
+        'error',
+        `[DigestGenerator] ${failures.length}/${recipients.length} digest emails failed to send`
+      );
+    }
   }
 
   //email template
