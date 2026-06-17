@@ -707,7 +707,18 @@
             }
 
             if (newLogs.length > 0) {
+              const shift = newLogs.length;
               logs = [...newLogs, ...logs].slice(0, liveTailLimit);
+              // Prepending shifts every existing row's index by `shift`; remap the
+              // index-keyed UI state so expansion/selection stays on the same logs
+              // instead of jumping to whatever now sits at the old index.
+              expandedRows = new Set(
+                [...expandedRows].map((i) => i + shift).filter((i) => i < logs.length)
+              );
+              if (selectedLogIndex >= 0) {
+                const next = selectedLogIndex + shift;
+                selectedLogIndex = next < logs.length ? next : -1;
+              }
             }
           }
         } catch (e) {
