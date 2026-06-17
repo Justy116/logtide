@@ -59,7 +59,7 @@ export const monitorStatusChangedDataSchema = z
     title: z.string(),
     message: z.string(),
     organization: organizationRefSchema,
-    target: z.string().optional(),
+    target: z.string().nullable().optional(),
     error_code: z.string().nullable().optional(),
     response_time_ms: z.number().nullable().optional(),
     consecutive_failures: z.number().optional(),
