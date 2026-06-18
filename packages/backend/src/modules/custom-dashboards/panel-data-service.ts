@@ -299,19 +299,26 @@ const topNTableFetcher: PanelDataSource<TopNTableConfig, TopNTableData> = {
     const intervalMs = intervalToMs(config.interval);
     const from = new Date(now.getTime() - intervalMs);
 
-    const top = await reservoir.topValues({
-      field: 'message',
-      projectId: projectIds,
-      from,
-      to: now,
-      level: ['error', 'critical'],
-      limit: config.limit,
-    });
+    const [top, totalResult] = await Promise.all([
+      reservoir.topValues({
+        field: 'message',
+        projectId: projectIds,
+        from,
+        to: now,
+        level: ['error', 'critical'],
+        limit: config.limit,
+      }),
+      // True total of all error/critical logs in the window, so percentages are a
+      // share of the whole, not of just the top-N rows that fit the limit.
+      reservoir.count({
+        projectId: projectIds,
+        from,
+        to: now,
+        level: ['error', 'critical'],
+      }),
+    ]);
 
-    const total = top.values.reduce(
-      (sum: number, v: { count: number }) => sum + v.count,
-      0
-    );
+    const total = totalResult.count;
 
     return {
       rows: top.values.map((v: { value: string; count: number }) => ({
@@ -503,12 +510,23 @@ const metricStatFetcher: PanelDataSource<MetricStatConfig, MetricStatData> = {
       serviceName: config.serviceName ?? undefined,
     });
 
-    // Pick the latest non-null bucket
-    const latest = [...result.timeseries].reverse().find((b) => b.value != null);
+    // The window can span more than one bucket (e.g. a 24h range crossing midnight
+    // at 1d interval). For additive aggregations (sum/count) the buckets must be
+    // summed, otherwise only the latest day is counted and the stat undercounts.
+    // For avg/min/max/last/percentiles the tile shows the most recent bucket.
+    const nonNull = result.timeseries.filter((b) => b.value != null);
+    let value: number | null = null;
+    if (nonNull.length > 0) {
+      if (config.aggregation === 'sum' || config.aggregation === 'count') {
+        value = nonNull.reduce((acc, b) => acc + Number(b.value), 0);
+      } else {
+        value = Number(nonNull[nonNull.length - 1].value);
+      }
+    }
 
     return {
       metricName: result.metricName,
-      value: latest ? Number(latest.value) : null,
+      value,
       unit: config.unit,
       aggregation: config.aggregation,
     };

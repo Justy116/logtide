@@ -722,7 +722,12 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
       reply.raw.write(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date() })}\n\n`);
 
       // Poll for new logs every second
+      let polling = false;
       const intervalId = setInterval(async () => {
+        // Re-entrancy guard: skip this tick if the previous poll is still running
+        // (a slow query must not overlap and corrupt lastTimestamp/sentIds).
+        if (polling) return;
+        polling = true;
         try {
           const newLogs = await queryService.queryLogs({
             projectId,
@@ -732,6 +737,8 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
             to: new Date(),
             limit: 100,
             offset: 0,
+            // Live tail must see fresh data; the 60s query cache would stall it.
+            skipCache: true,
           });
 
           if (newLogs.logs.length > 0) {
@@ -770,6 +777,8 @@ const queryRoutes: FastifyPluginAsync = async (fastify) => {
           console.error('Error in SSE stream:', error);
           clearInterval(intervalId);
           reply.raw.end();
+        } finally {
+          polling = false;
         }
       }, 1000);
 

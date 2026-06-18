@@ -1377,12 +1377,25 @@ export class AdminService {
             throw new Error('User not found');
         }
 
-        // If disabling, delete all active sessions
+        // If disabling, revoke all active sessions. Deleting the DB rows is not
+        // enough: validateSession caches the UserProfile by token, so a disabled
+        // user would keep access until the cache TTL expires. Invalidate the cache
+        // for each token as well.
         if (disabled) {
+            const sessions = await db
+                .selectFrom('sessions')
+                .select('token')
+                .where('user_id', '=', userId)
+                .execute();
+
             await db
                 .deleteFrom('sessions')
                 .where('user_id', '=', userId)
                 .execute();
+
+            await Promise.all(
+                sessions.map((s) => CacheManager.invalidateSession(s.token))
+            );
         }
 
         return user;
@@ -1402,6 +1415,16 @@ export class AdminService {
         if (!user) {
             throw new Error('User not found');
         }
+
+        // The session cache stores is_admin, so a demotion/promotion would not take
+        // effect until the cache TTL expires. Invalidate the cached sessions so the
+        // new role is re-read on the next request (sessions themselves stay valid).
+        const sessions = await db
+            .selectFrom('sessions')
+            .select('token')
+            .where('user_id', '=', userId)
+            .execute();
+        await Promise.all(sessions.map((sn) => CacheManager.invalidateSession(sn.token)));
 
         return user;
     }
@@ -1457,11 +1480,20 @@ export class AdminService {
             throw new Error('User not found');
         }
 
-        // Delete all active sessions to force re-login
+        // Delete all active sessions to force re-login, and invalidate the session
+        // cache so the old tokens cannot keep working until the cache TTL expires.
+        const sessions = await db
+            .selectFrom('sessions')
+            .select('token')
+            .where('user_id', '=', userId)
+            .execute();
+
         await db
             .deleteFrom('sessions')
             .where('user_id', '=', userId)
             .execute();
+
+        await Promise.all(sessions.map((sn) => CacheManager.invalidateSession(sn.token)));
 
         return user;
     }
@@ -1481,21 +1513,24 @@ export class AdminService {
             ])
             .orderBy('organizations.created_at', 'desc');
 
+        let countQuery = db
+            .selectFrom('organizations')
+            .select(({ fn }) => [fn.count<number>('id').as('count')]);
+
         if (search) {
-            query = query.where((eb) =>
+            const applySearch = (eb: any) =>
                 eb.or([
                     eb('organizations.name', 'ilike', `%${search}%`),
                     eb('organizations.slug', 'ilike', `%${search}%`),
-                ])
-            );
+                ]);
+            query = query.where(applySearch);
+            // The count must apply the same filter, otherwise pagination is wrong.
+            countQuery = countQuery.where(applySearch);
         }
 
         const [organizations, countResult] = await Promise.all([
             query.limit(limit).offset(offset).execute(),
-            db
-                .selectFrom('organizations')
-                .select(({ fn }) => [fn.count<number>('id').as('count')])
-                .executeTakeFirst(),
+            countQuery.executeTakeFirst(),
         ]);
 
         const total = Number(countResult?.count || 0);
@@ -1629,21 +1664,25 @@ export class AdminService {
             ])
             .orderBy('projects.created_at', 'desc');
 
+        let countQuery = db
+            .selectFrom('projects')
+            .innerJoin('organizations', 'organizations.id', 'projects.organization_id')
+            .select(({ fn }) => [fn.count<number>('projects.id').as('count')]);
+
         if (search) {
-            query = query.where((eb) =>
+            const applySearch = (eb: any) =>
                 eb.or([
                     eb('projects.name', 'ilike', `%${search}%`),
                     eb('organizations.name', 'ilike', `%${search}%`),
-                ])
-            );
+                ]);
+            query = query.where(applySearch);
+            // The count must apply the same filter (and join), otherwise pagination is wrong.
+            countQuery = countQuery.where(applySearch);
         }
 
         const [projects, countResult] = await Promise.all([
             query.limit(limit).offset(offset).execute(),
-            db
-                .selectFrom('projects')
-                .select(({ fn }) => [fn.count<number>('id').as('count')])
-                .executeTakeFirst(),
+            countQuery.executeTakeFirst(),
         ]);
 
         const total = Number(countResult?.count || 0);

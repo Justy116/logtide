@@ -27,8 +27,16 @@ describe('Cache Utilities (Custom TTL)', () => {
     });
 
     describe('getCacheTTL', () => {
-        it('should return config TTL when it differs from default', () => {
-            expect(getCacheTTL(300)).toBe(120);
+        it('applies the global override to the query cache TTL', () => {
+            // CACHE_TTL.QUERY is 60; the override (120) tunes the query cache.
+            expect(getCacheTTL(60)).toBe(120);
+        });
+
+        it('does not clamp semantic TTLs (sessions, settings, etc.)', () => {
+            // A 5-minute semantic TTL must be preserved, not clamped to the override.
+            expect(getCacheTTL(300)).toBe(300);
+            // A 30-minute session TTL must be preserved.
+            expect(getCacheTTL(1800)).toBe(1800);
         });
     });
 });

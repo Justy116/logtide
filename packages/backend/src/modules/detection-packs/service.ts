@@ -1,4 +1,6 @@
 import { db } from '../../database/connection.js';
+import { context } from '@logtide/shared/context';
+import { assertWithinLimit } from '../../capabilities/index.js';
 import { DETECTION_PACKS, getPackById } from './pack-definitions.js';
 import type {
   DetectionPackWithStatus,
@@ -154,6 +156,25 @@ export class DetectionPacksService {
 
     // Default email to empty array if not provided (user can add later)
     const recipients = emailRecipients ?? [];
+
+    // Enforce the active-rule cap for the whole batch this pack would create,
+    // so enabling a pack cannot bypass sigma.max_active_rules (parity with the
+    // single-import and SigmaHQ-sync paths).
+    await context.runAsSystem('detection-pack:enable-limit-check', async () => {
+      await context.with({ organizationId }, async () => {
+        const activeCountRow = await db
+          .selectFrom('sigma_rules')
+          .select((eb) => eb.fn.countAll().as('count'))
+          .where('organization_id', '=', organizationId)
+          .where('enabled', '=', true)
+          .executeTakeFirst();
+        await assertWithinLimit(
+          'sigma.max_active_rules',
+          Number(activeCountRow?.count ?? 0),
+          pack.rules.length
+        );
+      });
+    });
 
     // Start transaction
     await db.transaction().execute(async (trx) => {

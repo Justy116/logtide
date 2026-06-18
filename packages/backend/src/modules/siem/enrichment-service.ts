@@ -71,7 +71,7 @@ export class EnrichmentService {
     return {
       ip: result.ip,
       reputation: result.reputation,
-      abuseConfidenceScore: result.score * 10, // Convert to 0-100 scale (approx)
+      abuseConfidenceScore: Math.min(100, result.score * 10), // Convert to 0-100 scale (approx), clamped
       source: 'IPsum',
       lastChecked: result.lastChecked,
     };

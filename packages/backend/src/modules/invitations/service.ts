@@ -283,6 +283,9 @@ export class InvitationsService {
       ])
       .where('organization_invitations.token', '=', token)
       .where('organization_invitations.accepted_at', 'is', null)
+      // Expired invitations are intentionally still returned here so the public
+      // preview page can show an "expired" message; acceptInvitation separately
+      // rejects expired tokens.
       .executeTakeFirst();
 
     if (!result) {

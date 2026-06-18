@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Fixed
+- **ClickHouse "Query with id = ... is already running" under concurrent queries** (#213 regression): the request-context propagation derived the ClickHouse `query_id` deterministically from `requestId + operation`, so two same-operation queries running concurrently within one request (common on dashboard and multi-query endpoints) reused the same id and ClickHouse rejected the second. The `query_id` now keeps the request id + operation as a readable prefix (correlation is also carried in the SQL `log_comment`) and appends a random suffix so every query gets a unique id. ClickHouse-only; Timescale (SQL comment) and MongoDB (`$comment`) were unaffected
+
 ## [1.0.0-beta] - 2026-06-16
 
 First beta of the 1.0 line. The headline work since 0.9.7 is the **tenant data isolation audit** that hardens every backend data-access path before the 1.0 stable cut, and the **metering + capability system** pair (#212, #214) that gives every organization usage measurement, feature gates and enforceable limits/quotas (ingestion, spans, storage) - the foundation for plan tiers without changing OSS behavior. A typed **lifecycle hooks** extension surface (#216) lands alongside it, letting operators observe, mutate or reject ingestion, query, alert-evaluation and webhook-dispatch without forking. A reusable **outbound webhook delivery** system (#218) also lands - HMAC signing, retry with backoff, a dead-letter queue and centralized SSRF protection - onto which every existing webhook sender is migrated, closing three unguarded `fetch` paths in the process. Two infrastructure features landed on the way there: end-to-end request-context propagation, and the groundwork for scheduled email digests (merged but disabled in this beta, see #154).

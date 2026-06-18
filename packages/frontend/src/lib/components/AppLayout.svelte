@@ -4,6 +4,7 @@
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { authStore } from "$lib/stores/auth";
+  import { authAPI } from "$lib/api/auth";
   import { currentOrganization, organizationStore } from "$lib/stores/organization";
   import { toastStore } from "$lib/stores/toast";
   import { shortcutsStore } from "$lib/stores/shortcuts";
@@ -277,6 +278,15 @@
   }
 
   async function handleLogout() {
+    // Revoke the server-side session so the token cannot be reused. Best-effort:
+    // still clear local state and redirect even if the request fails.
+    if (token) {
+      try {
+        await authAPI.logout(token);
+      } catch (e) {
+        console.error("Logout request failed", e);
+      }
+    }
     authStore.clearAuth();
     goto("/login");
   }

@@ -264,7 +264,7 @@ export async function monitoringRoutes(fastify: FastifyInstance) {
     const monitor = await monitorService.getMonitor(id, organizationId);
     if (!monitor) return reply.status(404).send({ error: 'Not found' });
 
-    await notificationChannelsService.setMonitorChannels(id, parse.data.channelIds);
+    await notificationChannelsService.setMonitorChannels(id, parse.data.channelIds, organizationId);
     return reply.status(204).send();
   });
 }
@@ -281,9 +281,9 @@ export async function heartbeatRoutes(fastify: FastifyInstance) {
   }, async (request: any, reply) => {
     const monitorId = request.params.id;
 
-    // API key path: global auth plugin set organizationId
+    // API key path: global auth plugin set organizationId and the key-bound projectId.
     if (request.organizationId) {
-      await monitorService.recordHeartbeat(monitorId, request.organizationId);
+      await monitorService.recordHeartbeat(monitorId, request.organizationId, request.projectId);
       return reply.status(204).send();
     }
 

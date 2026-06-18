@@ -105,7 +105,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
 
         // Associate channels with the sigma rule if import was successful
         if (result.sigmaRule && channelIds && channelIds.length > 0) {
-          await notificationChannelsService.setSigmaRuleChannels(result.sigmaRule.id, channelIds);
+          await notificationChannelsService.setSigmaRuleChannels(result.sigmaRule.id, channelIds, body.organizationId);
         }
 
         if (result.errors.length > 0) {
@@ -352,7 +352,7 @@ export async function sigmaRoutes(fastify: FastifyInstance) {
             return reply.code(404).send({ error: 'Sigma rule not found' });
           }
         }
-        await notificationChannelsService.setSigmaRuleChannels(params.id, body.channelIds);
+        await notificationChannelsService.setSigmaRuleChannels(params.id, body.channelIds, body.organizationId);
       }
 
       if (body.enabled === undefined && body.channelIds === undefined) {

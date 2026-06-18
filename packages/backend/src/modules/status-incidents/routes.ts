@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { statusIncidentService } from './service.js';
 import { authenticate } from '../auth/middleware.js';
 import { db } from '../../database/connection.js';
+import { projectsService } from '../projects/service.js';
 
 const STATUS_VALUES = ['investigating', 'identified', 'monitoring', 'resolved'] as const;
 const SEVERITY_VALUES = ['minor', 'major', 'critical'] as const;
@@ -91,6 +92,12 @@ export async function statusIncidentRoutes(fastify: FastifyInstance) {
 
     if (!(await checkOrgAdmin(request.user.id, parse.data.organizationId))) {
       return reply.status(403).send({ error: 'Admin or owner role required' });
+    }
+
+    // The projectId is attacker-controlled in the body; ensure it belongs to the
+    // caller's organization to prevent cross-tenant status-page injection.
+    if (!(await projectsService.projectBelongsToOrg(parse.data.projectId, parse.data.organizationId))) {
+      return reply.status(400).send({ error: 'projectId does not belong to the organization' });
     }
 
     const incident = await statusIncidentService.create({

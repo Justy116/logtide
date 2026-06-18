@@ -137,10 +137,12 @@ pool.on('error', (err) => {
 
 // Pool status logging (development only)
 if (!isProduction && !isTest) {
-  setInterval(() => {
+  const poolStatusInterval = setInterval(() => {
     const { totalCount, idleCount, waitingCount } = pool;
     console.log(`[Database Pool] Total: ${totalCount}, Idle: ${idleCount}, Waiting: ${waitingCount}`);
   }, 60000); // Log every minute
+  // Don't let this dev-only timer keep the process alive (clean shutdown / reloads).
+  poolStatusInterval.unref();
 }
 
 const dialect = new PostgresDialect({ pool });

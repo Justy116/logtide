@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { randomUUID } from 'crypto';
 import { currentOrNull } from '@logtide/shared/context';
 import { StorageEngine } from '../../core/storage-engine.js';
 import type {
@@ -401,16 +402,21 @@ export class TimescaleEngine extends StorageEngine {
         const fieldName = params.field; // safe, validated above
         const projectIds = Array.isArray(params.projectId) ? params.projectId : [params.projectId];
 
+        // Honor the exclusive-bound flags so this fast path matches the standard
+        // distinct path (operators are not user input).
+        const fromOp = params.fromExclusive ? '>' : '>=';
+        const toOp = params.toExclusive ? '<' : '<=';
+
         // Use a recursive CTE to jump through the b-tree index
         // ORDER BY field only (not project_id) so we get the globally smallest value first
         const query = `
           WITH RECURSIVE t AS (
              (SELECT ${fieldName} AS value FROM ${this.schema}.${this.tableName}
-              WHERE project_id = ANY($1) AND time >= $2 AND time <= $3
+              WHERE project_id = ANY($1) AND time ${fromOp} $2 AND time ${toOp} $3
               ORDER BY ${fieldName}, time DESC LIMIT 1)
              UNION ALL
              SELECT (SELECT ${fieldName} AS value FROM ${this.schema}.${this.tableName}
-                     WHERE project_id = ANY($1) AND time >= $2 AND time <= $3 AND ${fieldName} > t.value
+                     WHERE project_id = ANY($1) AND time ${fromOp} $2 AND time ${toOp} $3 AND ${fieldName} > t.value
                      ORDER BY ${fieldName}, time DESC LIMIT 1)
              FROM t
              WHERE t.value IS NOT NULL
@@ -497,7 +503,10 @@ export class TimescaleEngine extends StorageEngine {
   private buildInsertQuery(logs: LogRecord[], returning = false): { query: string; values: unknown[] } {
     const s = this.schema;
     const t = this.tableName;
-    const hasIds = logs.length > 0 && logs[0].id != null;
+    // Use the id-path if ANY log carries an id (not just the first): a mixed batch
+    // must not push `undefined` into the id array. Missing ids are generated so the
+    // UNNEST arrays stay aligned and provided ids are preserved.
+    const hasIds = logs.length > 0 && logs.some((l) => l.id != null);
 
     const ids: string[] = [];
     const times: Date[] = [];
@@ -511,7 +520,7 @@ export class TimescaleEngine extends StorageEngine {
     const sessionIds: (string | null)[] = [];
 
     for (const log of logs) {
-      if (hasIds) ids.push(log.id!);
+      if (hasIds) ids.push(log.id ?? randomUUID());
       times.push(log.time);
       projectIds.push(sanitizeNull(log.projectId));
       services.push(sanitizeNull(log.service));
@@ -622,42 +631,30 @@ export class TimescaleEngine extends StorageEngine {
   async upsertTrace(trace: TraceRecord): Promise<void> {
     const s = this.schema;
 
-    const existing = await this.runQuery(
-      `SELECT trace_id, start_time, end_time, span_count, error FROM ${s}.traces
-       WHERE trace_id = $1 AND project_id = $2`,
-      [trace.traceId, trace.projectId],
+    // Single atomic upsert on the (trace_id, project_id) primary key. Spans for one
+    // trace routinely arrive in concurrent ingest batches; a read-modify-write would
+    // race and lose span counts or insert duplicates. ON CONFLICT lets Postgres
+    // serialize the per-row merge, accumulating span_count and widening the time
+    // window with LEAST/GREATEST.
+    await this.runQuery(
+      `INSERT INTO ${s}.traces (
+        trace_id, organization_id, project_id, service_name, root_service_name, root_operation_name,
+        start_time, end_time, duration_ms, span_count, error
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ON CONFLICT (trace_id, project_id) DO UPDATE SET
+        start_time = LEAST(${s}.traces.start_time, EXCLUDED.start_time),
+        end_time = GREATEST(${s}.traces.end_time, EXCLUDED.end_time),
+        duration_ms = (EXTRACT(EPOCH FROM (
+          GREATEST(${s}.traces.end_time, EXCLUDED.end_time) - LEAST(${s}.traces.start_time, EXCLUDED.start_time)
+        )) * 1000)::integer,
+        span_count = ${s}.traces.span_count + EXCLUDED.span_count,
+        error = ${s}.traces.error OR EXCLUDED.error,
+        root_service_name = COALESCE(EXCLUDED.root_service_name, ${s}.traces.root_service_name),
+        root_operation_name = COALESCE(EXCLUDED.root_operation_name, ${s}.traces.root_operation_name)`,
+      [trace.traceId, trace.organizationId ?? null, trace.projectId, trace.serviceName,
+       trace.rootServiceName ?? null, trace.rootOperationName ?? null,
+       trace.startTime, trace.endTime, trace.durationMs, trace.spanCount, trace.error],
     );
-
-    if (existing.rows.length === 0) {
-      await this.runQuery(
-        `INSERT INTO ${s}.traces (
-          trace_id, organization_id, project_id, service_name, root_service_name, root_operation_name,
-          start_time, end_time, duration_ms, span_count, error
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [trace.traceId, trace.organizationId ?? null, trace.projectId, trace.serviceName,
-         trace.rootServiceName ?? null, trace.rootOperationName ?? null,
-         trace.startTime, trace.endTime, trace.durationMs, trace.spanCount, trace.error],
-      );
-    } else {
-      const row = existing.rows[0];
-      const existingStart = new Date(row.start_time);
-      const existingEnd = new Date(row.end_time);
-      const newStart = trace.startTime < existingStart ? trace.startTime : existingStart;
-      const newEnd = trace.endTime > existingEnd ? trace.endTime : existingEnd;
-      const newDuration = newEnd.getTime() - newStart.getTime();
-
-      await this.runQuery(
-        `UPDATE ${s}.traces SET
-          start_time = $1, end_time = $2, duration_ms = $3,
-          span_count = span_count + $4, error = error OR $5,
-          root_service_name = COALESCE($6, root_service_name),
-          root_operation_name = COALESCE($7, root_operation_name)
-        WHERE trace_id = $8 AND project_id = $9`,
-        [newStart, newEnd, newDuration, trace.spanCount, trace.error,
-         trace.rootServiceName ?? null, trace.rootOperationName ?? null,
-         trace.traceId, trace.projectId],
-      );
-    }
   }
 
   async querySpans(params: SpanQueryParams): Promise<SpanQueryResult> {
@@ -815,6 +812,23 @@ export class TimescaleEngine extends StorageEngine {
     return result.rows.length > 0 ? mapRowToTraceRecord(result.rows[0]) : null;
   }
 
+  async getTraceServices(projectId: string, from?: Date, to?: Date): Promise<string[]> {
+    const s = this.schema;
+    const conditions = ['project_id = $1'];
+    const values: unknown[] = [projectId];
+    let idx = 2;
+    if (from) { conditions.push(`start_time >= $${idx++}`); values.push(from); }
+    if (to) { conditions.push(`start_time <= $${idx++}`); values.push(to); }
+
+    const result = await this.runQuery(
+      `SELECT DISTINCT service_name FROM ${s}.traces WHERE ${conditions.join(' AND ')} ORDER BY service_name ASC`,
+      values,
+    );
+    return result.rows
+      .map((r) => r.service_name as string)
+      .filter((v) => v != null && v !== '');
+  }
+
   async getServiceDependencies(
     projectId: string,
     from?: Date,
@@ -843,6 +857,7 @@ export class TimescaleEngine extends StorageEngine {
       INNER JOIN ${s}.spans parent
         ON child.parent_span_id = parent.span_id
         AND child.trace_id = parent.trace_id
+        AND parent.project_id = child.project_id
       WHERE child.project_id = $1
         AND child.service_name <> parent.service_name
         ${timeFilter}

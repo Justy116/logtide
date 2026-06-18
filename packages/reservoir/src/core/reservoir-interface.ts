@@ -83,6 +83,8 @@ export interface IReservoir {
     from?: Date,
     to?: Date,
   ): Promise<ServiceDependencyResult>;
+  /** Distinct service names that appear in traces within the time range. */
+  getTraceServices(projectId: string, from?: Date, to?: Date): Promise<string[]>;
   deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult>;
 
   // Metrics

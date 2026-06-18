@@ -178,8 +178,12 @@ export class LogsAPI {
     }
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const apiUrl = new URL(getApiUrl());
-    const wsUrl = `${wsProtocol}//${apiUrl.host}/api/v1/logs/ws?${params.toString()}`;
+    // getApiUrl() may be empty (same-origin reverse proxy) or a relative path, in
+    // which case `new URL(...)` would throw "Invalid URL". Resolve against the
+    // current location and fall back to the page host for the same-origin case.
+    const apiBase = getApiUrl();
+    const apiHost = apiBase ? new URL(apiBase, window.location.href).host : window.location.host;
+    const wsUrl = `${wsProtocol}//${apiHost}/api/v1/logs/ws?${params.toString()}`;
 
     return new WebSocket(wsUrl);
   }

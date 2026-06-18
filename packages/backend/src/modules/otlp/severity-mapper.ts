@@ -31,16 +31,18 @@ export function mapSeverityToLevel(
   severityNumber?: number,
   severityText?: string
 ): LogTideLevel {
-  // Try severityText first if provided (allows custom SDK severity names)
+  // Try severityText first if provided (allows custom SDK severity names).
+  // Match on a word-start boundary rather than a bare substring so an unrelated
+  // text like "unwarranted" does not match "warn" and override the number.
   if (severityText) {
     const normalized = severityText.toLowerCase();
 
-    if (normalized.includes('trace')) return 'debug';
-    if (normalized.includes('debug')) return 'debug';
-    if (normalized.includes('info')) return 'info';
-    if (normalized.includes('warn')) return 'warn';
-    if (normalized.includes('error')) return 'error';
-    if (normalized.includes('fatal') || normalized.includes('critical')) return 'critical';
+    if (/\btrace/.test(normalized)) return 'debug';
+    if (/\bdebug/.test(normalized)) return 'debug';
+    if (/\binfo/.test(normalized)) return 'info';
+    if (/\bwarn/.test(normalized)) return 'warn';
+    if (/\berror/.test(normalized)) return 'error';
+    if (/\bfatal/.test(normalized) || /\bcritical/.test(normalized)) return 'critical';
   }
 
   // Map by severity number

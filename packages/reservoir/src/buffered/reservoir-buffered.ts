@@ -120,6 +120,7 @@ export class ReservoirBuffered implements IReservoir {
   queryTraces(...args: Parameters<Reservoir['queryTraces']>): ReturnType<Reservoir['queryTraces']> { return this.inner.queryTraces(...args); }
   getTraceById(...args: Parameters<Reservoir['getTraceById']>): ReturnType<Reservoir['getTraceById']> { return this.inner.getTraceById(...args); }
   getServiceDependencies(...args: Parameters<Reservoir['getServiceDependencies']>): ReturnType<Reservoir['getServiceDependencies']> { return this.inner.getServiceDependencies(...args); }
+  getTraceServices(...args: Parameters<Reservoir['getTraceServices']>): ReturnType<Reservoir['getTraceServices']> { return this.inner.getTraceServices(...args); }
   deleteSpansByTimeRange(...args: Parameters<Reservoir['deleteSpansByTimeRange']>): ReturnType<Reservoir['deleteSpansByTimeRange']> { return this.inner.deleteSpansByTimeRange(...args); }
   queryMetrics(...args: Parameters<Reservoir['queryMetrics']>): ReturnType<Reservoir['queryMetrics']> { return this.inner.queryMetrics(...args); }
   aggregateMetrics(...args: Parameters<Reservoir['aggregateMetrics']>): ReturnType<Reservoir['aggregateMetrics']> { return this.inner.aggregateMetrics(...args); }

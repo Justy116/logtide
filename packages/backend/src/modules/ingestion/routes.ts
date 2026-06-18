@@ -20,7 +20,9 @@ const parseNdjson = (body: string): object[] => {
   });
 };
 
-// Detect if this is a systemd-journald formatted log
+// Detect if this is a systemd-journald formatted log. Fluent Bit forwards
+// journald entries using the uppercase MESSAGE/PRIORITY field names (often with
+// no other identifiers), so those are treated as journald signals by design.
 const isJournaldFormat = (data: any): boolean => {
   return data._SYSTEMD_UNIT || data._COMM || data._EXE ||
          data.SYSLOG_IDENTIFIER || data.MESSAGE !== undefined ||
@@ -113,7 +115,10 @@ const normalizeLevel = (level: any): string => {
   if (level === null || level === undefined || level === '' || typeof level === 'boolean') {
     return 'info';
   }
-  if (typeof level === 'number' || !isNaN(Number(level))) {
+  // Treat as numeric only for real numbers or clean numeric strings. A bare
+  // Number() coercion would turn whitespace into 0, and accept "1e3"/"0x10"/
+  // "Infinity", misclassifying odd strings as numeric severities.
+  if (typeof level === 'number' || (typeof level === 'string' && /^\s*\d+(\.\d+)?\s*$/.test(level))) {
     const numLevel = Number(level);
     if (numLevel >= 60) return 'critical';
     if (numLevel >= 50) return 'error';
@@ -457,19 +462,22 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
           rawLogs = body;
         }
 
-        // Normalize and validate each log
+        // Normalize and validate each log. Track which submitted-batch index each
+        // valid log came from so rejection indices can be remapped back.
         const validLogs = [];
+        const validOriginalIndices: number[] = [];
         const errors = [];
 
-        for (const logData of rawLogs) {
-          const log = normalizeLogData(logData);
+        for (let i = 0; i < rawLogs.length; i++) {
+          const log = normalizeLogData(rawLogs[i]);
 
           const parseResult = logSchema.safeParse(log);
 
           if (parseResult.success) {
             validLogs.push(parseResult.data);
+            validOriginalIndices.push(i);
           } else {
-            errors.push({ log: logData, error: parseResult.error.format() });
+            errors.push({ log: rawLogs[i], error: parseResult.error.format() });
           }
         }
 
@@ -481,9 +489,15 @@ const ingestionRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         const result = await ingestionService.ingestLogs(validLogs, projectId);
+        // ingestLogs indexes rejections against validLogs; remap to the index in
+        // the batch the client actually submitted.
+        const rejected = result.rejected.map((r) => ({
+          ...r,
+          index: validOriginalIndices[r.index] ?? r.index,
+        }));
         return {
           received: result.received,
-          ...(result.rejected.length > 0 && { rejected: result.rejected }),
+          ...(rejected.length > 0 && { rejected }),
           timestamp: new Date().toISOString(),
         };
       }

@@ -408,6 +408,14 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         return reply.status(403).send({ error: 'Only admins can update default channels' });
       }
 
+      // Channels must belong to this org: prevent setting defaults to another
+      // tenant's channels.
+      if (!(await notificationChannelsService.channelsBelongToOrg(channelIds, organizationId))) {
+        return reply
+          .status(400)
+          .send({ error: 'One or more channels do not belong to this organization' });
+      }
+
       await notificationChannelsService.setOrganizationDefaults(
         organizationId,
         eventType as NotificationEventType,
@@ -436,7 +444,23 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         return reply.status(400).send({ error: 'alertRuleId is required' });
       }
 
-      const channels = await notificationChannelsService.getAlertRuleChannels(alertRuleId);
+      // Resolve the rule's organization and require the caller to be a member,
+      // then scope the channel read to that org. Without this any authenticated
+      // user could read another tenant's channels (incl. webhook secrets).
+      const organizationId =
+        await notificationChannelsService.getAlertRuleOrganizationId(alertRuleId);
+      if (!organizationId) {
+        return reply.status(404).send({ error: 'Alert rule not found' });
+      }
+      const isMember = await checkOrganizationMembership(request.user.id, organizationId);
+      if (!isMember) {
+        return reply.status(403).send({ error: 'Access denied' });
+      }
+
+      const channels = await notificationChannelsService.getAlertRuleChannels(
+        alertRuleId,
+        organizationId
+      );
       return reply.send({ channels });
     } catch (error) {
       console.error(error, 'Failed to get alert rule channels');
@@ -456,7 +480,22 @@ export async function notificationChannelsRoutes(fastify: FastifyInstance) {
         return reply.status(400).send({ error: 'sigmaRuleId is required' });
       }
 
-      const channels = await notificationChannelsService.getSigmaRuleChannels(sigmaRuleId);
+      // Resolve the rule's organization and require the caller to be a member,
+      // then scope the channel read to that org (see alert-rules above).
+      const organizationId =
+        await notificationChannelsService.getSigmaRuleOrganizationId(sigmaRuleId);
+      if (!organizationId) {
+        return reply.status(404).send({ error: 'Sigma rule not found' });
+      }
+      const isMember = await checkOrganizationMembership(request.user.id, organizationId);
+      if (!isMember) {
+        return reply.status(403).send({ error: 'Access denied' });
+      }
+
+      const channels = await notificationChannelsService.getSigmaRuleChannels(
+        sigmaRuleId,
+        organizationId
+      );
       return reply.send({ channels });
     } catch (error) {
       console.error(error, 'Failed to get sigma rule channels');
