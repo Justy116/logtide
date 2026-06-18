@@ -21,7 +21,12 @@ import { verifyProjectAccess } from '../auth/verify-project-access.js';
  * Connection rate is implicitly limited by authentication requirements.
  */
 const websocketRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.get('/api/v1/logs/ws', { websocket: true }, async (socket, req: any) => {
+  fastify.get('/api/v1/logs/ws', {
+    websocket: true,
+    // Rate-limit the connection upgrade: the handler does a session lookup and a
+    // project-membership check (DB), so cap the connection attempt rate per client.
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (socket, req: any) => {
     const { projectId, service, level, hostname, token } = req.query as {
       projectId: string;
       service?: string | string[];
