@@ -821,6 +821,7 @@ describe('AuthenticationService', () => {
                     success: true,
                     providerUserId: 'oidc-external-user-id',
                     email: 'link-by-email@example.com', // Same email as existing user
+                    emailVerified: true,
                     name: 'Linked User',
                     metadata: {},
                 }),
@@ -851,6 +852,53 @@ describe('AuthenticationService', () => {
             getProviderSpy.mockRestore();
         });
 
+        it('should refuse to link to an existing account when the email is unverified', async () => {
+            const existingUser = await createTestUser({ email: 'unverified-link@example.com' });
+            const linkProviderId = crypto.randomUUID();
+
+            await db.insertInto('auth_providers').values({
+                id: linkProviderId,
+                type: 'oidc',
+                name: 'OIDC Provider',
+                slug: 'oidc-unverified-link',
+                enabled: true,
+                config: { allowAutoRegister: true },
+            }).execute();
+
+            const mockProvider = {
+                config: {
+                    id: linkProviderId, type: 'oidc', name: 'OIDC Provider',
+                    slug: 'oidc-unverified-link', enabled: true, config: { allowAutoRegister: true },
+                },
+                authenticate: vi.fn().mockResolvedValue({
+                    success: true,
+                    providerUserId: 'attacker-external-id',
+                    email: 'unverified-link@example.com', // victim's email, but NOT verified
+                    emailVerified: false,
+                    name: 'Attacker',
+                    metadata: {},
+                }),
+                supportsRedirect: () => true,
+            };
+
+            const getProviderSpy = vi.spyOn(providerRegistryModule.providerRegistry, 'getProvider')
+                .mockResolvedValue(mockProvider as any);
+
+            await expect(
+                authService.authenticateWithProvider('oidc-unverified-link', {})
+            ).rejects.toThrow(/not verified/i);
+
+            // No identity should have been linked to the victim.
+            const identities = await db
+                .selectFrom('user_identities')
+                .selectAll()
+                .where('user_id', '=', existingUser.id)
+                .execute();
+            expect(identities).toHaveLength(0);
+
+            getProviderSpy.mockRestore();
+        });
+
         it('should update last login when linking identity by email', async () => {
             const existingUser = await createTestUser({ email: 'last-login-update@example.com' });
             const linkProviderId = crypto.randomUUID();
@@ -876,6 +924,7 @@ describe('AuthenticationService', () => {
                     success: true,
                     providerUserId: 'oidc-user-123',
                     email: 'last-login-update@example.com',
+                    emailVerified: true,
                 }),
                 supportsRedirect: () => true,
             };

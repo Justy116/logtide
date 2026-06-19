@@ -161,7 +161,7 @@ export class AlertsService {
         alert_type: input.alertType || 'threshold',
         baseline_type: input.baselineType || null,
         deviation_multiplier: input.deviationMultiplier || null,
-        min_baseline_value: input.minBaselineValue || null,
+        min_baseline_value: input.minBaselineValue ?? null,
         cooldown_minutes: input.cooldownMinutes || null,
         sustained_minutes: input.sustainedMinutes || null,
         email_recipients: input.emailRecipients,
@@ -456,7 +456,7 @@ export class AlertsService {
     if (!rule.baseline_type || !rule.deviation_multiplier) return null;
 
     const deviationMultiplier = Number(rule.deviation_multiplier);
-    const minBaseline = Number(rule.min_baseline_value || 10);
+    const minBaseline = rule.min_baseline_value != null ? Number(rule.min_baseline_value) : 10;
     const cooldownMin = Number(rule.cooldown_minutes || 60);
     const sustainedMin = Number(rule.sustained_minutes || 5);
 
@@ -484,12 +484,15 @@ export class AlertsService {
       }
     }
 
-    // Calculate baseline
+    // Calculate baseline. Pass the rule's metadata filters so the baseline is
+    // computed over the same filtered population as the current rate; otherwise
+    // the deviation ratio is deflated when filters are present.
     const baseline = await baselineCalculator.calculate(
       rule.baseline_type,
       projectIds,
       rule.level,
       rule.service || null,
+      ruleMetadataFilters.length > 0 ? ruleMetadataFilters : undefined,
     );
 
     if (!baseline || baseline.value < minBaseline) {

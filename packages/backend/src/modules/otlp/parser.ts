@@ -396,10 +396,15 @@ function normalizeTraceSpanId(id: unknown): string | undefined {
         const buffer = Buffer.from(id, 'base64');
         return buffer.toString('hex');
       } catch {
-        return id; // Return as-is if conversion fails
+        return undefined; // malformed
       }
     }
-    return id;
+    // Hex string: only the canonical span (16) and trace (32) hex lengths are
+    // valid per OTLP. Drop other lengths instead of propagating a malformed id.
+    if (id.length === 16 || id.length === 32) {
+      return id.toLowerCase();
+    }
+    return undefined;
   }
 
   // If Uint8Array, convert to hex

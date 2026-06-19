@@ -185,15 +185,21 @@ export class MonitorService {
   // HEARTBEAT
   // ============================================================================
 
-  async recordHeartbeat(monitorId: string, organizationId: string): Promise<void> {
-    const monitor = await this.db
+  async recordHeartbeat(monitorId: string, organizationId: string, projectId?: string): Promise<void> {
+    let query = this.db
       .selectFrom('monitors')
       .select(['id', 'type', 'project_id'])
       .where('id', '=', monitorId)
       .where('organization_id', '=', organizationId)
       .where('type', '=', 'heartbeat')
-      .where('enabled', '=', true)
-      .executeTakeFirst();
+      .where('enabled', '=', true);
+
+    // A project-scoped API key may only ping monitors of its own project.
+    if (projectId) {
+      query = query.where('project_id', '=', projectId);
+    }
+
+    const monitor = await query.executeTakeFirst();
 
     if (!monitor) {
       throw new Error('Heartbeat monitor not found or not enabled');
@@ -264,7 +270,9 @@ export class MonitorService {
   // ============================================================================
 
   async getProjectByOrgAndSlug(orgSlug: string, projectSlug: string) {
-    return this.db
+    // `?? null` must apply to the resolved row, not the Promise (which is never
+    // nullish), so await first.
+    const row = await this.db
       .selectFrom('projects')
       .innerJoin('organizations', 'organizations.id', 'projects.organization_id')
       .select([
@@ -277,7 +285,8 @@ export class MonitorService {
       ])
       .where('organizations.slug', '=', orgSlug)
       .where('projects.slug', '=', projectSlug)
-      .executeTakeFirst() ?? null;
+      .executeTakeFirst();
+    return row ?? null;
   }
 
   async getPublicStatus(projectSlug: string, verifiedProjectId?: string): Promise<PublicStatusPage | null> {

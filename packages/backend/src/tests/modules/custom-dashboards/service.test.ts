@@ -135,11 +135,31 @@ describe('CustomDashboardsService.getById', () => {
   });
 });
 
+describe('CustomDashboardsService personal dashboard isolation', () => {
+  const otherUser = '00000000-0000-0000-0000-000000000999';
+
+  it('hides a personal dashboard from other users and blocks edit/delete', async () => {
+    const d = await service.create(
+      { organizationId: ctx.organization.id, name: 'Private', isPersonal: true },
+      ctx.user.id
+    );
+
+    // Creator can read it; another user in the org cannot.
+    expect(await service.getById(d.id, ctx.organization.id, ctx.user.id)).not.toBeNull();
+    expect(await service.getById(d.id, ctx.organization.id, otherUser)).toBeNull();
+
+    await expect(
+      service.update(d.id, ctx.organization.id, otherUser, { name: 'hijacked' })
+    ).rejects.toThrow();
+    await expect(service.delete(d.id, ctx.organization.id, otherUser)).rejects.toThrow();
+  });
+});
+
 describe('CustomDashboardsService.update', () => {
   it('updates dashboard name', async () => {
     const d = await service.create({ organizationId: ctx.organization.id, name: 'Old' }, ctx.user.id);
 
-    const updated = await service.update(d.id, ctx.organization.id, { name: 'New' });
+    const updated = await service.update(d.id, ctx.organization.id, ctx.user.id, { name: 'New' });
     expect(updated.name).toBe('New');
   });
 
@@ -147,7 +167,7 @@ describe('CustomDashboardsService.update', () => {
     const d = await service.create({ organizationId: ctx.organization.id, name: 'Panels' }, ctx.user.id);
 
     const panel = makePanel('p-new');
-    const updated = await service.update(d.id, ctx.organization.id, { panels: [panel] });
+    const updated = await service.update(d.id, ctx.organization.id, ctx.user.id, { panels: [panel] });
     expect(updated.panels).toHaveLength(1);
     expect(updated.panels[0].id).toBe('p-new');
   });
@@ -158,7 +178,7 @@ describe('CustomDashboardsService.update', () => {
       ctx.user.id
     );
 
-    const updated = await service.update(d.id, ctx.organization.id, { description: null });
+    const updated = await service.update(d.id, ctx.organization.id, ctx.user.id, { description: null });
     expect(updated.description).toBeNull();
   });
 });

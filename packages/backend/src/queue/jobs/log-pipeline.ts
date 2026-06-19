@@ -53,6 +53,8 @@ export async function processLogPipeline(job: IJob<LogPipelineJobData>): Promise
           metadata: sql`COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify(update.fields)}::jsonb`,
         })
         .where('id', '=', update.id)
+        // Defense in depth: scope the tenant-table update to the job's project.
+        .where('project_id', '=', projectId)
         .execute();
     } catch (err) {
       console.error(`[Pipeline] Failed to update metadata for log ${update.id}:`, err);

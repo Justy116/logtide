@@ -686,7 +686,14 @@ describe('ClickHouseEngine (integration)', () => {
       expect(trace!.error).toBe(false);
     });
 
-    it('merges times and span count on update', async () => {
+    it('merges times and span count from spans on update', async () => {
+      // The trace summary is recomputed from the spans table (race-free), so spans
+      // are ingested across two batches and each batch re-upserts the trace. The
+      // final summary must reflect ALL spans (count and the widest time range).
+      await engine.ingestSpans([
+        makeSpan({ spanId: 'm1', traceId: 'trace-merge', startTime: new Date('2025-01-15T12:00:01Z'), endTime: new Date('2025-01-15T12:00:03Z') }),
+        makeSpan({ spanId: 'm2', traceId: 'trace-merge', startTime: new Date('2025-01-15T12:00:02Z'), endTime: new Date('2025-01-15T12:00:04Z') }),
+      ]);
       await engine.upsertTrace(makeTrace({
         traceId: 'trace-merge',
         startTime: new Date('2025-01-15T12:00:01Z'),
@@ -694,7 +701,9 @@ describe('ClickHouseEngine (integration)', () => {
         spanCount: 2,
       }));
 
-
+      await engine.ingestSpans([
+        makeSpan({ spanId: 'm3', traceId: 'trace-merge', startTime: new Date('2025-01-15T12:00:00Z'), endTime: new Date('2025-01-15T12:00:05Z') }),
+      ]);
       await engine.upsertTrace(makeTrace({
         traceId: 'trace-merge',
         startTime: new Date('2025-01-15T12:00:00Z'),
@@ -702,11 +711,10 @@ describe('ClickHouseEngine (integration)', () => {
         spanCount: 1,
       }));
 
-
       const trace = await engine.getTraceById('trace-merge', 'proj-1');
       expect(trace).not.toBeNull();
       expect(trace!.spanCount).toBe(3);
-      // Duration should cover the wider range
+      // Duration should cover the wider range (00 -> 05 = 5s)
       expect(trace!.durationMs).toBeGreaterThanOrEqual(4000);
     });
   });
@@ -891,6 +899,25 @@ describe('ClickHouseEngine (integration)', () => {
     it('returns null for wrong project', async () => {
       const trace = await engine.getTraceById('trace-get1', 'wrong-project');
       expect(trace).toBeNull();
+    });
+  });
+
+  describe('getTraceServices', () => {
+    beforeEach(async () => {
+      await client.command({ query: 'TRUNCATE TABLE IF EXISTS traces' });
+      await engine.upsertTrace(makeTrace({ traceId: 't-svc-1', serviceName: 'api' }));
+      await engine.upsertTrace(makeTrace({ traceId: 't-svc-2', serviceName: 'worker' }));
+      await engine.upsertTrace(makeTrace({ traceId: 't-svc-3', serviceName: 'api' }));
+    });
+
+    it('returns distinct service names across all traces', async () => {
+      const services = await engine.getTraceServices('proj-1');
+      expect(services.sort()).toEqual(['api', 'worker']);
+    });
+
+    it('scopes by project', async () => {
+      const services = await engine.getTraceServices('other-project');
+      expect(services).toEqual([]);
     });
   });
 

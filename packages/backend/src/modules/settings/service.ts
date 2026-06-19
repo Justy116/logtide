@@ -58,9 +58,12 @@ export class SettingsService {
   ): Promise<SystemSettings[K]> {
     // Try cache first
     const cacheKey = CacheManager.settingsKey(key);
-    const cached = await CacheManager.get<SystemSettings[K]>(cacheKey);
+    // Wrap in an envelope so a legitimately-null setting value (e.g.
+    // auth.default_user_id) is distinguishable from a cache miss (both would
+    // otherwise be `null` from CacheManager.get).
+    const cached = await CacheManager.get<{ v: SystemSettings[K] }>(cacheKey);
     if (cached !== null) {
-      return cached;
+      return cached.v;
     }
 
     // Fallback to DB
@@ -72,8 +75,8 @@ export class SettingsService {
 
     const value = (result?.value ?? defaultValue ?? DEFAULT_VALUES[key]) as SystemSettings[K];
 
-    // Cache the result
-    await CacheManager.set(cacheKey, value, CACHE_TTL.SETTINGS);
+    // Cache the result (enveloped, see the get above)
+    await CacheManager.set(cacheKey, { v: value }, CACHE_TTL.SETTINGS);
 
     return value;
   }

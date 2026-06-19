@@ -916,6 +916,24 @@ describe('MongoDBEngine (integration)', () => {
     });
   });
 
+  describe('getTraceServices', () => {
+    beforeEach(async () => {
+      await engine.upsertTrace(makeTrace({ traceId: 'ts-1', projectId: 'proj-svc', serviceName: 'api' }));
+      await engine.upsertTrace(makeTrace({ traceId: 'ts-2', projectId: 'proj-svc', serviceName: 'worker' }));
+      await engine.upsertTrace(makeTrace({ traceId: 'ts-3', projectId: 'proj-svc', serviceName: 'api' }));
+    });
+
+    it('returns distinct service names across all traces', async () => {
+      const services = await engine.getTraceServices('proj-svc');
+      expect(services.sort()).toEqual(['api', 'worker']);
+    });
+
+    it('scopes by project', async () => {
+      const services = await engine.getTraceServices('proj-svc-empty');
+      expect(services).toEqual([]);
+    });
+  });
+
   describe('getServiceDependencies', () => {
     beforeEach(async () => {
       await engine.ingestSpans([

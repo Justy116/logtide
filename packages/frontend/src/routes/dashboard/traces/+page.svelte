@@ -362,12 +362,17 @@
       traces = response.traces;
       totalTraces = response.total;
 
-      const statsResponse = await tracesAPI.getStats(
-        selectedProject,
-        timeRange.from.toISOString(),
-        timeRange.to.toISOString()
-      );
-      stats = statsResponse;
+      // Stats are auxiliary: a stats failure must not discard the loaded traces,
+      // so fetch them in their own try/catch rather than the outer one.
+      try {
+        stats = await tracesAPI.getStats(
+          selectedProject,
+          timeRange.from.toISOString(),
+          timeRange.to.toISOString()
+        );
+      } catch (e) {
+        console.error("Failed to load trace stats:", e);
+      }
     } catch (e) {
       console.error("Failed to load traces:", e);
       toastStore.error('Failed to load traces');
@@ -418,13 +423,18 @@
           const data = JSON.parse(event.data);
           if (data.type === 'trace') {
             const incoming = data.data as TraceRecord;
-            // Prepend and dedupe by trace_id; cap at liveTailLimit.
+            // Prepend and dedupe by trace_id; cap the displayed list at liveTailLimit.
             const existing = traces.findIndex((t) => t.trace_id === incoming.trace_id);
             const next = existing >= 0
               ? [incoming, ...traces.filter((_, i) => i !== existing)]
               : [incoming, ...traces];
             traces = next.slice(0, liveTailLimit);
-            totalTraces = traces.length;
+            // Only the rendered list is capped at liveTailLimit; do NOT overwrite
+            // totalTraces with the capped length (that corrupts pagination). Bump
+            // the running total when a genuinely new trace arrives.
+            if (existing < 0) {
+              totalTraces += 1;
+            }
           }
         } catch (e) {
           console.error('[TracesLiveTail] parse error', e);

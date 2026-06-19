@@ -323,34 +323,43 @@ export class MongoDBEngine extends StorageEngine {
     const col = this.logsCol();
     const logsWithIds = logs.map((log) => ({ ...log, id: log.id ?? randomUUID() }));
 
+    const toRow = (log: (typeof logsWithIds)[number]): StoredLogRecord => ({
+      id: log.id,
+      time: log.time,
+      projectId: log.projectId,
+      organizationId: log.organizationId,
+      service: log.service,
+      level: log.level,
+      message: log.message,
+      metadata: log.metadata,
+      traceId: log.traceId,
+      spanId: log.spanId,
+      hostname: log.hostname,
+    });
+
     try {
       const docs = logsWithIds.map((log) => toMongoLogDoc(log, log.id));
       await col.insertMany(docs, { ...ctxOpts(), ordered: false });
 
-      const rows: StoredLogRecord[] = logsWithIds.map((log) => ({
-        id: log.id,
-        time: log.time,
-        projectId: log.projectId,
-        organizationId: log.organizationId,
-        service: log.service,
-        level: log.level,
-        message: log.message,
-        metadata: log.metadata,
-        traceId: log.traceId,
-        spanId: log.spanId,
-        hostname: log.hostname,
-      }));
+      const rows: StoredLogRecord[] = logsWithIds.map(toRow);
 
       return { ingested: logs.length, failed: 0, durationMs: Date.now() - start, rows };
     } catch (err) {
       if (err instanceof MongoBulkWriteError) {
         const inserted = err.result?.insertedCount ?? 0;
+        // With ordered:false every doc is attempted; the failed ones are reported
+        // with their indices. The inserted rows are therefore all inputs except
+        // those indices. Return them so downstream SIEM/pipeline processing still
+        // runs for the records that actually landed.
+        const writeErrors = extractWriteErrors(err);
+        const failedIdx = new Set(writeErrors.map((e) => e.index));
+        const rows = logsWithIds.filter((_, i) => !failedIdx.has(i)).map(toRow);
         return {
           ingested: inserted,
           failed: logs.length - inserted,
           durationMs: Date.now() - start,
-          rows: [], // cannot reliably determine which rows were inserted with ordered:false
-          errors: extractWriteErrors(err),
+          rows,
+          errors: writeErrors,
         };
       }
       return {
@@ -504,8 +513,10 @@ export class MongoDBEngine extends StorageEngine {
     const pipeline: Document[] = [
       { $match: filter },
       // Pre-filter before $group to reduce the number of docs aggregated.
-      // Avoids grouping null/empty values that would be discarded afterwards.
-      { $match: { [mongoField]: { $exists: true, $ne: null, $gt: '' } } },
+      // Exclude only null and empty string. NOTE: `$gt: ''` would wrongly drop all
+      // numeric/boolean values too, since in BSON sort order those types compare
+      // below strings; use $nin so non-string metadata values survive.
+      { $match: { [mongoField]: { $exists: true, $nin: [null, ''] } } },
       { $group: { _id: `$${mongoField}` } },
       { $sort: { _id: 1 } },
       { $limit: limit },
@@ -699,6 +710,19 @@ export class MongoDBEngine extends StorageEngine {
       { ...ctxOpts(), projection: { _id: 0 } },
     );
     return doc ? mapDocToTraceRecord(doc) : null;
+  }
+
+  async getTraceServices(projectId: string, from?: Date, to?: Date): Promise<string[]> {
+    const col = this.tracesCol();
+    const filter: Document = { project_id: projectId };
+    if (from || to) {
+      const timeFilter: Document = {};
+      if (from) timeFilter.$gte = from;
+      if (to) timeFilter.$lte = to;
+      filter.start_time = timeFilter;
+    }
+    const values = await col.distinct('service_name', filter, { ...ctxOpts() });
+    return (values as string[]).filter((v) => v != null && v !== '').sort();
   }
 
   async getServiceDependencies(
@@ -1119,14 +1143,32 @@ export class MongoDBEngine extends StorageEngine {
       filter.service_name = { $in: svc };
     }
 
+    // When filtering by metric/service, only the matching metrics' exemplars must
+    // be removed. Exemplars carry no metric_name/service_name, only metric_id, so
+    // collect the matching metric ids before deleting the metrics.
+    const filtered = params.metricName !== undefined || params.serviceName !== undefined;
+    let exemplarFilter: Document;
+    if (filtered) {
+      const matched = await db
+        .collection('metrics')
+        .find(filter, { projection: { id: 1 }, ...ctxOpts() })
+        .toArray();
+      const ids = matched.map((m) => m.id);
+      exemplarFilter = { metric_id: { $in: ids } };
+    } else {
+      exemplarFilter = {
+        project_id: { $in: pids },
+        time: { $gte: params.from, $lte: params.to },
+      };
+    }
+
     // Delete metrics
     const result = await db.collection('metrics').deleteMany(filter, { ...ctxOpts() });
 
-    // Delete exemplars for same time range + project
-    await db.collection('metric_exemplars').deleteMany({
-      project_id: { $in: pids },
-      time: { $gte: params.from, $lte: params.to },
-    }, { ...ctxOpts() });
+    // Delete the corresponding exemplars (scoped to the matching metrics when filtered).
+    if (!filtered || (exemplarFilter.metric_id as { $in: unknown[] }).$in.length > 0) {
+      await db.collection('metric_exemplars').deleteMany(exemplarFilter, { ...ctxOpts() });
+    }
 
     return { deleted: result.deletedCount, executionTimeMs: Date.now() - start };
   }
@@ -1144,6 +1186,9 @@ export class MongoDBEngine extends StorageEngine {
 
     const pipeline = [
       { $match: match },
+      // $last is order-dependent, so sort by time first to make latest_value the
+      // value at the most recent timestamp (otherwise it is arbitrary).
+      { $sort: { time: 1 as const } },
       {
         $group: {
           _id: {

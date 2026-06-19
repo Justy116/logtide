@@ -293,8 +293,11 @@ export class IdentifierPatternRegistry {
     const seen = new Set<string>();
 
     for (const { type, pattern } of patterns) {
-      // Create new regex instance to reset lastIndex
-      const regex = new RegExp(pattern.source, pattern.flags);
+      // Create new regex instance to reset lastIndex. Force the global flag so the
+      // exec loop advances; without it a non-global regex re-matches from index 0
+      // forever.
+      const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+      const regex = new RegExp(pattern.source, flags);
       let match;
 
       while ((match = regex.exec(text)) !== null) {
@@ -305,6 +308,13 @@ export class IdentifierPatternRegistry {
         if (!seen.has(key)) {
           matches.push({ type, value });
           seen.add(key);
+        }
+
+        // Guard against zero-width matches (patterns that can match the empty
+        // string, e.g. `\d*`, `x?`). On an empty match lastIndex does not advance,
+        // so exec would return the same match forever and hang the ingest worker.
+        if (match.index === regex.lastIndex) {
+          regex.lastIndex++;
         }
       }
     }

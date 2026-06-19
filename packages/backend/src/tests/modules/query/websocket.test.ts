@@ -143,6 +143,33 @@ describe('WebSocket route /api/v1/logs/ws', () => {
     });
 
     // -------------------------------------------------------------------------
+    // tenant isolation: project access
+    // -------------------------------------------------------------------------
+
+    describe('tenant isolation', () => {
+        it('closes with 1008 when the user is not a member of the project\'s organization', async () => {
+            // testUser/authToken belong to the org created in beforeEach. Create a
+            // separate org+project and try to live-tail it with the first user's token.
+            const otherCtx = await createTestContext();
+
+            const ws = await (app as any).injectWS(
+                `/api/v1/logs/ws?projectId=${otherCtx.project.id}&token=${authToken}`,
+            );
+            const { code } = await waitForClose(ws);
+            expect(code).toBe(1008);
+        });
+
+        it('allows a user to subscribe to a project in their own organization', async () => {
+            const ws = await (app as any).injectWS(
+                `/api/v1/logs/ws?projectId=${testProject.id}&token=${authToken}`,
+            );
+            const msg = await waitForMessage(ws) as any;
+            expect(msg.type).toBe('connected');
+            ws.terminate();
+        });
+    });
+
+    // -------------------------------------------------------------------------
     // valid session: connection established
     // -------------------------------------------------------------------------
 

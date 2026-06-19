@@ -192,7 +192,14 @@ export class NotificationChannelsService {
   /**
    * Set channels for an alert rule (replaces existing)
    */
-  async setAlertRuleChannels(alertRuleId: string, channelIds: string[]): Promise<void> {
+  async setAlertRuleChannels(
+    alertRuleId: string,
+    channelIds: string[],
+    organizationId: string
+  ): Promise<void> {
+    if (channelIds.length > 0 && !(await this.channelsBelongToOrg(channelIds, organizationId))) {
+      throw new Error('One or more channels do not belong to this organization');
+    }
     await db.transaction().execute(async (trx) => {
       // Delete existing associations
       await trx
@@ -218,8 +225,11 @@ export class NotificationChannelsService {
   /**
    * Get channels for an alert rule
    */
-  async getAlertRuleChannels(alertRuleId: string): Promise<NotificationChannel[]> {
-    const rows = await db
+  async getAlertRuleChannels(
+    alertRuleId: string,
+    organizationId?: string
+  ): Promise<NotificationChannel[]> {
+    let query = db
       .selectFrom('alert_rule_channels')
       .innerJoin(
         'notification_channels',
@@ -228,10 +238,26 @@ export class NotificationChannelsService {
       )
       .selectAll('notification_channels')
       .where('alert_rule_channels.alert_rule_id', '=', alertRuleId)
-      .where('notification_channels.enabled', '=', true)
-      .execute();
+      .where('notification_channels.enabled', '=', true);
+
+    // Optional org scoping: defense in depth for tenant-facing callers.
+    if (organizationId) {
+      query = query.where('notification_channels.organization_id', '=', organizationId);
+    }
+
+    const rows = await query.execute();
 
     return rows.map((r) => this.mapChannel(r));
+  }
+
+  /** Organization that owns an alert rule, or null if the rule does not exist. */
+  async getAlertRuleOrganizationId(alertRuleId: string): Promise<string | null> {
+    const row = await db
+      .selectFrom('alert_rules')
+      .select('organization_id')
+      .where('id', '=', alertRuleId)
+      .executeTakeFirst();
+    return row?.organization_id ?? null;
   }
 
   // ============================================================================
@@ -241,7 +267,14 @@ export class NotificationChannelsService {
   /**
    * Set channels for a sigma rule (replaces existing)
    */
-  async setSigmaRuleChannels(sigmaRuleId: string, channelIds: string[]): Promise<void> {
+  async setSigmaRuleChannels(
+    sigmaRuleId: string,
+    channelIds: string[],
+    organizationId: string
+  ): Promise<void> {
+    if (channelIds.length > 0 && !(await this.channelsBelongToOrg(channelIds, organizationId))) {
+      throw new Error('One or more channels do not belong to this organization');
+    }
     await db.transaction().execute(async (trx) => {
       await trx
         .deleteFrom('sigma_rule_channels')
@@ -265,8 +298,11 @@ export class NotificationChannelsService {
   /**
    * Get channels for a sigma rule
    */
-  async getSigmaRuleChannels(sigmaRuleId: string): Promise<NotificationChannel[]> {
-    const rows = await db
+  async getSigmaRuleChannels(
+    sigmaRuleId: string,
+    organizationId?: string
+  ): Promise<NotificationChannel[]> {
+    let query = db
       .selectFrom('sigma_rule_channels')
       .innerJoin(
         'notification_channels',
@@ -275,10 +311,26 @@ export class NotificationChannelsService {
       )
       .selectAll('notification_channels')
       .where('sigma_rule_channels.sigma_rule_id', '=', sigmaRuleId)
-      .where('notification_channels.enabled', '=', true)
-      .execute();
+      .where('notification_channels.enabled', '=', true);
+
+    // Optional org scoping: defense in depth for tenant-facing callers.
+    if (organizationId) {
+      query = query.where('notification_channels.organization_id', '=', organizationId);
+    }
+
+    const rows = await query.execute();
 
     return rows.map((r) => this.mapChannel(r));
+  }
+
+  /** Organization that owns a sigma rule, or null if the rule does not exist. */
+  async getSigmaRuleOrganizationId(sigmaRuleId: string): Promise<string | null> {
+    const row = await db
+      .selectFrom('sigma_rules')
+      .select('organization_id')
+      .where('id', '=', sigmaRuleId)
+      .executeTakeFirst();
+    return row?.organization_id ?? null;
   }
 
   // ============================================================================
@@ -288,7 +340,14 @@ export class NotificationChannelsService {
   /**
    * Set channels for a monitor (replaces existing)
    */
-  async setMonitorChannels(monitorId: string, channelIds: string[]): Promise<void> {
+  async setMonitorChannels(
+    monitorId: string,
+    channelIds: string[],
+    organizationId: string
+  ): Promise<void> {
+    if (channelIds.length > 0 && !(await this.channelsBelongToOrg(channelIds, organizationId))) {
+      throw new Error('One or more channels do not belong to this organization');
+    }
     await db.transaction().execute(async (trx) => {
       await trx
         .deleteFrom('monitor_channels')
@@ -429,6 +488,19 @@ export class NotificationChannelsService {
   /**
    * Set default channels for an event type in an organization
    */
+  /** True if every channel id belongs to the given organization. */
+  async channelsBelongToOrg(channelIds: string[], organizationId: string): Promise<boolean> {
+    const unique = [...new Set(channelIds)];
+    if (unique.length === 0) return true;
+    const rows = await db
+      .selectFrom('notification_channels')
+      .select('id')
+      .where('id', 'in', unique)
+      .where('organization_id', '=', organizationId)
+      .execute();
+    return rows.length === unique.length;
+  }
+
   async setOrganizationDefaults(
     organizationId: string,
     eventType: NotificationEventType,

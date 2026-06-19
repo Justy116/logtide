@@ -402,6 +402,26 @@ describe('PiiMaskingService', () => {
             expect(logs[0].message).toContain('[REDACTED_CC]');
         });
 
+        it('should mask a credit card in an otherwise pure-alphanumeric string', async () => {
+            // Regression: maskText used to early-exit on /^[a-zA-Z0-9 _]+$/ strings,
+            // leaving separator-less card numbers unmasked.
+            await service.createRule(organizationId, {
+                name: 'credit_card',
+                displayName: 'Credit Card',
+                patternType: 'builtin',
+                action: 'redact',
+                enabled: true,
+            });
+
+            const logs = [
+                { message: 'card 4111111111111111', service: 'svc', level: 'info' as const },
+            ];
+
+            await service.maskLogBatch(logs, organizationId, projectId);
+            expect(logs[0].message).not.toContain('4111111111111111');
+            expect(logs[0].message).toContain('[REDACTED_CC]');
+        });
+
         it('should mask SSN patterns', async () => {
             await service.createRule(organizationId, {
                 name: 'ssn',

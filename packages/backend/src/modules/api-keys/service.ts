@@ -170,6 +170,16 @@ export class ApiKeysService {
       return;
     }
     this.lastUsedWrites.set(keyId, now);
+    // Bound the debounce map: entries older than the debounce window no longer
+    // affect the decision, so prune them once the map grows large (otherwise it
+    // leaks one entry per distinct API key ever seen).
+    if (this.lastUsedWrites.size > 10_000) {
+      for (const [k, t] of this.lastUsedWrites) {
+        if (now - t >= ApiKeysService.LAST_USED_DEBOUNCE_MS) {
+          this.lastUsedWrites.delete(k);
+        }
+      }
+    }
     await db
       .updateTable('api_keys')
       .set({ last_used: new Date() })

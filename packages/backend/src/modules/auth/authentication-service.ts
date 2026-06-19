@@ -294,6 +294,15 @@ export class AuthenticationService {
         throw new Error('This account has been disabled');
       }
 
+      // Only auto-link to a pre-existing account when the provider asserts the
+      // email is verified. Otherwise an attacker could register at the IdP with a
+      // victim's (unverified) email and take over their existing account.
+      if (result.emailVerified !== true) {
+        throw new Error(
+          'Cannot link this identity to an existing account: the email address is not verified by the identity provider'
+        );
+      }
+
       // Link this external identity to the existing user
       await db
         .insertInto('user_identities')

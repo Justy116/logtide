@@ -470,6 +470,12 @@ export class OrganizationsService {
       throw new Error('Cannot demote yourself from owner. Transfer ownership first.');
     }
 
+    // Admins may only manage plain members and may not grant the admin role
+    // (creating peer admins is owner-only), consistent with removeMember.
+    if (currentUserMember.role === 'admin' && (targetMember.role !== 'member' || newRole !== 'member')) {
+      throw new Error('Admins can only manage member-level roles');
+    }
+
     await db
       .updateTable('organization_members')
       .set({ role: newRole })

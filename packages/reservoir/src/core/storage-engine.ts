@@ -141,6 +141,9 @@ export abstract class StorageEngine {
     to?: Date,
   ): Promise<ServiceDependencyResult>;
 
+  /** Distinct service names appearing in traces within the time range */
+  abstract getTraceServices(projectId: string, from?: Date, to?: Date): Promise<string[]>;
+
   /** Delete spans by time range */
   abstract deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult>;
 

@@ -133,12 +133,19 @@ export class CustomDashboardsService {
     return rows.map((r) => this.mapRow(r as unknown as DashboardRow));
   }
 
-  async getById(id: string, organizationId: string): Promise<CustomDashboard | null> {
+  async getById(
+    id: string,
+    organizationId: string,
+    userId: string
+  ): Promise<CustomDashboard | null> {
     const row = await db
       .selectFrom('custom_dashboards')
       .selectAll()
       .where('id', '=', id)
       .where('organization_id', '=', organizationId)
+      // Personal dashboards are visible only to their creator (shared ones to any
+      // org member), matching list().
+      .where((eb) => eb.or([eb('is_personal', '=', false), eb('created_by', '=', userId)]))
       .executeTakeFirst();
 
     return row ? this.mapRow(row as unknown as DashboardRow) : null;
@@ -168,6 +175,7 @@ export class CustomDashboardsService {
   async update(
     id: string,
     organizationId: string,
+    userId: string,
     input: UpdateDashboardInput
   ): Promise<CustomDashboard> {
     const updates: Record<string, unknown> = { updated_at: new Date() };
@@ -185,6 +193,8 @@ export class CustomDashboardsService {
       .set(updates)
       .where('id', '=', id)
       .where('organization_id', '=', organizationId)
+      // A personal dashboard can only be edited by its creator.
+      .where((eb) => eb.or([eb('is_personal', '=', false), eb('created_by', '=', userId)]))
       .returningAll()
       .executeTakeFirst();
 
@@ -244,13 +254,15 @@ export class CustomDashboardsService {
     return this.mapRow(updated as unknown as DashboardRow);
   }
 
-  async delete(id: string, organizationId: string): Promise<void> {
+  async delete(id: string, organizationId: string, userId: string): Promise<void> {
     // Refuse to delete the default dashboard - the UI would have nothing to fall back to.
+    // A personal dashboard can only be deleted by its creator.
     const existing = await db
       .selectFrom('custom_dashboards')
       .select(['is_default'])
       .where('id', '=', id)
       .where('organization_id', '=', organizationId)
+      .where((eb) => eb.or([eb('is_personal', '=', false), eb('created_by', '=', userId)]))
       .executeTakeFirst();
 
     if (!existing) {
@@ -264,6 +276,7 @@ export class CustomDashboardsService {
       .deleteFrom('custom_dashboards')
       .where('id', '=', id)
       .where('organization_id', '=', organizationId)
+      .where((eb) => eb.or([eb('is_personal', '=', false), eb('created_by', '=', userId)]))
       .execute();
   }
 
@@ -425,8 +438,8 @@ export class CustomDashboardsService {
 
   // ─── YAML import/export ─────────────────────────────────────────────────
 
-  async exportYaml(id: string, organizationId: string): Promise<string> {
-    const dashboard = await this.getById(id, organizationId);
+  async exportYaml(id: string, organizationId: string, userId: string): Promise<string> {
+    const dashboard = await this.getById(id, organizationId, userId);
     if (!dashboard) throw new Error('Dashboard not found');
 
     const exportable = {

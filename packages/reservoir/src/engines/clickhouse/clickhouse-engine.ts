@@ -195,6 +195,7 @@ export class ClickHouseEngine extends StorageEngine {
           metadata String DEFAULT '{}',
           trace_id Nullable(String) DEFAULT NULL,
           span_id Nullable(String) DEFAULT NULL,
+          session_id Nullable(String) DEFAULT NULL,
           created_at DateTime DEFAULT now()
         )
         ENGINE = MergeTree()
@@ -239,6 +240,19 @@ export class ClickHouseEngine extends StorageEngine {
       });
     } catch {
       // index may already exist
+    }
+
+    // session_id: the engine writes and filters on it, so existing installs that
+    // predate this column need it added. New tables already have it from CREATE.
+    try {
+      await this.runCommand({
+        query: `ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS session_id Nullable(String) DEFAULT NULL`,
+      });
+      await this.runCommand({
+        query: `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_session_id session_id TYPE bloom_filter(0.01) GRANULARITY 1`,
+      });
+    } catch {
+      // column/index may already exist
     }
 
     // Projection for fast service+level filtered queries
@@ -827,36 +841,35 @@ export class ClickHouseEngine extends StorageEngine {
   }
 
   async upsertTrace(trace: TraceRecord): Promise<void> {
-    // ReplacingMergeTree handles dedup by (project_id, trace_id) using updated_at
-    // We read the existing row, merge, and insert the merged version
+    // Recompute the trace summary directly from the spans table (the source of
+    // truth) instead of read-modify-writing the existing traces row. The old
+    // approach (SELECT existing -> existing.span_count + delta -> INSERT) lost
+    // concurrent increments under a race. Aggregating from spans is idempotent and
+    // race-free: spans are always inserted before the upsert, so whichever upsert
+    // runs last writes the correct totals. The ReplacingMergeTree then keeps that
+    // latest (correct) row. Falls back to the payload when no spans are present.
     const resultSet = await this.runQuery({
-      query: `SELECT trace_id, start_time, end_time, span_count, error
-              FROM traces FINAL
+      query: `SELECT count() AS span_count,
+                     min(start_time) AS start_time,
+                     max(end_time) AS end_time,
+                     max(status_code = 'ERROR') AS error
+              FROM spans
               WHERE trace_id = {traceId:String} AND project_id = {projectId:String}`,
       query_params: { traceId: trace.traceId, projectId: trace.projectId },
       format: 'JSONEachRow',
     });
-    const existing = (await resultSet.json<{
-      trace_id: string;
+    const agg = (await resultSet.json<{
+      span_count: number;
       start_time: string;
       end_time: string;
-      span_count: number;
       error: number;
     }>())[0];
 
-    let startTime = trace.startTime;
-    let endTime = trace.endTime;
-    let spanCount = trace.spanCount;
-    let error = trace.error;
-
-    if (existing) {
-      const existingStart = parseClickHouseTime(existing.start_time);
-      const existingEnd = parseClickHouseTime(existing.end_time);
-      startTime = trace.startTime < existingStart ? trace.startTime : existingStart;
-      endTime = trace.endTime > existingEnd ? trace.endTime : existingEnd;
-      spanCount = existing.span_count + trace.spanCount;
-      error = !!existing.error || trace.error;
-    }
+    const haveSpans = agg && Number(agg.span_count) > 0;
+    const startTime = haveSpans ? parseClickHouseTime(agg.start_time) : trace.startTime;
+    const endTime = haveSpans ? parseClickHouseTime(agg.end_time) : trace.endTime;
+    const spanCount = haveSpans ? Number(agg.span_count) : trace.spanCount;
+    const error = haveSpans ? !!agg.error : trace.error;
 
     const durationMs = endTime.getTime() - startTime.getTime();
 
@@ -1032,6 +1045,21 @@ export class ClickHouseEngine extends StorageEngine {
     });
     const rows = await resultSet.json<Record<string, unknown>>();
     return rows.length > 0 ? mapClickHouseRowToTraceRecord(rows[0]) : null;
+  }
+
+  async getTraceServices(projectId: string, from?: Date, to?: Date): Promise<string[]> {
+    const conditions = ['project_id = {p_pid:String}'];
+    const queryParams: Record<string, unknown> = { p_pid: projectId };
+    if (from) { conditions.push('start_time >= {p_from:DateTime64(3)}'); queryParams.p_from = toDateTime64(from); }
+    if (to) { conditions.push('start_time <= {p_to:DateTime64(3)}'); queryParams.p_to = toDateTime64(to); }
+
+    const resultSet = await this.runQuery({
+      query: `SELECT DISTINCT service_name FROM traces WHERE ${conditions.join(' AND ')} ORDER BY service_name`,
+      query_params: queryParams,
+      format: 'JSONEachRow',
+    });
+    const rows = await resultSet.json<{ service_name: string }>();
+    return rows.map((r) => r.service_name).filter((s) => s != null && s !== '');
   }
 
   async getServiceDependencies(
@@ -1731,6 +1759,10 @@ export class ClickHouseEngine extends StorageEngine {
       serviceFilter = ' AND service_name = {p_service:String}';
     }
 
+    // Aggregates come from the hourly rollup. The rollup has no last-value column,
+    // so the true latest value is computed separately from the raw metrics table
+    // via argMax(value, time) instead of mislabeling the average as the latest.
+    // DateTime64(3) params match the fractional-second values from toDateTime64.
     const sql = `
       SELECT
         metric_name,
@@ -1742,32 +1774,55 @@ export class ClickHouseEngine extends StorageEngine {
         max(max_value) AS mx
       FROM metrics_hourly_rollup
       WHERE project_id IN {p_pids:Array(String)}
-        AND bucket >= {p_from:DateTime}
-        AND bucket <= {p_to:DateTime}
+        AND bucket >= {p_from:DateTime64(3)}
+        AND bucket <= {p_to:DateTime64(3)}
         ${serviceFilter}
       GROUP BY metric_name, service_name
       ORDER BY service_name, metric_name
     `;
 
-    const result = await this.runQuery({
-      query: sql,
-      query_params: queryParams,
-      format: 'JSONEachRow',
-    });
+    const latestSql = `
+      SELECT metric_name, service_name, argMax(value, time) AS latest_val
+      FROM metrics
+      WHERE project_id IN {p_pids:Array(String)}
+        AND time >= {p_from:DateTime64(3)}
+        AND time <= {p_to:DateTime64(3)}
+        ${serviceFilter}
+      GROUP BY metric_name, service_name
+    `;
+
+    const [result, latestResult] = await Promise.all([
+      this.runQuery({ query: sql, query_params: queryParams, format: 'JSONEachRow' }),
+      this.runQuery({ query: latestSql, query_params: queryParams, format: 'JSONEachRow' }),
+    ]);
     const rows = await result.json<Record<string, unknown>>();
+    const latestRows = await latestResult.json<Record<string, unknown>>();
+
+    const latestMap = new Map<string, number>();
+    for (const lr of latestRows) {
+      latestMap.set(`${lr.metric_name as string}|${lr.service_name as string}`, Number(lr.latest_val));
+    }
 
     const serviceMap = new Map<string, MetricOverviewItem[]>();
+    // `Number(x) ?? 0` does not catch NaN (Number() returns NaN, not nullish), so
+    // coerce explicitly and fall back to 0 for non-finite values.
+    const safeNum = (v: unknown): number => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+
     for (const row of rows) {
       const serviceName = row.service_name as string;
+      const latestKey = `${row.metric_name as string}|${serviceName}`;
       const item: MetricOverviewItem = {
         metricName: row.metric_name as string,
         metricType: (row.mt as MetricType) || 'gauge',
         serviceName,
-        latestValue: Number(row.avg_val) ?? 0,
-        avgValue: Number(row.avg_val) ?? 0,
-        minValue: Number(row.mn) ?? 0,
-        maxValue: Number(row.mx) ?? 0,
-        pointCount: Number(row.total_points) ?? 0,
+        latestValue: latestMap.has(latestKey) ? safeNum(latestMap.get(latestKey)) : safeNum(row.avg_val),
+        avgValue: safeNum(row.avg_val),
+        minValue: safeNum(row.mn),
+        maxValue: safeNum(row.mx),
+        pointCount: safeNum(row.total_points),
       };
       if (!serviceMap.has(serviceName)) serviceMap.set(serviceName, []);
       serviceMap.get(serviceName)!.push(item);
@@ -1788,9 +1843,15 @@ function parseClickHouseTime(value: unknown): Date {
   const str = String(value);
   // ClickHouse DateTime64(3) can return as epoch seconds (number) or ISO string
   const num = Number(str);
-  if (!isNaN(num)) {
+  if (!isNaN(num) && str.trim() !== '') {
     // If it looks like epoch seconds (< year 10000), convert
     return num < 1e12 ? new Date(num * 1000) : new Date(num);
+  }
+  // A space-separated ClickHouse datetime like "2025-01-15 12:00:00.000" carries
+  // no timezone and would be parsed as LOCAL time by Date. Treat the zone-less
+  // form as UTC by normalizing it to an ISO string with a 'Z' suffix.
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(str)) {
+    return new Date(`${str.replace(' ', 'T')}Z`);
   }
   return new Date(str);
 }

@@ -64,7 +64,10 @@ export class BullMQQueueAdapter<T = unknown> implements IQueueAdapter<T>, ICronR
     const payload = attachContextToPayload(data);
     const bullJob = await (this.queue as any).add(jobName, payload, {
       delay: options?.delay,
-      attempts: options?.maxAttempts,
+      // Default to 3 attempts to match the graphile adapter. Without this BullMQ
+      // would default to 1 (no retries), so the same job retried differently
+      // depending on the configured queue backend.
+      attempts: options?.maxAttempts ?? 3,
       priority: options?.priority,
       jobId: options?.jobKey,
       repeat: options?.repeat,

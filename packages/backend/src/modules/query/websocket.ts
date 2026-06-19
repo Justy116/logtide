@@ -8,6 +8,7 @@ import {
   type LogSubscriber,
 } from '../streaming/index.js';
 import { randomUUID } from 'crypto';
+import { verifyProjectAccess } from '../auth/verify-project-access.js';
 
 /**
  * WebSocket routes for real-time log streaming.
@@ -20,7 +21,12 @@ import { randomUUID } from 'crypto';
  * Connection rate is implicitly limited by authentication requirements.
  */
 const websocketRoutes: FastifyPluginAsync = async (fastify) => {
-  fastify.get('/api/v1/logs/ws', { websocket: true }, async (socket, req: any) => {
+  fastify.get('/api/v1/logs/ws', {
+    websocket: true,
+    // Rate-limit the connection upgrade: the handler does a session lookup and a
+    // project-membership check (DB), so cap the connection attempt rate per client.
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (socket, req: any) => {
     const { projectId, service, level, hostname, token } = req.query as {
       projectId: string;
       service?: string | string[];
@@ -35,13 +41,21 @@ const websocketRoutes: FastifyPluginAsync = async (fastify) => {
       return;
     }
 
-    // Verify session token (reuse session validation logic)
+    if (!projectId) {
+      socket.close(1008, 'ProjectId required');
+      return;
+    }
+
+    // Verify session token (reuse session validation logic) and that the
+    // authenticated user actually has access to the requested project. The REST
+    // log/trace/metric routes all gate on verifyProjectAccess; without the same
+    // check here, any authenticated user could live-tail any project's logs by
+    // passing a foreign projectId (cross-tenant leak).
     try {
       const session = await db
         .selectFrom('sessions')
         .innerJoin('users', 'users.id', 'sessions.user_id')
-        .selectAll('users')
-        .select('sessions.expires_at')
+        .select(['users.id as userId', 'sessions.expires_at'])
         .where('sessions.token', '=', token)
         .executeTakeFirst();
 
@@ -49,14 +63,15 @@ const websocketRoutes: FastifyPluginAsync = async (fastify) => {
         socket.close(1008, 'Invalid or expired authentication token');
         return;
       }
+
+      const hasAccess = await verifyProjectAccess(projectId, session.userId);
+      if (!hasAccess) {
+        socket.close(1008, 'Access denied for the requested project');
+        return;
+      }
     } catch (error) {
       console.error('[WebSocket] Authentication error:', error);
       socket.close(1011, 'Internal Server Error');
-      return;
-    }
-
-    if (!projectId) {
-      socket.close(1008, 'ProjectId required');
       return;
     }
 

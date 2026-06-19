@@ -730,6 +730,37 @@ describe('metric_stat panel', () => {
     expect(r.unit).toBe('%');
   });
 
+  it('sums across all buckets for sum aggregation (no undercount)', async () => {
+    const now = new Date();
+    const spy = vi.spyOn(reservoir, 'aggregateMetrics').mockResolvedValueOnce({
+      metricName: 'requests',
+      metricType: 'counter',
+      timeseries: [
+        { bucket: new Date(now.getTime() - 3600_000), value: 100, labels: {} },
+        { bucket: new Date(now.getTime() - 1800_000), value: 40, labels: {} },
+      ],
+      executionTimeMs: 1,
+    } as Awaited<ReturnType<typeof reservoir.aggregateMetrics>>);
+
+    const r = (await fetchPanelData(
+      {
+        type: 'metric_stat',
+        title: 'Requests',
+        source: 'metrics',
+        projectId,
+        metricName: 'requests',
+        aggregation: 'sum',
+        timeRange: '24h',
+        serviceName: null,
+        unit: null,
+      },
+      ctx(),
+    )) as { value: number | null };
+
+    spy.mockRestore();
+    expect(r.value).toBe(140); // 100 + 40, not just the latest bucket
+  });
+
   it('tenancy: foreign projectId throws', async () => {
     await expect(
       fetchPanelData(

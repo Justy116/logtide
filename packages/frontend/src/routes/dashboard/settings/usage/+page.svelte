@@ -172,9 +172,12 @@
     return CAP_META[c.capability]?.unit === 'bytes' ? formatBytes(n) : formatCount(n);
   }
 
-  // null limit = unlimited, so no percentage. Capped at 999 to avoid runaway labels.
+  // Only a null limit means unlimited (no percentage). A limit of 0 is the
+  // opposite (fully restricted), so it must render as at/over limit, not unlimited.
+  // Capped at 999 to avoid runaway labels.
   function capPercent(c: CapabilityUsage): number | null {
-    if (c.limit === null || c.limit <= 0) return null;
+    if (c.limit === null) return null;
+    if (c.limit <= 0) return c.current > 0 ? 999 : 100;
     return Math.min(999, Math.round((c.current / c.limit) * 100));
   }
 

@@ -590,36 +590,20 @@ describe('TimescaleEngine', () => {
       ...overrides,
     });
 
-    it('inserts a new trace when none exists', async () => {
-      // First query: SELECT existing → empty
-      mockQuery.mockResolvedValueOnce({ rows: [] });
-      // Second query: INSERT
+    it('upserts a trace with a single atomic ON CONFLICT statement', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [] });
       await engine.connect();
 
       await engine.upsertTrace(makeTrace());
 
-      expect(mockQuery).toHaveBeenCalledTimes(2);
-      const selectSql = mockQuery.mock.calls[0][0] as string;
-      expect(selectSql).toContain('SELECT trace_id');
-      expect(selectSql).toContain('FROM public.traces');
-
-      const insertSql = mockQuery.mock.calls[1][0] as string;
-      expect(insertSql).toContain('INSERT INTO public.traces');
+      // A single statement now does the whole upsert (no read-modify-write).
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      const sql = mockQuery.mock.calls[0][0] as string;
+      expect(sql).toContain('INSERT INTO public.traces');
+      expect(sql).toContain('ON CONFLICT (trace_id, project_id) DO UPDATE');
     });
 
-    it('updates an existing trace merging times and span count', async () => {
-      // First query: SELECT existing
-      mockQuery.mockResolvedValueOnce({
-        rows: [{
-          trace_id: 'trace-1',
-          start_time: new Date('2024-01-01T00:00:01Z'),
-          end_time: new Date('2024-01-01T00:00:04Z'),
-          span_count: 2,
-          error: false,
-        }],
-      });
-      // Second query: UPDATE
+    it('merges times and span count in SQL, not via a prior read', async () => {
       mockQuery.mockResolvedValueOnce({ rows: [] });
       await engine.connect();
 
@@ -629,16 +613,19 @@ describe('TimescaleEngine', () => {
         spanCount: 1,
       }));
 
-      const updateSql = mockQuery.mock.calls[1][0] as string;
-      expect(updateSql).toContain('UPDATE public.traces');
+      // Only one query: no SELECT of the existing row.
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      const sql = mockQuery.mock.calls[0][0] as string;
+      // Time window widened and span_count accumulated atomically in SQL.
+      expect(sql).toContain('LEAST(public.traces.start_time, EXCLUDED.start_time)');
+      expect(sql).toContain('GREATEST(public.traces.end_time, EXCLUDED.end_time)');
+      expect(sql).toContain('public.traces.span_count + EXCLUDED.span_count');
 
-      const updateParams = mockQuery.mock.calls[1][1] as unknown[];
-      // start_time should be min (00:00:00)
-      expect((updateParams[0] as Date).toISOString()).toBe('2024-01-01T00:00:00.000Z');
-      // end_time should be max (00:00:05)
-      expect((updateParams[1] as Date).toISOString()).toBe('2024-01-01T00:00:05.000Z');
-      // span_count increment
-      expect(updateParams[3]).toBe(1);
+      // Params carry the raw new values; the merge is done by the DB.
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect((params[6] as Date).toISOString()).toBe('2024-01-01T00:00:00.000Z'); // start_time
+      expect((params[7] as Date).toISOString()).toBe('2024-01-01T00:00:05.000Z'); // end_time
+      expect(params[9]).toBe(1); // span_count
     });
   });
 

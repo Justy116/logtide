@@ -6,10 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.0.1] - 2026-06-19
+
+A security and correctness release from a comprehensive, multi-engine bug audit of the 1.0 line. The headline items are two cross-tenant data-exposure fixes that were live in 1.0.0, alongside a broad sweep of detection, ingestion, storage, alerting and frontend correctness fixes. No database migrations; this is a drop-in upgrade. The storage-layer fixes were validated against real ClickHouse and MongoDB (and TimescaleDB), and CI now runs the MongoDB reservoir integration suite.
+
+### Security
+- **Cross-tenant log exposure via the WebSocket live-tail** (`GET /api/v1/logs/ws`): the handler validated only the session token and then streamed whatever `projectId` the client passed, never checking project/organization membership, so any authenticated user could live-tail any project's logs by supplying its id. It now enforces the same `verifyProjectAccess` membership check as the REST query routes (regression test added). Was live on the 1.0.0 line
+- **Cross-tenant leak of notification-channel secrets**: `GET /notification-channels/alert-rules/:id` and `/sigma-rules/:id` returned the channel `config` verbatim (including webhook `auth` tokens/passwords) with no membership check. They now resolve the rule's organization, require membership, and scope the read to that org
+- **PII masking fail-open**: `maskText` skipped all content rules for pure-alphanumeric strings, so a separator-less credit-card number (e.g. `4111111111111111`) was stored unmasked. The all-alphanumeric early-exit is removed; only too-short strings are skipped
+- **OIDC account-takeover**: linking an external identity to an existing local account by email now requires the provider to assert the email is verified (`email_verified === true`), preventing takeover via an unverified IdP email; LDAP is treated as authoritative
+- **Cross-tenant `?projectId` / association gaps** closed: the correlation batch-identifiers endpoint now intersects the requested project with the caller's accessible projects (and requires read access); status-incident and scheduled-maintenance creation, organization-default channels, and alert/sigma/monitor channel associations now validate that the project/channels belong to the caller's organization
+- **Session invalidation**: disabling a user, resetting their password, and changing a user's admin role now invalidate the cached session (previously the cached profile stayed valid for up to the cache TTL); the frontend logout now revokes the server-side session token instead of only clearing local state
+- **Hardening**: emails are stored and compared case-insensitively across registration/login/profile-update; the global `CACHE_TTL` override no longer clamps semantic TTLs (sessions, OIDC state, settings); the webhook envelope id is validated as a UUID; SigmaHQ category sync matches on a directory boundary; OTLP trace/span ids of invalid length are rejected
 
 ### Fixed
-- **ClickHouse "Query with id = ... is already running" under concurrent queries** (#213 regression): the request-context propagation derived the ClickHouse `query_id` deterministically from `requestId + operation`, so two same-operation queries running concurrently within one request (common on dashboard and multi-query endpoints) reused the same id and ClickHouse rejected the second. The `query_id` now keeps the request id + operation as a readable prefix (correlation is also carried in the SQL `log_comment`) and appends a random suffix so every query gets a unique id. ClickHouse-only; Timescale (SQL comment) and MongoDB (`$comment`) were unaffected
+- **ClickHouse "Query with id = ... is already running" under concurrent queries** (#213 regression): the request-context propagation derived the ClickHouse `query_id` deterministically from `requestId + operation`, so two same-operation queries running concurrently within one request reused the same id and ClickHouse rejected the second. The `query_id` now keeps the request id + operation as a readable prefix (correlation is also carried in the SQL `log_comment`) and appends a random suffix so every query is unique. ClickHouse-only
+- **Sigma condition operator precedence**: `parseExpression` folded AND/OR strictly left-to-right, so `a or b and c` evaluated as `(a or b) and c`. AND now binds tighter than OR, matching the Sigma spec
+- **Infinite loop on ingestion**: a custom identifier pattern that can match the empty string (e.g. `\d*`) no longer hangs the worker (zero-width-match guard plus a forced global flag)
+- **Trace summary races**: `upsertTrace` is now race-free on TimescaleDB (single atomic `INSERT ... ON CONFLICT`) and ClickHouse (the summary is recomputed from the spans table instead of read-modify-write), so concurrent span batches no longer lose span counts
+- **ClickHouse**: added the missing `session_id` column (was written and filtered on but did not exist), parse zone-less datetimes as UTC, report the true latest value in the metrics overview (was the average) with NaN guards
+- **MongoDB**: `deleteMetricsByTimeRange` only deletes the matched metrics' exemplars (was all exemplars in the window); the metrics overview sorts before `$last`; metadata `distinct` no longer drops numeric/boolean values; `ingestReturning` returns the rows that did land on a partial bulk-write failure
+- **Rate-of-change alerts**: the baseline now applies the rule's metadata filters (previously only the current rate did, deflating the deviation ratio), and a `minBaselineValue` of 0 is honored instead of defaulting to 10
+- **Dashboards**: personal dashboards are scoped to their creator (no longer readable/editable by any org member); `metric_stat` sums across buckets for sum/count aggregations; top-error percentages are computed against the true total; the capability usage page renders a zero limit as fully restricted, not unlimited
+- **Pagination/counts**: admin organization/project search counts apply the search filter; correlation lookups report the true total; the ClickHouse trace error-rate uses a consistent denominator; `getTopServices` honors the `to` bound
+- **Live tail**: SSE polling bypasses the 60s query cache and guards against overlapping polls; the live-tail WebSocket URL works behind a reverse proxy; the traces and search live tails no longer corrupt pagination or index-keyed row state
+- **Infra/correctness**: BullMQ and graphile queue retry-attempt defaults are aligned; webhook deliveries can only be replayed from the terminal `dead` state (no double delivery); the audit flush buffer is bounded on persistent DB failure; alert-notification jobs are deduplicated by history id; admin org-role changes are restricted consistently with member removal; tenant-table updates in the log-pipeline and service-dependency queries are project-scoped
+
+### Changed
+- The reservoir storage abstraction gains `getTraceServices` (distinct trace services with no result cap) implemented on all three engines and used by the traces service, replacing the previous 10k-trace paging
+- CI now provisions a MongoDB service for the reservoir integration suite, so all three storage engines are exercised on every run
+
+### Notes
+- Deferred to a follow-up (#255): Sigma compound field modifiers (`field|base64|contains` chains) and a true service-map p95 (needs a mergeable t-digest sketch in the continuous aggregate)
 
 ## [1.0.0-beta] - 2026-06-16
 

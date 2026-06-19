@@ -67,6 +67,7 @@ export interface AuthenticationResult {
   success: boolean;
   providerUserId?: string; // External user identifier (OIDC sub, LDAP DN, email for local)
   email?: string;
+  emailVerified?: boolean; // Whether the provider asserts the email is verified (gates account linking)
   name?: string;
   metadata?: Record<string, unknown>; // Provider-specific data (claims, attributes)
   error?: string;

@@ -189,7 +189,8 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
 
     const dashboard = await customDashboardsService.getById(
       (request.params as { id: string }).id,
-      organizationId
+      organizationId,
+      request.user.id
     );
     if (!dashboard) {
       return reply.status(404).send({ error: 'Not found' });
@@ -211,6 +212,7 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
       const dashboard = await customDashboardsService.update(
         (request.params as { id: string }).id,
         organizationId,
+        request.user.id,
         body
       );
 
@@ -282,7 +284,7 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
     }
     try {
       const dashboardId = (request.params as { id: string }).id;
-      await customDashboardsService.delete(dashboardId, organizationId);
+      await customDashboardsService.delete(dashboardId, organizationId, request.user.id);
 
       await auditLogService.record({
         action: 'dashboard.deleted',
@@ -316,7 +318,8 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
     try {
       const yamlText = await customDashboardsService.exportYaml(
         (request.params as { id: string }).id,
-        organizationId
+        organizationId,
+        request.user.id
       );
       return reply
         .header('Content-Type', 'application/x-yaml')
@@ -344,7 +347,8 @@ export async function customDashboardsRoutes(fastify: FastifyInstance) {
 
       const dashboard = await customDashboardsService.getById(
         (request.params as { id: string }).id,
-        body.organizationId
+        body.organizationId,
+        request.user.id
       );
       if (!dashboard) {
         return reply.status(404).send({ error: 'Dashboard not found' });

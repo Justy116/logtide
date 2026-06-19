@@ -189,29 +189,10 @@ export class TracesService {
   async getServices(projectId: string, from?: Date): Promise<string[]> {
     const effectiveFrom = from || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-    // Query traces for distinct services - stays in Kysely for timescale,
-    // uses reservoir queryTraces for clickhouse
-    if (reservoir.getEngineType() === 'timescale') {
-      const result = await db
-        .selectFrom('traces')
-        .select('service_name')
-        .where('project_id', '=', projectId)
-        .where('start_time', '>=', effectiveFrom)
-        .groupBy('service_name')
-        .orderBy('service_name', 'asc')
-        .execute();
-      return result.map((r) => r.service_name);
-    }
-
-    // ClickHouse: query via reservoir
-    const result = await reservoir.queryTraces({
-      projectId,
-      from: effectiveFrom,
-      to: new Date(),
-      limit: 10000,
-    });
-    const serviceSet = new Set(result.traces.map((t: { serviceName: string }) => t.serviceName));
-    return Array.from(serviceSet).sort() as string[];
+    // Distinct service names straight from the storage engine (SELECT DISTINCT /
+    // collection.distinct), so no result cap can drop services - works on all engines.
+    const services = await reservoir.getTraceServices(projectId, effectiveFrom, new Date());
+    return [...services].sort();
   }
 
   async getServiceDependencies(projectId: string, from?: Date, to?: Date) {
@@ -338,6 +319,10 @@ export class TracesService {
         sql<number>`CASE WHEN SUM(span_count) > 0
           THEN SUM(COALESCE(duration_avg_ms, 0) * span_count) / SUM(span_count)
           ELSE 0 END`.as('avg_latency_ms'),
+        // APPROXIMATION: this is the max of the per-bucket p95s, not a true window
+        // p95 (the hourly/daily aggregate stores only a per-bucket p95, which is
+        // not mergeable). It is an upper-bound estimate; a true p95 would require a
+        // mergeable quantile sketch (t-digest) in the continuous aggregate.
         db.fn.max<number>('duration_p95_ms').as('p95_latency_ms'),
       ])
       .where('project_id', '=', projectId)
@@ -462,7 +447,10 @@ export class TracesService {
       avg_duration_ms: Math.round(avgDuration),
       max_duration_ms: maxDuration,
       error_count: errorCount,
-      error_rate: totalTraces > 0 ? errorCount / totalTraces : 0,
+      // errorCount/avg/spans are computed over the analyzed page, so the rate must
+      // use the same denominator (traces.length), not the full total_traces, which
+      // would deflate the rate whenever the result set exceeds the query cap.
+      error_rate: traces.length > 0 ? errorCount / traces.length : 0,
     };
   }
 }

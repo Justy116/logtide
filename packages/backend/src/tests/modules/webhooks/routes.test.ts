@@ -244,7 +244,9 @@ describe('Webhook Deliveries Routes', () => {
       expect(body.delivery.status).toBe('pending');
     });
 
-    it('should replay a failed delivery', async () => {
+    it('should return 409 when replaying a still-retrying (failed) delivery', async () => {
+      // A 'failed'/retrying delivery still has a delayed retry job enqueued, so
+      // replaying it would double-deliver. Only terminal 'dead' deliveries replay.
       const delivery = await webhookDeliveryService.createDelivery({
         organizationId: testOrganization.id,
         eventType: 'alert',
@@ -260,9 +262,7 @@ describe('Webhook Deliveries Routes', () => {
         headers: { Authorization: `Bearer ${authToken}` },
       });
 
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.payload);
-      expect(body.delivery.status).toBe('pending');
+      expect(response.statusCode).toBe(409);
     });
 
     it('should return 409 when delivery is already delivered', async () => {

@@ -311,6 +311,9 @@ export default async function correlationRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       // Explicit auth check (authPlugin handles auth, this ensures static analysis sees it)
       if (!requireAuth(request, reply)) return;
+      // This reads log data, so require full (read) access like the sibling read
+      // endpoints; a write-only API key must not be able to read identifiers.
+      if (!await requireFullAccess(request, reply)) return;
 
       const { logIds } = request.body;
       const { projectId } = request.query;
@@ -331,10 +334,14 @@ export default async function correlationRoutes(fastify: FastifyInstance) {
       }
 
       try {
-        // Determine which projects to search for these logs
+        // Determine which projects to search for these logs. A caller-supplied
+        // projectId must be intersected with the projects the user/API key can
+        // actually access, otherwise any authenticated caller could read another
+        // tenant's log identifiers by passing a foreign projectId.
+        const accessibleProjectIds = await getUserProjectIds(request as any);
         const searchProjectIds = projectId
-          ? [projectId]
-          : await getUserProjectIds(request as any);
+          ? accessibleProjectIds.filter((id) => id === projectId)
+          : accessibleProjectIds;
 
         if (searchProjectIds.length === 0) {
           return reply.status(403).send({
