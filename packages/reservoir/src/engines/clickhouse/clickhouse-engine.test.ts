@@ -90,6 +90,33 @@ describe('ClickHouseEngine (integration)', () => {
     });
   });
 
+  describe('initialize idempotency', () => {
+    // Regression: MATERIALIZE is not idempotent. initialize() runs on every process
+    // boot, so re-issuing ALTER TABLE ... MATERIALIZE each time queued a fresh
+    // full-table-rewrite mutation per boot and could pin ClickHouse at 100% CPU.
+    // Repeated initialize() must not queue any new MATERIALIZE mutation.
+    const countMaterializeMutations = async (table: string) => {
+      const resultSet = await client.query({
+        query: `SELECT count() AS c FROM system.mutations WHERE database = {db:String} AND table = {tbl:String} AND command LIKE '%MATERIALIZE%'`,
+        query_params: { db: TEST_CONFIG.database, tbl: table },
+        format: 'JSONEachRow',
+      });
+      const rows = (await resultSet.json()) as { c: string }[];
+      return Number(rows[0]?.c ?? 0);
+    };
+
+    it('does not queue new MATERIALIZE mutations on repeated initialize()', async () => {
+      const logsBefore = await countMaterializeMutations(TABLE_NAME);
+      const spansBefore = await countMaterializeMutations('spans');
+
+      await engine.initialize();
+      await engine.initialize();
+
+      expect(await countMaterializeMutations(TABLE_NAME)).toBe(logsBefore);
+      expect(await countMaterializeMutations('spans')).toBe(spansBefore);
+    });
+  });
+
   describe('ingest', () => {
     it('ingests a batch of logs', async () => {
       const logs = [makeLog(), makeLog({ service: 'worker', level: 'error' })];

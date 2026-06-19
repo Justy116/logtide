@@ -223,13 +223,18 @@ export class ClickHouseEngine extends StorageEngine {
 
     // Bloom filter on id - lets getByIds skip data granules that don't contain
     // any of the requested UUIDs without a full project scan.
+    // MATERIALIZE rewrites every existing part, so only run it the first time the
+    // index is created. Re-running it on each boot queues a full-table mutation
+    // that can pin ClickHouse at 100% CPU on large tables.
     try {
-      await this.runCommand({
-        query: `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_id id TYPE bloom_filter(0.01) GRANULARITY 1`,
-      });
-      await this.runCommand({
-        query: `ALTER TABLE ${t} MATERIALIZE INDEX idx_id`,
-      });
+      if (!(await this.chObjectExists('index', t, 'idx_id'))) {
+        await this.runCommand({
+          query: `ALTER TABLE ${t} ADD INDEX IF NOT EXISTS idx_id id TYPE bloom_filter(0.01) GRANULARITY 1`,
+        });
+        await this.runCommand({
+          query: `ALTER TABLE ${t} MATERIALIZE INDEX idx_id`,
+        });
+      }
     } catch {
       // index may already exist
     }
@@ -255,28 +260,36 @@ export class ClickHouseEngine extends StorageEngine {
       // column/index may already exist
     }
 
-    // Projection for fast service+level filtered queries
+    // Projection for fast service+level filtered queries.
+    // Gate the MATERIALIZE so the one-time backfill of existing parts runs only at
+    // creation, not on every boot (see idx_id note above).
     try {
-      await this.runCommand({
-        query: `ALTER TABLE ${t} ADD PROJECTION IF NOT EXISTS proj_service_time (SELECT * ORDER BY project_id, service, level, time)`,
-      });
-      await this.runCommand({
-        query: `ALTER TABLE ${t} MATERIALIZE PROJECTION proj_service_time`,
-      });
+      if (!(await this.chObjectExists('projection', t, 'proj_service_time'))) {
+        await this.runCommand({
+          query: `ALTER TABLE ${t} ADD PROJECTION IF NOT EXISTS proj_service_time (SELECT * ORDER BY project_id, service, level, time)`,
+        });
+        await this.runCommand({
+          query: `ALTER TABLE ${t} MATERIALIZE PROJECTION proj_service_time`,
+        });
+      }
     } catch {
       // projection may already exist
     }
 
     // Materialized column for hostname - extracted from metadata JSON once at ingest time.
     // Eliminates JSONExtractString() calls on every DISTINCT/filter query row.
-    // MATERIALIZE backfills existing data parts asynchronously during merges.
+    // Gate the explicit MATERIALIZE so the one-time backfill of existing parts runs
+    // only at creation; re-issuing it every boot queues a full-table rewrite mutation.
+    // New parts get the column at ingest regardless.
     try {
-      await this.runCommand({
-        query: `ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS hostname String MATERIALIZED JSONExtractString(metadata, 'hostname')`,
-      });
-      await this.runCommand({
-        query: `ALTER TABLE ${t} MATERIALIZE COLUMN hostname`,
-      });
+      if (!(await this.chObjectExists('column', t, 'hostname'))) {
+        await this.runCommand({
+          query: `ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS hostname String MATERIALIZED JSONExtractString(metadata, 'hostname')`,
+        });
+        await this.runCommand({
+          query: `ALTER TABLE ${t} MATERIALIZE COLUMN hostname`,
+        });
+      }
     } catch {
       // column may already exist
     }
@@ -323,14 +336,17 @@ export class ClickHouseEngine extends StorageEngine {
       });
     } catch { /* index may already exist */ }
 
-    // Projection for fast service_name filtered span queries
+    // Projection for fast service_name filtered span queries.
+    // One-time MATERIALIZE only (see idx_id note above).
     try {
-      await this.runCommand({
-        query: `ALTER TABLE spans ADD PROJECTION IF NOT EXISTS proj_service_time (SELECT * ORDER BY project_id, service_name, status_code, time)`,
-      });
-      await this.runCommand({
-        query: `ALTER TABLE spans MATERIALIZE PROJECTION proj_service_time`,
-      });
+      if (!(await this.chObjectExists('projection', 'spans', 'proj_service_time'))) {
+        await this.runCommand({
+          query: `ALTER TABLE spans ADD PROJECTION IF NOT EXISTS proj_service_time (SELECT * ORDER BY project_id, service_name, status_code, time)`,
+        });
+        await this.runCommand({
+          query: `ALTER TABLE spans MATERIALIZE PROJECTION proj_service_time`,
+        });
+      }
     } catch { /* projection may already exist */ }
 
     // Traces table (ReplacingMergeTree for upsert semantics)
@@ -743,6 +759,47 @@ export class ClickHouseEngine extends StorageEngine {
       throw new Error('Not connected. Call connect() first.');
     }
     return this.client;
+  }
+
+  /**
+   * Returns true when a data-skipping index, projection, or materialized column
+   * already exists on the given table.
+   *
+   * Gates the one-time MATERIALIZE backfills in initialize(): MATERIALIZE is NOT
+   * idempotent, so re-issuing it on every initialize() (which runs on each process
+   * boot) queues a fresh full-table-rewrite mutation each time and can pin
+   * ClickHouse at 100% CPU on large tables. We only want to MATERIALIZE the first
+   * time an object is created.
+   *
+   * On any introspection error we return true (assume it exists) so we never
+   * trigger a surprise full-table MATERIALIZE storm; worst case the optimization
+   * is not backfilled on pre-existing parts.
+   */
+  private async chObjectExists(
+    kind: 'index' | 'projection' | 'column',
+    table: string,
+    name: string,
+  ): Promise<boolean> {
+    const source =
+      kind === 'index'
+        ? 'system.data_skipping_indices'
+        : kind === 'projection'
+          ? 'system.projections'
+          : 'system.columns';
+    try {
+      const resultSet = await this.runQuery(
+        {
+          query: `SELECT count() AS c FROM ${source} WHERE database = {db:String} AND table = {tbl:String} AND name = {name:String}`,
+          query_params: { db: this.config.database, tbl: table, name },
+          format: 'JSONEachRow',
+        },
+        'schema-introspect',
+      );
+      const rows = (await resultSet.json()) as { c: string | number }[];
+      return rows.length > 0 && Number(rows[0].c) > 0;
+    } catch {
+      return true;
+    }
   }
 
   private async runCommand(args: Parameters<ClickHouseClient['command']>[0], op = 'cmd') {
