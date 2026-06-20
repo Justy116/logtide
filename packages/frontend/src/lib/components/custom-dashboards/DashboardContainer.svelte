@@ -131,11 +131,17 @@
     const colW = colWidthPx();
     const rowStride = ROW_HEIGHT_PX + ROW_GAP_PX;
 
-    // Convert pixel delta into "stored" 12-col units regardless of viewport.
-    // This way resizing on a tablet (6 visible cols) still updates the
-    // logical width in the canonical 12-col reference space.
-    const visibleDeltaCols = Math.round(dx / (colW + COL_GAP_PX));
-    const storedDeltaCols = Math.round((visibleDeltaCols / effectiveCols) * 12);
+    // Width resize only makes sense on the canonical 12-col desktop grid.
+    // Below 12 effective columns the visible->stored conversion snaps the
+    // logical width by whole rows (a single visible column maps to 12/effectiveCols
+    // stored units), which makes resizing erratic and unusable on tablet/mobile.
+    // In those breakpoints we keep the stored width unchanged and allow only
+    // height resizing.
+    let storedDeltaCols = 0;
+    if (effectiveCols >= 12) {
+      const visibleDeltaCols = Math.round(dx / (colW + COL_GAP_PX));
+      storedDeltaCols = visibleDeltaCols;
+    }
     const deltaRows = Math.round(dy / rowStride);
 
     const newW = Math.min(12, Math.max(resizeState.minW, resizeState.startW + storedDeltaCols));

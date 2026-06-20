@@ -42,18 +42,9 @@
 	import TestTube from '@lucide/svelte/icons/test-tube';
 	import Bell from '@lucide/svelte/icons/bell';
 
-	let channels = $state<NotificationChannel[]>([]);
-	let loading = $state(false);
-
-	let currentOrg = $state<{ id: string } | null>(null);
-	organizationStore.subscribe((state) => {
-		currentOrg = state.currentOrganization;
-	});
-
-	notificationChannelsStore.subscribe((state) => {
-		channels = state.channels;
-		loading = state.loading;
-	});
+	let currentOrg = $derived($organizationStore.currentOrganization);
+	let channels = $derived($notificationChannelsStore.channels);
+	let loading = $derived($notificationChannelsStore.loading);
 
 	// Load channels when org changes
 	$effect(() => {
@@ -119,7 +110,7 @@
 	}
 
 	function formatDate(dateStr: string): string {
-		return new Date(dateStr).toLocaleDateString();
+		return new Date(dateStr).toLocaleDateString('en-US');
 	}
 
 	function getConfigSummary(channel: NotificationChannel): string {

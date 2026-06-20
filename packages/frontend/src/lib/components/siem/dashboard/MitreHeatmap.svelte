@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import * as echarts from 'echarts';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import type { MitreHeatmapCell } from '$lib/api/siem';
@@ -64,8 +63,12 @@
 		return technique;
 	}
 
-	onMount(() => {
-		if (!chartContainer) return;
+	// Initialize the chart once the container element is available. The container
+	// is always rendered (the empty state is an overlay), so this runs even when
+	// data arrives after mount.
+	$effect(() => {
+		if (!chartContainer || chart) return;
+
 		chart = echarts.init(chartContainer);
 		updateChart();
 
@@ -83,6 +86,7 @@
 			resizeObserver.disconnect();
 			unsubscribe();
 			chart?.dispose();
+			chart = null;
 		};
 	});
 
@@ -228,13 +232,16 @@
 		</CardTitle>
 	</CardHeader>
 	<CardContent>
-		{#if !cells || cells.length === 0}
-			<div class="text-center py-8 text-muted-foreground">
-				<Grid3x3 class="w-8 h-8 mx-auto mb-2 opacity-50" />
-				<p class="text-sm">No MITRE data available</p>
-			</div>
-		{:else}
-			<div bind:this={chartContainer} class="h-[280px] w-full"></div>
-		{/if}
+		<div class="relative h-[280px] w-full">
+			<div bind:this={chartContainer} class="h-full w-full"></div>
+			{#if !cells || cells.length === 0}
+				<div
+					class="absolute inset-0 flex flex-col items-center justify-center text-center text-muted-foreground"
+				>
+					<Grid3x3 class="w-8 h-8 mx-auto mb-2 opacity-50" />
+					<p class="text-sm">No MITRE data available</p>
+				</div>
+			{/if}
+		</div>
 	</CardContent>
 </Card>

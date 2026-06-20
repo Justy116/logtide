@@ -56,7 +56,10 @@
 
 	const timeRangeOptions: PreviewRange[] = ["1d", "7d", "14d", "30d"];
 
+	let loadSeq = 0;
+
 	async function loadPreview() {
+		const requestId = ++loadSeq;
 		loading = true;
 		error = null;
 
@@ -71,12 +74,16 @@
 				previewRange: timeRange,
 			});
 
+			if (requestId !== loadSeq) return;
 			data = response.preview;
 		} catch (e) {
+			if (requestId !== loadSeq) return;
 			error = e instanceof Error ? e.message : "Failed to load preview";
 			toastStore.error(error);
 		} finally {
-			loading = false;
+			if (requestId === loadSeq) {
+				loading = false;
+			}
 		}
 	}
 

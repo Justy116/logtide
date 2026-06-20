@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import * as echarts from 'echarts';
 	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
 	import type { SeverityDistribution, Severity } from '$lib/api/siem';
@@ -103,7 +102,9 @@
 		};
 	}
 
-	onMount(() => {
+	$effect(() => {
+		if (!chartContainer) return;
+
 		chart = echarts.init(chartContainer);
 		chart.setOption(getChartOption());
 
@@ -121,6 +122,7 @@
 			resizeObserver.disconnect();
 			unsubscribe();
 			chart?.dispose();
+			chart = null;
 		};
 	});
 
