@@ -199,6 +199,11 @@
 
   let lastLoadedOrg = $state<string | null>(null);
 
+  // Request-sequence guard: each loadTraces() captures the current value and
+  // bails out after its await if a newer load has started in the meantime,
+  // so a slow earlier response cannot overwrite fresher results.
+  let loadTracesSeq = 0;
+
   onMount(() => {
     shortcutsStore.setScope('traces');
     shortcutsStore.register([
@@ -340,6 +345,7 @@
     }
 
     isLoading = true;
+    const seq = ++loadTracesSeq;
 
     try {
       const timeRange = getTimeRange();
@@ -359,27 +365,37 @@
         offset: offset,
       });
 
+      // A newer load started while this request was in flight: discard the
+      // stale response so it cannot overwrite fresher results.
+      if (seq !== loadTracesSeq) return;
+
       traces = response.traces;
       totalTraces = response.total;
 
       // Stats are auxiliary: a stats failure must not discard the loaded traces,
       // so fetch them in their own try/catch rather than the outer one.
       try {
-        stats = await tracesAPI.getStats(
+        const loadedStats = await tracesAPI.getStats(
           selectedProject,
           timeRange.from.toISOString(),
           timeRange.to.toISOString()
         );
+        if (seq === loadTracesSeq) {
+          stats = loadedStats;
+        }
       } catch (e) {
         console.error("Failed to load trace stats:", e);
       }
     } catch (e) {
+      if (seq !== loadTracesSeq) return;
       console.error("Failed to load traces:", e);
       toastStore.error('Failed to load traces');
       traces = [];
     } finally {
-      isLoading = false;
-      hasLoadedOnce = true;
+      if (seq === loadTracesSeq) {
+        isLoading = false;
+        hasLoadedOnce = true;
+      }
     }
   }
 
@@ -520,7 +536,10 @@
     const canvas = document.querySelector(
       ".service-map canvas",
     ) as HTMLCanvasElement | null;
-    if (!canvas) return;
+    if (!canvas) {
+      toastStore.error('Unable to export the service map image');
+      return;
+    }
     const link = document.createElement("a");
     link.download = `service-map-${selectedProject}-${Date.now()}.png`;
     link.href = canvas.toDataURL("image/png");
@@ -784,7 +803,7 @@
             <GitBranch class="w-5 h-5 text-muted-foreground" />
             <div>
               <p class="text-sm text-muted-foreground">Total Traces</p>
-              <p class="text-2xl font-bold">{stats.total_traces.toLocaleString()}</p>
+              <p class="text-2xl font-bold">{stats.total_traces.toLocaleString('en-US')}</p>
             </div>
           </div>
         </CardContent>
@@ -795,7 +814,7 @@
             <Layers class="w-5 h-5 text-muted-foreground" />
             <div>
               <p class="text-sm text-muted-foreground">Total Spans</p>
-              <p class="text-2xl font-bold">{stats.total_spans.toLocaleString()}</p>
+              <p class="text-2xl font-bold">{stats.total_spans.toLocaleString('en-US')}</p>
             </div>
           </div>
         </CardContent>
@@ -1188,7 +1207,7 @@
         <div class="flex items-center justify-between">
           <CardTitle>
             {#if totalTraces > 0}
-              {totalTraces.toLocaleString()}
+              {totalTraces.toLocaleString('en-US')}
               {totalTraces === 1 ? "trace" : "traces"}
             {:else}
               No traces
@@ -1339,10 +1358,10 @@
           {#if traces.length > 0}
             <div class="flex items-center justify-between mt-6 px-2">
               <div class="text-sm text-muted-foreground">
-                Showing {((currentPage - 1) * pageSize + 1).toLocaleString()} to {Math.min(
+                Showing {((currentPage - 1) * pageSize + 1).toLocaleString('en-US')} to {Math.min(
                   currentPage * pageSize,
                   totalTraces,
-                ).toLocaleString()} of {totalTraces.toLocaleString()} traces
+                ).toLocaleString('en-US')} of {totalTraces.toLocaleString('en-US')} traces
               </div>
               <div class="flex items-center gap-2">
                 <Button
@@ -1582,7 +1601,7 @@
                 <div class="p-3 rounded-lg bg-muted/50">
                   <p class="text-xs text-muted-foreground">Total Calls</p>
                   <p class="text-lg font-bold">
-                    {selectedNode.totalCalls.toLocaleString()}
+                    {selectedNode.totalCalls.toLocaleString('en-US')}
                   </p>
                 </div>
               </div>

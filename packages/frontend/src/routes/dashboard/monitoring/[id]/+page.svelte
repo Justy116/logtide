@@ -32,9 +32,31 @@
   const loading = $derived($monitorDetailLoading);
   const error = $derived($monitorDetailError);
 
+  // File-local request-sequence guard: each load captures a sequence value and
+  // the monitor id it was started for. When the user navigates quickly between
+  // monitors the in-flight Promise.all from the previous monitor can resolve
+  // after the new one started; bailing out here keeps a stale response from
+  // being treated as the current monitor's data.
+  let loadSeq = 0;
+
+  function loadDetail(id: string, organizationId: string) {
+    const seq = ++loadSeq;
+    monitoringStore.loadDetail(id, organizationId).then(() => {
+      if (seq !== loadSeq || page.params.id !== id) {
+        // A newer load has started; re-load the monitor that is now current so
+        // the rendered store state always matches the URL.
+        const current = $currentOrganization;
+        const currentId = page.params.id;
+        if (current && currentId && currentId !== id) {
+          loadDetail(currentId, current.id);
+        }
+      }
+    });
+  }
+
   $effect(() => {
     if (org && monitorId) {
-      monitoringStore.loadDetail(monitorId, org.id);
+      loadDetail(monitorId, org.id);
     }
     return () => monitoringStore.clearDetail();
   });
@@ -89,7 +111,7 @@
 
   function refresh() {
     if (org && monitorId) {
-      monitoringStore.loadDetail(monitorId, org.id);
+      loadDetail(monitorId, org.id);
     }
   }
 

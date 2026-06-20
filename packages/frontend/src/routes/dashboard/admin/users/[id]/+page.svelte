@@ -1,7 +1,11 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, untrack } from "svelte";
     import { page } from "$app/state";
+    import { goto } from "$app/navigation";
+    import { browser } from "$app/environment";
+    import { get } from "svelte/store";
     import { adminAPI, type UserDetails } from "$lib/api/admin";
+    import { UsersAPI } from "$lib/api/users";
     import { toastStore } from "$lib/stores/toast";
     import { Button, buttonVariants } from "$lib/components/ui/button";
     import { Badge } from "$lib/components/ui/badge";
@@ -59,7 +63,35 @@
     // Check if current user is looking at their own profile
     const isOwnProfile = $derived($authStore.user?.id === userId);
 
+    const usersAPI = new UsersAPI(() => get(authStore).token);
+
+    $effect(() => {
+        if (browser && $authStore.user) {
+            if ($authStore.user.is_admin === undefined) {
+                untrack(() => {
+                    usersAPI
+                        .getCurrentUser()
+                        .then(({ user: current }) => {
+                            const currentUser = get(authStore).user;
+                            if (currentUser) {
+                                authStore.updateUser({
+                                    ...currentUser,
+                                    ...current,
+                                });
+                                if (current.is_admin) loadUser();
+                            }
+                        })
+                        .catch(() => goto("/dashboard"));
+                });
+            } else if ($authStore.user.is_admin === false) {
+                untrack(() => goto("/dashboard"));
+            }
+        }
+    });
+
     async function loadUser() {
+        if ($authStore.user?.is_admin !== true) return;
+
         loading = true;
         error = "";
         try {
@@ -166,7 +198,7 @@
     }
 
     onMount(() => {
-        loadUser();
+        if ($authStore.user?.is_admin) loadUser();
     });
 </script>
 

@@ -107,10 +107,6 @@
 
 			const [trendData, logsData, apiKeysData] = await Promise.all(promises);
 
-			console.log('--- Debug Error Group Logs ---');
-			console.log('logsData.logs[0]', logsData.logs[0]);
-			console.log('apiKeysData', apiKeysData);
-
 			trend = trendData.trend;
 			logs = logsData.logs;
 			logsTotal = logsData.total;
@@ -139,7 +135,7 @@
 		if (!apiKeyId) return null;
 
 		const key = apiKeys.find((k) => k.id === apiKeyId);
-		return key ? key.name : apiKeyId.slice(0, 8);
+		return key ? key.name : 'Unknown key';
 	}
 
 	async function loadMoreLogs() {
@@ -203,14 +199,15 @@
 	function formatTimeAgo(dateStr: string | Date): string {
 		const date = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
 		const now = new Date();
-		const diffMs = now.getTime() - date.getTime();
+		const diffMs = Math.max(now.getTime() - date.getTime(), 0);
 		const diffMins = Math.floor(diffMs / 60000);
 		const diffHours = Math.floor(diffMs / 3600000);
 		const diffDays = Math.floor(diffMs / 86400000);
 
-		if (diffMins < 60) return `${diffMins} minutes ago`;
-		if (diffHours < 24) return `${diffHours} hours ago`;
-		return `${diffDays} days ago`;
+		if (diffMins < 1) return 'just now';
+		if (diffMins < 60) return `${diffMins} minute${diffMins === 1 ? '' : 's'} ago`;
+		if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
+		return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 	}
 
 	// Status options

@@ -23,6 +23,9 @@
 	// Cleanup SSE connection on component destroy
 	onDestroy(() => {
 		siemStore.stopRealtimeUpdates();
+		if (filterDebounceTimer) {
+			clearTimeout(filterDebounceTimer);
+		}
 	});
 
 	// State
@@ -34,6 +37,11 @@
 	let refreshing = $state(false);
 	let maxWidthClass = $state("max-w-7xl");
 	let containerPadding = $state("px-6 py-8");
+
+	// Guard against stale responses from concurrent loads
+	let loadSeq = 0;
+	// Debounce timer for text filter inputs
+	let filterDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 	$effect(() => {
 		const unsubscribe = layoutStore.maxWidthClass.subscribe((value) => {
@@ -89,6 +97,7 @@
 	async function loadIncidents() {
 		if (!$currentOrganization) return;
 
+		const seq = ++loadSeq;
 		loading = true;
 		error = '';
 
@@ -103,16 +112,22 @@
 				offset: (currentPage - 1) * pageSize,
 			});
 
+			// Ignore responses from superseded loads
+			if (seq !== loadSeq) return;
+
 			incidents = response.incidents;
 			totalIncidents = response.total;
 			hasMore = (currentPage - 1) * pageSize + response.incidents.length < response.total;
 			lastLoadedOrg = $currentOrganization.id;
 		} catch (e) {
+			if (seq !== loadSeq) return;
 			error = e instanceof Error ? e.message : 'Failed to load incidents';
 			toastStore.error(error);
 		} finally {
-			loading = false;
-			hasLoadedOnce = true;
+			if (seq === loadSeq) {
+				loading = false;
+				hasLoadedOnce = true;
+			}
 		}
 	}
 
@@ -137,18 +152,27 @@
 		loadIncidents();
 	}
 
+	function debounceFilterReload() {
+		if (filterDebounceTimer) {
+			clearTimeout(filterDebounceTimer);
+		}
+		filterDebounceTimer = setTimeout(() => {
+			filterDebounceTimer = null;
+			updateUrl();
+			loadIncidents();
+		}, 300);
+	}
+
 	function handleServiceChange(service: string) {
 		serviceFilter = service;
 		currentPage = 1;
-		updateUrl();
-		loadIncidents();
+		debounceFilterReload();
 	}
 
 	function handleTechniqueChange(technique: string) {
 		techniqueFilter = technique;
 		currentPage = 1;
-		updateUrl();
-		loadIncidents();
+		debounceFilterReload();
 	}
 
 	function handleResetFilters() {

@@ -173,6 +173,15 @@
     return { bg: 'bg-red-500/10 border-red-500/20', text: 'text-red-700 dark:text-red-400', dot: 'bg-red-500 shadow-red-500/50', label: 'Major system outage' };
   }
 
+  const WINDOW_BARS = 45;
+
+  function oldestBarLabel(history: UptimeBar[]): string {
+    const visible = history.slice(-WINDOW_BARS);
+    if (visible.length >= WINDOW_BARS) return `${WINDOW_BARS}d ago`;
+    if (visible.length === 0) return 'No data';
+    return new Date(visible[0].bucket).toLocaleDateString('en-US');
+  }
+
   function getMonitorTypeLabel(type: string): string {
     if (type === 'http') return 'HTTP';
     if (type === 'tcp') return 'TCP';
@@ -273,7 +282,7 @@
               <p class="text-xs text-muted-foreground mt-0.5">{m.description}</p>
             {/if}
             <p class="text-xs text-muted-foreground mt-1">
-              {new Date(m.scheduledStart).toLocaleString()} - {new Date(m.scheduledEnd).toLocaleString()}
+              {new Date(m.scheduledStart).toLocaleString('en-US')} - {new Date(m.scheduledEnd).toLocaleString('en-US')}
             </p>
           </div>
         {/each}
@@ -287,7 +296,7 @@
               <p class="text-xs text-muted-foreground mt-0.5">{m.description}</p>
             {/if}
             <p class="text-xs text-muted-foreground mt-1">
-              {new Date(m.scheduledStart).toLocaleString()} - {new Date(m.scheduledEnd).toLocaleString()}
+              {new Date(m.scheduledStart).toLocaleString('en-US')} - {new Date(m.scheduledEnd).toLocaleString('en-US')}
             </p>
           </div>
         {/each}
@@ -309,7 +318,7 @@
                   <div>
                     <div class="flex items-center gap-1.5">
                       <span class="text-xs font-medium uppercase text-muted-foreground">{update.status}</span>
-                      <span class="text-xs text-muted-foreground">{new Date(update.createdAt).toLocaleString()}</span>
+                      <span class="text-xs text-muted-foreground">{new Date(update.createdAt).toLocaleString('en-US')}</span>
                     </div>
                     <p class="text-xs">{update.message}</p>
                   </div>
@@ -336,19 +345,19 @@
           </div>
 
           <div class="flex items-center gap-[2px]">
-            {#each Array(Math.max(0, 45 - monitor.uptimeHistory.length)) as _}
-              <div class="bar-cell flex-1 min-w-[4px] sm:min-w-[6px] h-[22px] rounded-sm bg-muted">
-                <span class="bar-tooltip">No data</span>
+            {#each Array(Math.max(0, WINDOW_BARS - monitor.uptimeHistory.length)) as _}
+              <div class="bar-cell bar-empty flex-1 min-w-[4px] sm:min-w-[6px] h-[22px] rounded-sm">
+                <span class="bar-tooltip">No monitoring data</span>
               </div>
             {/each}
-            {#each monitor.uptimeHistory.slice(-45) as bucket}
+            {#each monitor.uptimeHistory.slice(-WINDOW_BARS) as bucket}
               <div class="bar-cell flex-1 min-w-[4px] sm:min-w-[6px] h-[22px] rounded-sm {barColor(bucket.uptimePct)} transition-colors hover:brightness-110">
-                <span class="bar-tooltip">{new Date(bucket.bucket).toLocaleDateString()}<br/>{pct(bucket.uptimePct).toFixed(1)}%</span>
+                <span class="bar-tooltip">{new Date(bucket.bucket).toLocaleDateString('en-US')}<br/>{pct(bucket.uptimePct).toFixed(1)}%</span>
               </div>
             {/each}
           </div>
           <div class="mt-1.5 flex justify-between text-[10px] text-muted-foreground">
-            <span>45d ago</span>
+            <span>{oldestBarLabel(monitor.uptimeHistory)}</span>
             <span>Now</span>
           </div>
         </div>
@@ -369,7 +378,7 @@
             <div class="rounded-lg border bg-card px-4 py-3">
               <div class="flex items-center justify-between mb-1">
                 <p class="text-sm font-medium">{incident.title}</p>
-                <span class="text-xs text-muted-foreground">{new Date(incident.resolvedAt ?? incident.createdAt).toLocaleDateString()}</span>
+                <span class="text-xs text-muted-foreground">{new Date(incident.resolvedAt ?? incident.createdAt).toLocaleDateString('en-US')}</span>
               </div>
               {#if incident.updates.length > 0}
                 <div class="space-y-1 border-l-2 border-muted pl-3 mt-2">
@@ -377,7 +386,7 @@
                     <div>
                       <div class="flex items-center gap-1.5">
                         <span class="text-xs font-medium uppercase text-muted-foreground">{update.status}</span>
-                        <span class="text-xs text-muted-foreground">{new Date(update.createdAt).toLocaleString()}</span>
+                        <span class="text-xs text-muted-foreground">{new Date(update.createdAt).toLocaleString('en-US')}</span>
                       </div>
                       <p class="text-xs text-muted-foreground">{update.message}</p>
                     </div>
@@ -391,7 +400,7 @@
     {/if}
 
     <div class="mt-8 text-center text-xs text-muted-foreground space-y-1.5">
-      <p>Last updated {new Date(data.lastUpdated).toLocaleString()}</p>
+      <p>Last updated {new Date(data.lastUpdated).toLocaleString('en-US')}</p>
       <p>
         Powered by
         <a href="https://logtide.dev" class="font-medium text-primary hover:underline underline-offset-2">LogTide</a>
@@ -404,6 +413,11 @@
   .bar-cell {
     position: relative;
     cursor: default;
+  }
+
+  .bar-empty {
+    background-color: hsl(var(--muted) / 0.4);
+    border: 1px dashed hsl(var(--border));
   }
 
   .bar-tooltip {

@@ -15,8 +15,56 @@
     import { cn } from "$lib/utils";
     import Footer from "$lib/components/Footer.svelte";
     import type { Snippet } from "svelte";
+    import { authStore } from "$lib/stores/auth";
+    import { UsersAPI } from "$lib/api/users";
+    import { goto } from "$app/navigation";
+    import { browser } from "$app/environment";
+    import { untrack } from "svelte";
+    import { get } from "svelte/store";
 
     let { children }: { children: Snippet } = $props();
+
+    // Centralized admin guard for the whole /dashboard/admin section.
+    // This layout resets the layout chain (the trailing "@"), so it does not
+    // inherit the dashboard auth guard; enforce authentication + is_admin here
+    // so individual admin pages cannot accidentally omit the check.
+    let adminResolved = $state(false);
+
+    const usersAPI = new UsersAPI(() => get(authStore).token);
+
+    $effect(() => {
+        if (!browser) return;
+
+        if (!$authStore.token) {
+            untrack(() => goto("/login"));
+            return;
+        }
+
+        if (!$authStore.user) return;
+
+        if ($authStore.user.is_admin === undefined) {
+            untrack(() => {
+                usersAPI
+                    .getCurrentUser()
+                    .then(({ user }) => {
+                        const currentUser = get(authStore).user;
+                        if (currentUser) {
+                            authStore.updateUser({ ...currentUser, ...user });
+                        }
+                        if (user.is_admin) {
+                            adminResolved = true;
+                        } else {
+                            goto("/dashboard");
+                        }
+                    })
+                    .catch(() => goto("/dashboard"));
+            });
+        } else if ($authStore.user.is_admin === false) {
+            untrack(() => goto("/dashboard"));
+        } else {
+            adminResolved = true;
+        }
+    });
 
     const navigation = [
         {
@@ -215,7 +263,9 @@
         </header>
 
         <main class="flex-1">
-            {@render children()}
+            {#if adminResolved}
+                {@render children()}
+            {/if}
         </main>
         <Footer />
     </div>
