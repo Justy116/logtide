@@ -63,7 +63,9 @@ export class AuthAPI {
     });
 
     if (!response.ok) {
-      const error: ErrorResponse = await response.json();
+      const error: ErrorResponse = await response
+        .json()
+        .catch(() => ({ error: response.statusText }));
       throw new Error(error.error || 'Registration failed');
     }
 
@@ -80,7 +82,9 @@ export class AuthAPI {
     });
 
     if (!response.ok) {
-      const error: ErrorResponse = await response.json();
+      const error: ErrorResponse = await response
+        .json()
+        .catch(() => ({ error: response.statusText }));
       throw new Error(error.error || 'Login failed');
     }
 
@@ -98,7 +102,9 @@ export class AuthAPI {
     });
 
     if (!response.ok) {
-      const error: ErrorResponse = await response.json();
+      const error: ErrorResponse = await response
+        .json()
+        .catch(() => ({ error: response.statusText }));
       throw new Error(error.error || 'Logout failed');
     }
   }
@@ -114,7 +120,9 @@ export class AuthAPI {
     });
 
     if (!response.ok) {
-      const error: ErrorResponse = await response.json();
+      const error: ErrorResponse = await response
+        .json()
+        .catch(() => ({ error: response.statusText }));
       throw new Error(error.error || 'Failed to get user info');
     }
 
@@ -145,7 +153,9 @@ export class AuthAPI {
     const response = await fetch(`${getApiBaseUrl()}/auth/providers`);
 
     if (!response.ok) {
-      const error: ErrorResponse = await response.json();
+      const error: ErrorResponse = await response
+        .json()
+        .catch(() => ({ error: response.statusText }));
       throw new Error(error.error || 'Failed to get auth providers');
     }
 
@@ -166,7 +176,9 @@ export class AuthAPI {
     );
 
     if (!response.ok) {
-      const error: ErrorResponse = await response.json();
+      const error: ErrorResponse = await response
+        .json()
+        .catch(() => ({ error: response.statusText }));
       throw new Error(error.error || 'Failed to get authorization URL');
     }
 
@@ -187,7 +199,9 @@ export class AuthAPI {
     });
 
     if (!response.ok) {
-      const error: ErrorResponse = await response.json();
+      const error: ErrorResponse = await response
+        .json()
+        .catch(() => ({ error: response.statusText }));
       throw new Error(error.error || 'Login failed');
     }
 
@@ -202,7 +216,9 @@ export class AuthAPI {
     });
 
     if (!response.ok) {
-      const error: ErrorResponse = await response.json();
+      const error: ErrorResponse = await response
+        .json()
+        .catch(() => ({ error: response.statusText }));
       throw new Error(error.error || 'Failed to get identities');
     }
 
@@ -218,7 +234,9 @@ export class AuthAPI {
     });
 
     if (!response.ok) {
-      const error: ErrorResponse = await response.json();
+      const error: ErrorResponse = await response
+        .json()
+        .catch(() => ({ error: response.statusText }));
       throw new Error(error.error || 'Failed to unlink identity');
     }
   }
