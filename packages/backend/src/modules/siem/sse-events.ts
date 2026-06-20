@@ -6,6 +6,7 @@ import { UsersService } from '../users/service.js';
 import { db } from '../../database/index.js';
 import { settingsService } from '../settings/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
+import { streamTicketService } from '../streaming/stream-ticket-service.js';
 
 const siemService = new SiemService(db);
 const organizationsService = new OrganizationsService();
@@ -43,11 +44,14 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
       schema: {
         querystring: {
           type: 'object',
-          required: ['organizationId', 'token'],
+          required: ['organizationId'],
           properties: {
             organizationId: { type: 'string', format: 'uuid' },
             projectId: { type: 'string', format: 'uuid' },
             incidentId: { type: 'string', format: 'uuid' },
+            // Either a single-use stream ticket (preferred) or a legacy session
+            // token must be provided; EventSource cannot send an auth header.
+            ticket: { type: 'string' },
             token: { type: 'string' },
           },
         },
@@ -59,7 +63,8 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
           organizationId: z.string().uuid(),
           projectId: z.string().uuid().optional(),
           incidentId: z.string().uuid().optional(),
-          token: z.string().min(1),
+          ticket: z.string().min(1).optional(),
+          token: z.string().min(1).optional(),
         });
 
         const query = schema.parse(request.query);
@@ -76,14 +81,27 @@ export async function registerSiemSseRoutes(fastify: FastifyInstance) {
               error: 'Auth-free mode enabled but default user not configured',
             });
           }
-        } else {
-          // Standard mode: validate session token
+        } else if (query.ticket) {
+          // Preferred: single-use stream ticket (keeps the session token out of the URL)
+          const userId = await streamTicketService.consumeTicket(query.ticket);
+          user = userId ? await usersService.getUserById(userId) : null;
+          if (!user) {
+            return reply.status(401).send({
+              error: 'Invalid or expired stream ticket',
+            });
+          }
+        } else if (query.token) {
+          // Legacy: validate session token from the query string
           user = await usersService.validateSession(query.token);
           if (!user) {
             return reply.status(401).send({
               error: 'Invalid or expired session token',
             });
           }
+        } else {
+          return reply.status(401).send({
+            error: 'A stream ticket or session token is required',
+          });
         }
 
         // Verify user is member of organization
