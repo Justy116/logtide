@@ -99,6 +99,7 @@
   let liveTailLimit = $state(100);
   let liveTailConnectionKey = $state<string | null>(null);
   let tracesEventSource: EventSource | null = null;
+  let liveTailSeq = 0;
 
   // Row expansion + keyboard nav
   let expandedTraceIds = $state<Set<string>>(new Set());
@@ -425,14 +426,22 @@
     liveTailConnectionKey = key;
   });
 
-  function startLiveTail() {
+  async function startLiveTail() {
     if (!selectedProject) return;
+    const seq = ++liveTailSeq;
     try {
-      const es = tracesAPI.createTracesEventSource({
+      const es = await tracesAPI.createTracesEventSource({
         projectId: selectedProject,
         service: selectedServices.length > 0 ? selectedServices : undefined,
         error: statusFilter === 'errors' ? true : statusFilter === 'ok' ? false : undefined,
       });
+
+      // A newer start/stop happened while the ticket request was in flight: drop
+      // this now-stale stream instead of leaking it.
+      if (seq !== liveTailSeq) {
+        es.close();
+        return;
+      }
 
       es.onmessage = (event) => {
         try {
@@ -468,6 +477,7 @@
   }
 
   function stopLiveTail() {
+    liveTailSeq++;
     if (tracesEventSource) {
       tracesEventSource.close();
       tracesEventSource = null;

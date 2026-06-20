@@ -694,12 +694,14 @@
   });
 
   let ws: WebSocket | null = null;
+  let liveTailSeq = 0;
 
-  function startLiveTail() {
+  async function startLiveTail() {
     if (selectedProjects.length !== 1) return; // Live tail only works with single project
 
+    const seq = ++liveTailSeq;
     try {
-      const socket = logsAPI.createLogsWebSocket({
+      const socket = await logsAPI.createLogsWebSocket({
         projectId: selectedProjects[0],
         service:
           selectedServices.length === 1 ? selectedServices[0] : undefined,
@@ -707,6 +709,13 @@
         hostname:
           selectedHostnames.length === 1 ? selectedHostnames[0] : undefined,
       });
+
+      // A newer start/stop happened while the ticket request was in flight: drop
+      // this now-stale socket instead of leaking it.
+      if (seq !== liveTailSeq) {
+        socket.close();
+        return;
+      }
 
       socket.onmessage = (event) => {
         try {
@@ -774,6 +783,7 @@
   }
 
   function stopLiveTail() {
+    liveTailSeq++;
     if (ws) {
       ws.close();
       ws = null;
