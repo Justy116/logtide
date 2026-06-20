@@ -56,3 +56,5 @@ claude.md
 /test-vector/
 /.env.prod
 /docs/superpowers/
+/FRONTEND-BUGS.md
+/BUGS.md
