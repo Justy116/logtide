@@ -5,8 +5,12 @@
   import { afterNavigate } from "$app/navigation";
   import { hub } from "@logtide/core";
   import { createBoundaryHandler } from "@logtide/sveltekit";
+  import { installAuthFetchInterceptor } from "$lib/api/fetch-interceptor";
 
   const onerror = createBoundaryHandler('RootLayout');
+
+  // Install the global 401 handler once, before any API request fires.
+  installAuthFetchInterceptor();
 
   // Track client-side navigations as page views
   afterNavigate(({ to, type }) => {

@@ -30,6 +30,7 @@
       "kysely": ">=0.28.17 <0.29",
       "ws": ">=8.20.1",
       "uuid": ">=14.0.0",
+      "undici": ">=7.28.0 <8",
       "@logtide/types": "0.7.0",
       "@logtide/browser": "0.7.0",
       "@logtide/core": "0.7.0"

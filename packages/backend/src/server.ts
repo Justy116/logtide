@@ -53,6 +53,7 @@ import internalLoggingPlugin from './plugins/internal-logging-plugin.js';
 import { initializeInternalLogging, shutdownInternalLogging } from './utils/internal-logger.js';
 import websocketPlugin from './plugins/websocket.js';
 import websocketRoutes from './modules/query/websocket.js';
+import streamTicketRoutes from './modules/streaming/stream-ticket-routes.js';
 import { enrichmentService } from './modules/siem/enrichment-service.js';
 import { validateStorageConfig } from './database/storage-config.js';
 import { shutdownReservoir } from './database/reservoir.js';
@@ -197,6 +198,7 @@ export async function build(opts = {}) {
 
   await fastify.register(authPlugin);
   await fastify.register(contextPlugin);
+  await fastify.register(streamTicketRoutes);
   await fastify.register(ingestionRoutes);
   await fastify.register(queryRoutes);
   await fastify.register(correlationRoutes, { prefix: '/api' });

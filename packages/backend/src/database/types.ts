@@ -106,6 +106,13 @@ export interface SessionsTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface StreamTicketsTable {
+  ticket: string;
+  user_id: string;
+  expires_at: Timestamp;
+  created_at: Generated<Timestamp>;
+}
+
 export interface OrganizationsTable {
   id: Generated<string>;
   name: string;
@@ -1116,6 +1123,7 @@ export interface Database {
   logs: LogsTable;
   users: UsersTable;
   sessions: SessionsTable;
+  stream_tickets: StreamTicketsTable;
   organizations: OrganizationsTable;
   organization_members: OrganizationMembersTable;
   organization_invitations: OrganizationInvitationsTable;

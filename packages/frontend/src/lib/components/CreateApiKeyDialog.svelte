@@ -37,8 +37,9 @@
 
   let dsn = $derived.by(() => {
     if (!generatedApiKey) return '';
-    const host = apiUrlValue.replace('https://', '').replace('http://', '');
-    return `https://${generatedApiKey}@${host}`;
+    const scheme = apiUrlValue.startsWith('http://') ? 'http' : 'https';
+    const host = apiUrlValue.replace(/^https?:\/\//, '');
+    return `${scheme}://${generatedApiKey}@${host}`;
   });
 
   function parseOrigins(raw: string): string[] | null {

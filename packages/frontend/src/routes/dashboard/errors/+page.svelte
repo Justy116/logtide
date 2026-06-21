@@ -50,6 +50,7 @@
 	let error = $state('');
 	let lastLoadedOrg = $state<string | null>(null);
 	let refreshing = $state(false);
+	let loadSeq = 0;
 
 	// Filters
 	let statusFilter = $state<ErrorGroupStatus | ''>('');
@@ -72,15 +73,22 @@
 		const statusParam = params.get('status');
 		const languageParam = params.get('language');
 		const searchParam = params.get('search');
+		const pageParam = params.get('page');
 
 		if (statusParam && ['open', 'resolved', 'ignored'].includes(statusParam)) {
 			statusFilter = statusParam as ErrorGroupStatus;
 		}
-		if (languageParam && ['nodejs', 'python', 'java', 'go', 'php', 'unknown'].includes(languageParam)) {
+		if (languageParam && ['nodejs', 'python', 'java', 'go', 'php', 'kotlin', 'csharp', 'rust', 'ruby', 'unknown'].includes(languageParam)) {
 			languageFilter = languageParam as ExceptionLanguage;
 		}
 		if (searchParam) {
 			searchQuery = searchParam;
+		}
+		if (pageParam) {
+			const parsedPage = Number.parseInt(pageParam, 10);
+			if (Number.isFinite(parsedPage) && parsedPage >= 1) {
+				currentPage = parsedPage;
+			}
 		}
 	});
 
@@ -89,6 +97,9 @@
 		if (!$currentOrganization) return;
 		if ($currentOrganization.id === lastLoadedOrg) return;
 
+		// Reset to the first page when switching organizations so the offset
+		// query stays within the new org's result range
+		currentPage = 1;
 		loadErrorGroups();
 		lastLoadedOrg = $currentOrganization.id;
 	});
@@ -96,6 +107,7 @@
 	async function loadErrorGroups() {
 		if (!$currentOrganization) return;
 
+		const seq = ++loadSeq;
 		loading = true;
 		error = '';
 
@@ -109,14 +121,26 @@
 				offset: (currentPage - 1) * pageSize,
 			});
 
+			// Ignore stale responses if a newer load has started
+			if (seq !== loadSeq) return;
+
 			groups = response.groups;
 			total = response.total;
+
+			// Clamp the current page if it now exceeds the available pages
+			const pages = Math.max(1, Math.ceil(total / pageSize));
+			if (currentPage > pages) {
+				currentPage = pages;
+			}
 		} catch (e) {
+			if (seq !== loadSeq) return;
 			error = e instanceof Error ? e.message : 'Failed to load error groups';
 			toastStore.error(error);
 		} finally {
-			loading = false;
-			hasLoadedOnce = true;
+			if (seq === loadSeq) {
+				loading = false;
+				hasLoadedOnce = true;
+			}
 		}
 	}
 
@@ -161,6 +185,7 @@
 		if (statusFilter) params.set('status', statusFilter);
 		if (languageFilter) params.set('language', languageFilter);
 		if (searchQuery) params.set('search', searchQuery);
+		if (currentPage > 1) params.set('page', String(currentPage));
 
 		const newUrl = params.toString() ? `?${params}` : '/dashboard/errors';
 		goto(newUrl, { replaceState: true, noScroll: true });
@@ -169,6 +194,7 @@
 	function goToPage(page: number) {
 		if (page >= 1 && page <= totalPages && page !== currentPage) {
 			currentPage = page;
+			updateUrl();
 			loadErrorGroups();
 		}
 	}
@@ -193,6 +219,10 @@
 		{ value: 'java', label: 'Java' },
 		{ value: 'go', label: 'Go' },
 		{ value: 'php', label: 'PHP' },
+		{ value: 'kotlin', label: 'Kotlin' },
+		{ value: 'csharp', label: 'C#' },
+		{ value: 'rust', label: 'Rust' },
+		{ value: 'ruby', label: 'Ruby' },
 		{ value: 'unknown', label: 'Unknown' },
 	];
 </script>

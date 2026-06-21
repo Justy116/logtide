@@ -296,15 +296,21 @@
     shortcutsStore.install();
 
     // First-time hint toast
+    let hintTimer: ReturnType<typeof setTimeout> | null = null;
     if (!shortcutsStore.hasShownHint()) {
       const mod = getPlatform().modSymbol;
-      setTimeout(() => {
+      // Mark as shown immediately so a fast unmount before the toast fires
+      // does not cause the hint to reappear on the next mount.
+      shortcutsStore.markHintShown();
+      hintTimer = setTimeout(() => {
         toastStore.info(`Pro tip: Press ${mod}+K to open command palette, or ? for shortcuts`, 8000);
-        shortcutsStore.markHintShown();
       }, 3000);
     }
 
-    return () => shortcutsStore.uninstall();
+    return () => {
+      if (hintTimer) clearTimeout(hintTimer);
+      shortcutsStore.uninstall();
+    };
   });
 </script>
 

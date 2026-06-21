@@ -347,6 +347,9 @@
 
   function handleMetricSelect(metricName: string) {
     metricsStore.selectMetric(metricName);
+    // Reset local label filter selectors to match the cleared store state
+    selectedLabelKey = null;
+    selectedLabelValue = null;
     if (!selectedProject) return;
 
     const { from, to } = getTimeRange();
@@ -564,7 +567,7 @@
 
   function formatBucketLabel(bucket: string): string {
     const d = new Date(bucket);
-    return d.toLocaleTimeString(undefined, {
+    return d.toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,

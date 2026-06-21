@@ -64,6 +64,10 @@ const initialState: DashboardStoreState = {
 function createDashboardStore() {
   const { subscribe, set, update } = writable<DashboardStoreState>(initialState);
 
+  // Monotonic guard so a stale in-flight fetch cannot write into a
+  // dashboard that has since been switched away from.
+  let panelFetchSeq = 0;
+
   function getState(): DashboardStoreState {
     return get({ subscribe });
   }
@@ -175,6 +179,9 @@ function createDashboardStore() {
       const dashboard = state.activeDashboard;
       if (!dashboard || dashboard.panels.length === 0) return;
 
+      const fetchSeq = ++panelFetchSeq;
+      const fetchedDashboardId = dashboard.id;
+
       // Mark all panels as loading
       update((s) => {
         const next: Record<string, PanelDataEntry> = { ...s.panelData };
@@ -196,6 +203,11 @@ function createDashboardStore() {
         );
         const now = Date.now();
         update((s) => {
+          // Ignore the response if a newer fetch started or the active
+          // dashboard changed while this request was in flight.
+          if (fetchSeq !== panelFetchSeq || s.activeDashboard?.id !== fetchedDashboardId) {
+            return s;
+          }
           const next: Record<string, PanelDataEntry> = { ...s.panelData };
           for (const [panelId, entry] of Object.entries(result.panels)) {
             next[panelId] = {
@@ -210,6 +222,9 @@ function createDashboardStore() {
       } catch (e) {
         const message = e instanceof Error ? e.message : 'Failed to load panel data';
         update((s) => {
+          if (fetchSeq !== panelFetchSeq || s.activeDashboard?.id !== fetchedDashboardId) {
+            return s;
+          }
           const next: Record<string, PanelDataEntry> = { ...s.panelData };
           for (const p of dashboard.panels) {
             next[p.id] = {

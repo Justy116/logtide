@@ -35,36 +35,44 @@ const websocketRoutes: FastifyPluginAsync = async (fastify) => {
       token?: string;
     };
 
-    // Verify authentication token
-    if (!token) {
-      socket.close(1008, 'Authentication token required');
-      return;
-    }
-
     if (!projectId) {
       socket.close(1008, 'ProjectId required');
       return;
     }
 
-    // Verify session token (reuse session validation logic) and that the
-    // authenticated user actually has access to the requested project. The REST
+    // The auth plugin runs onRequest for this upgrade and authenticates via the
+    // single-use stream ticket (?ticket=) or a legacy session token (?token=),
+    // attaching the user to the request. Prefer that. Fall back to validating a
+    // session token directly only if no user was attached. Either way, verify the
+    // authenticated user actually has access to the requested project: the REST
     // log/trace/metric routes all gate on verifyProjectAccess; without the same
     // check here, any authenticated user could live-tail any project's logs by
     // passing a foreign projectId (cross-tenant leak).
     try {
-      const session = await db
-        .selectFrom('sessions')
-        .innerJoin('users', 'users.id', 'sessions.user_id')
-        .select(['users.id as userId', 'sessions.expires_at'])
-        .where('sessions.token', '=', token)
-        .executeTakeFirst();
+      let userId: string | undefined = (req as any).user?.id;
 
-      if (!session || new Date(session.expires_at) < new Date()) {
-        socket.close(1008, 'Invalid or expired authentication token');
-        return;
+      if (!userId) {
+        if (!token) {
+          socket.close(1008, 'Authentication required');
+          return;
+        }
+
+        const session = await db
+          .selectFrom('sessions')
+          .innerJoin('users', 'users.id', 'sessions.user_id')
+          .select(['users.id as userId', 'sessions.expires_at'])
+          .where('sessions.token', '=', token)
+          .executeTakeFirst();
+
+        if (!session || new Date(session.expires_at) < new Date()) {
+          socket.close(1008, 'Invalid or expired authentication token');
+          return;
+        }
+
+        userId = session.userId;
       }
 
-      const hasAccess = await verifyProjectAccess(projectId, session.userId);
+      const hasAccess = await verifyProjectAccess(projectId, userId);
       if (!hasAccess) {
         socket.close(1008, 'Access denied for the requested project');
         return;

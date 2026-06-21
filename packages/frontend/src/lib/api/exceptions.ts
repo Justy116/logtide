@@ -50,8 +50,8 @@ export async function getExceptionByLogId(
   }
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to get exception');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `Failed to get exception (HTTP ${response.status})`);
   }
 
   return response.json();
@@ -75,8 +75,8 @@ export async function getExceptionById(
   }
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to get exception');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `Failed to get exception (HTTP ${response.status})`);
   }
 
   return response.json();
@@ -116,8 +116,8 @@ export async function getErrorGroups(
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to get error groups');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `Failed to get error groups (HTTP ${response.status})`);
   }
 
   return response.json();
@@ -147,8 +147,8 @@ export async function getTopErrorGroups(params: {
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to get top error groups');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `Failed to get top error groups (HTTP ${response.status})`);
   }
 
   return response.json();
@@ -172,8 +172,8 @@ export async function getErrorGroupById(
   }
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to get error group');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `Failed to get error group (HTTP ${response.status})`);
   }
 
   return response.json();
@@ -196,8 +196,8 @@ export async function updateErrorGroupStatus(
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to update error group status');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `Failed to update error group status (HTTP ${response.status})`);
   }
 
   return response.json();
@@ -231,8 +231,8 @@ export async function getErrorGroupTrend(params: {
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to get error group trend');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `Failed to get error group trend (HTTP ${response.status})`);
   }
 
   return response.json();
@@ -266,8 +266,8 @@ export async function getErrorGroupLogs(params: {
   );
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to get error group logs');
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `Failed to get error group logs (HTTP ${response.status})`);
   }
 
   return response.json();

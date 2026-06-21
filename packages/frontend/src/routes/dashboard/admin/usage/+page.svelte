@@ -1,5 +1,10 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
+    import { onMount, untrack } from 'svelte';
+    import { get } from 'svelte/store';
+    import { browser } from '$app/environment';
+    import { goto } from '$app/navigation';
+    import { authStore } from '$lib/stores/auth';
+    import { UsersAPI } from '$lib/api/users';
     import { adminAPI, type OrganizationBasic } from '$lib/api/admin';
     import { getUsage, getUsageBreakdown, getStorageUsage, type UsageRecord, type UsageBreakdown, type StorageUsageResponse } from '$lib/api/usage';
     import {
@@ -48,7 +53,36 @@
     let breakdown = $state<UsageBreakdown | null>(null);
     let storage = $state<StorageUsageResponse | null>(null);
 
-    onMount(async () => {
+    const usersAPI = new UsersAPI(() => get(authStore).token);
+
+    onMount(() => {
+        if ($authStore.user?.is_admin) loadOrgs();
+    });
+
+    $effect(() => {
+        if (browser && $authStore.user) {
+            if ($authStore.user.is_admin === undefined) {
+                untrack(() => {
+                    usersAPI
+                        .getCurrentUser()
+                        .then(({ user }) => {
+                            const currentUser = get(authStore).user;
+                            if (currentUser) {
+                                authStore.updateUser({ ...currentUser, ...user });
+                                if (user.is_admin) loadOrgs();
+                            }
+                        })
+                        .catch(() => goto('/dashboard'));
+                });
+            } else if ($authStore.user.is_admin === false) {
+                untrack(() => goto('/dashboard'));
+            }
+        }
+    });
+
+    async function loadOrgs() {
+        if ($authStore.user?.is_admin !== true) return;
+
         orgsLoading = true;
         orgsError = '';
         try {
@@ -62,7 +96,7 @@
         } finally {
             orgsLoading = false;
         }
-    });
+    }
 
     $effect(() => {
         if (selectedOrgId) {
@@ -129,12 +163,12 @@
     function formatCount(n: number): string {
         if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
         if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-        return n.toLocaleString();
+        return n.toLocaleString('en-US');
     }
 
     function formatDate(iso: string): string {
         if (!iso) return '';
-        return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     }
 
     function formatTypeQty(type: string, qty: number): string {
@@ -263,7 +297,7 @@
                     {#if loading}
                         <Spinner size="sm" />
                     {:else}
-                        <div class="text-2xl font-bold">{storage ? formatBytes(storage.current) : '—'}</div>
+                        <div class="text-2xl font-bold">{storage ? formatBytes(storage.current) : '-'}</div>
                         <p class="text-xs text-muted-foreground mt-1">
                             Logical bytes within retention · daily snapshot
                         </p>

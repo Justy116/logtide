@@ -24,6 +24,13 @@
       const expires = page.url.searchParams.get('expires');
       const isNewUser = page.url.searchParams.get('new_user') === 'true';
 
+      // Scrub the token (and other sensitive params) from the URL/history
+      // immediately so it never leaks into browser history, the referrer, or
+      // any pageview logging that captures window.location.href.
+      if (typeof history !== 'undefined') {
+        history.replaceState(null, '', '/auth/callback');
+      }
+
       if (!token) {
         error = 'No authentication token received. Please try logging in again.';
         loading = false;

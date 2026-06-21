@@ -39,15 +39,21 @@ const initialState: MonitoringState = {
 function createMonitoringStore() {
   const { subscribe, set, update } = writable<MonitoringState>(initialState);
 
+  let loadSeq = 0;
+  let detailSeq = 0;
+
   return {
     subscribe,
 
     async load(organizationId: string, projectId?: string): Promise<void> {
+      const seq = ++loadSeq;
       update((s) => ({ ...s, loading: true, error: null }));
       try {
         const { monitors } = await listMonitors(organizationId, projectId);
+        if (seq !== loadSeq) return;
         update((s) => ({ ...s, monitors, loading: false }));
       } catch (err) {
+        if (seq !== loadSeq) return;
         update((s) => ({
           ...s,
           loading: false,
@@ -57,6 +63,7 @@ function createMonitoringStore() {
     },
 
     async loadDetail(id: string, organizationId: string): Promise<void> {
+      const seq = ++detailSeq;
       update((s) => ({ ...s, detailLoading: true, detailError: null }));
       try {
         const [monitorRes, resultsRes, uptimeRes] = await Promise.all([
@@ -64,6 +71,7 @@ function createMonitoringStore() {
           getMonitorResults(id, organizationId, 100),
           getMonitorUptime(id, organizationId, 90),
         ]);
+        if (seq !== detailSeq) return;
         update((s) => ({
           ...s,
           selectedMonitor: monitorRes.monitor,
@@ -72,6 +80,7 @@ function createMonitoringStore() {
           detailLoading: false,
         }));
       } catch (err) {
+        if (seq !== detailSeq) return;
         update((s) => ({
           ...s,
           detailLoading: false,

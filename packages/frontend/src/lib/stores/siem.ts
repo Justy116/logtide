@@ -9,6 +9,7 @@ import {
 } from '$lib/api/siem';
 import { getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
+import { requestStreamTicket } from '$lib/api/stream-tickets';
 
 // ============================================================================
 // TYPES
@@ -187,7 +188,7 @@ function createSiemStore() {
 		// Real-time Methods (SSE)
 		// ========================================
 
-		startRealtimeUpdates(organizationId: string, incidentId?: string): void {
+		async startRealtimeUpdates(organizationId: string, incidentId?: string): Promise<void> {
 			const currentState = get({ subscribe });
 
 			// Close existing connection
@@ -203,8 +204,19 @@ function createSiemStore() {
 				params.append('incidentId', incidentId);
 			}
 
+			// Use a short-lived single-use ticket instead of the session token so the
+			// token never appears in the SSE URL (and thus in proxy/server logs).
+			let ticket: string;
+			try {
+				ticket = await requestStreamTicket(token);
+			} catch (error) {
+				console.error('Failed to obtain SIEM stream ticket:', error);
+				return;
+			}
+			params.append('ticket', ticket);
+
 			const eventSource = new EventSource(
-				`${getApiUrl()}/api/v1/siem/events?${params.toString()}&token=${token}`
+				`${getApiUrl()}/api/v1/siem/events?${params.toString()}`
 			);
 
 			eventSource.onmessage = (event) => {

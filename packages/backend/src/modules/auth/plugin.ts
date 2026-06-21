@@ -5,6 +5,7 @@ import { apiKeysService } from '../api-keys/service.js';
 import { usersService } from '../users/service.js';
 import { settingsService } from '../settings/service.js';
 import { bootstrapService } from '../bootstrap/service.js';
+import { streamTicketService } from '../streaming/stream-ticket-service.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -94,6 +95,33 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
     const apiKey = request.headers['x-api-key'] as string;
     const authHeader = request.headers['authorization'] as string;
     const tokenParam = (request.query as any)?.token as string | undefined;
+    const ticketParam = (request.query as any)?.ticket as string | undefined;
+
+    // 0. Try a single-use stream ticket first (for WebSocket/SSE - the browser
+    // cannot send headers, and this avoids putting the session token in the URL).
+    if (ticketParam) {
+      const userId = await streamTicketService.consumeTicket(ticketParam);
+      if (!userId) {
+        reply.code(401).send({
+          error: 'Unauthorized',
+          message: 'Invalid or expired stream ticket',
+        });
+        return;
+      }
+
+      const user = await usersService.getUserById(userId);
+      if (!user) {
+        reply.code(401).send({
+          error: 'Unauthorized',
+          message: 'Invalid or expired stream ticket',
+        });
+        return;
+      }
+
+      request.authenticated = true;
+      (request as any).user = user;
+      return;
+    }
 
     // 1. Try token from query param first (for SSE - EventSource can't send headers)
     if (tokenParam) {

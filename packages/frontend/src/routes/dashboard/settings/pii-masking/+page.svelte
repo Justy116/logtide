@@ -182,6 +182,18 @@
           return;
         }
 
+        if (formPatternType === 'custom' && !formRegexPattern.trim()) {
+          toastStore.error('Please provide a regex pattern for a custom rule');
+          saving = false;
+          return;
+        }
+
+        if (formPatternType === 'field_name' && fieldNames.length === 0) {
+          toastStore.error('Please provide at least one field name');
+          saving = false;
+          return;
+        }
+
         await piiMaskingAPI.createRule({
           name: formName,
           displayName: formDisplayName,
