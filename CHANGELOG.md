@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.0.2] - 2026-06-22
+
+A frontend correctness and security release from a comprehensive multi-agent frontend bug hunt (UI, logic, reactivity, leaks and security), plus a hardening of how the browser authenticates the live-streaming endpoints. The headline item is single-use stream tickets: the session token no longer travels in WebSocket/SSE URLs (where reverse proxies log it). One additive database migration (`049_stream_tickets`); otherwise a drop-in upgrade.
+
+### Security
+- **Session token no longer placed in WebSocket/SSE URLs**: browser `WebSocket` and `EventSource` cannot send an `Authorization` header, so the log live-tail (`/api/v1/logs/ws`), the SIEM events stream (`/api/v1/siem/events`) and the trace live-tail (`/api/v1/traces/stream`) previously carried the long-lived session token in the URL query string, where it is logged by proxies and servers. The client now mints a short-lived, single-use **stream ticket** via an authenticated `POST /api/v1/stream-tickets` and passes that ticket instead. Tickets live in the relational database (not Redis, so the mechanism is portable across the BullMQ and graphile queue backends), expire in 30s and are consumed on first use. The legacy `?token=` path still works for backward compatibility
+- **Webhook channel secrets no longer rehydrated into the DOM**: editing a notification channel no longer pre-fills the bearer token / basic-auth password inputs with the stored secret; the fields stay empty with a "leave blank to keep current" hint and are only sent when the user types a new value
+- **OIDC callback strips the session token from the URL** after reading it, so it no longer lingers in browser history, the referrer or logs
+- **Admin pages enforce a client-side admin guard**: several admin views (user detail, usage, organization detail) loaded and could mutate data on mount without checking the admin role; they now redirect non-admins, and the admin section layout has a guard of its own
+- **Removed a debug `console.log`** that leaked log message content and api-key metadata to the browser console on the error-detail page
+
+### Added
+- **Global 401 handler**: a single fetch interceptor installed at app startup clears local auth state and redirects to the login page (preserving the current path so the user lands back there after signing in) on any authenticated `/api/v1` 401 that is not an auth endpoint. Previously a revoked or expired session was only detected on a full dashboard remount, so a logged-out user could keep clicking around getting silent failures
+- **`POST /api/v1/stream-tickets`** endpoint and `stream_tickets` table (migration 049) backing the stream-ticket auth described above
+
+### Fixed
+- **Stale-response races**: overlapping loads triggered by fast filter/pagination changes could let an older in-flight response overwrite fresher results. Added local request-sequence guards on the log search, traces list, error groups, SIEM incidents, monitor detail/list, custom-dashboard panels and alert-preview views
+- **API client error handling**: error-branch `response.json()` calls are guarded so a non-JSON error body (reverse-proxy 502/HTML, empty `204`) no longer throws a `SyntaxError` that masks the real HTTP failure (auth, admin and exceptions clients)
+- **Locale-stable formatting**: user-facing dates and numbers now use explicit `en-US` formatting across the status pages, members, project settings, traces, metrics, search and notification-channel views; alert-history timestamps no longer label UTC values as if they were local time
+- **Lifecycle and memory leaks**: component store subscriptions are auto-managed, a first-run shortcut-hint `setTimeout` is cleared on unmount, and chart instances are disposed, so navigating away no longer leaves timers, listeners or subscriptions behind
+- **Svelte 5 reactivity and assorted UI fixes**: the trace detail page reloads when navigating between traces; the api-key DSN preserves an `http://` scheme for non-TLS deployments; the "View Error Group" action navigates with a param the target page actually reads; SigmaSync no longer crashes when a commit hash is absent; the toaster follows the app theme; the delete-organization confirm is disabled while in flight; PII masking rules require a regex or field names; numeric monitor inputs guard against `NaN`; and the audit-log resource cell no longer renders a literal escape sequence
+- **ClickHouse**: materialized-view backfills now run once instead of on every startup
+
+### Notes
+- Left intentionally unchanged: storing the session token in `localStorage` (a disputed, low-severity finding). Moving it to an httpOnly cookie would trade XSS token-theft for CSRF surface and a full auth-model overhaul without a clear net win; the high-leverage XSS defenses (CSP, output sanitization, auditing the few `{@html}` sites) are tracked separately
+
 ## [1.0.1] - 2026-06-19
 
 A security and correctness release from a comprehensive, multi-engine bug audit of the 1.0 line. The headline items are two cross-tenant data-exposure fixes that were live in 1.0.0, alongside a broad sweep of detection, ingestion, storage, alerting and frontend correctness fixes. No database migrations; this is a drop-in upgrade. The storage-layer fixes were validated against real ClickHouse and MongoDB (and TimescaleDB), and CI now runs the MongoDB reservoir integration suite.

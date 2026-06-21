@@ -109,9 +109,10 @@ function createNotificationChannelsStore() {
 
       try {
         const defaults = await notificationChannelsAPI.getDefaults(organizationId);
-        update((s) => ({ ...s, defaults, defaultsLoading: false }));
+        update((s) => ({ ...s, defaults, defaultsLoading: false, error: null }));
       } catch (error) {
-        update((s) => ({ ...s, defaultsLoading: false }));
+        const errorMessage = error instanceof Error ? error.message : 'Failed to load defaults';
+        update((s) => ({ ...s, defaultsLoading: false, error: errorMessage }));
       }
     },
 

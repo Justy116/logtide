@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
+import { requestStreamTicket } from './stream-tickets';
 
 export interface TraceRecord {
   trace_id: string;
@@ -227,11 +228,11 @@ export class TracesAPI {
    * the traces query (projectId, service, error). Returns an EventSource the
    * caller is responsible for closing.
    */
-  createTracesEventSource(filters: {
+  async createTracesEventSource(filters: {
     projectId: string;
     service?: string | string[];
     error?: boolean;
-  }): EventSource {
+  }): Promise<EventSource> {
     const params = new URLSearchParams();
     params.append('projectId', filters.projectId);
     if (filters.service) {
@@ -239,8 +240,10 @@ export class TracesAPI {
       if (services.length > 0) params.append('service', services.join(','));
     }
     if (filters.error !== undefined) params.append('error', String(filters.error));
-    const token = this.getToken();
-    if (token) params.append('token', token);
+    // Use a short-lived single-use ticket instead of the session token so the
+    // token never appears in the SSE URL (and thus in proxy/server logs).
+    const ticket = await requestStreamTicket(this.getToken());
+    params.append('ticket', ticket);
     const url = `${getApiBaseUrl()}/traces/stream?${params.toString()}`;
     return new EventSource(url, { withCredentials: true });
   }

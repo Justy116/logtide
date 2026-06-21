@@ -20,7 +20,16 @@
 
   // Get redirect URL and error from query params
   let redirectUrl = $derived(page.url.searchParams.get('redirect'));
-  let urlError = $derived(page.url.searchParams.get('error'));
+  // Sanitize the reflected error param to limit content-spoofing on this trusted
+  // page: strip control characters and cap the length while preserving the short
+  // provider error descriptions the backend legitimately forwards here.
+  function sanitizeErrorParam(value: string | null): string {
+    if (!value) return '';
+    // eslint-disable-next-line no-control-regex
+    const cleaned = value.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim();
+    return cleaned.length > 200 ? `${cleaned.slice(0, 200)}...` : cleaned;
+  }
+  let urlError = $derived(sanitizeErrorParam(page.url.searchParams.get('error')));
 
   // Login mode: 'select' (provider selection), 'local' (email/password), 'ldap' (LDAP form)
   type LoginMode = 'select' | 'local' | 'ldap';

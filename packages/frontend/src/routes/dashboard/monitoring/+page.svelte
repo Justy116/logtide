@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { currentOrganization } from '$lib/stores/organization';
   import { monitoringStore, monitors, monitorsLoading, monitorsError } from '$lib/stores/monitoring';
@@ -72,14 +72,21 @@
   let serviceSearchOpen = $state(false);
 
   $effect(() => {
+    const orgId = org?.id;
+    if (!orgId) return;
+    projectsAPI.getProjects(orgId).then((res) => {
+      projects = res.projects;
+      if (!untrack(() => projectId) && res.projects.length > 0) {
+        projectId = res.projects[0].id;
+      }
+    }).catch((err) => {
+      toastStore.error(err instanceof Error ? err.message : 'Failed to load projects');
+    });
+  });
+
+  $effect(() => {
     if (org) {
       monitoringStore.load(org.id, projectId);
-      projectsAPI.getProjects(org.id).then((res) => {
-        projects = res.projects;
-        if (!projectId && res.projects.length > 0) {
-          projectId = res.projects[0].id;
-        }
-      }).catch(() => {});
       if (projectId) {
         loadIncidents();
         loadMaintenances();
@@ -135,7 +142,27 @@
 
   let formError = $state<string | null>(null);
 
+  const defaultGracePeriod = $derived(
+    Number.isFinite(formInterval) ? String(Math.round(formInterval * 1.5)) : ''
+  );
+
   function validateForm(): string | null {
+    if (!Number.isFinite(formInterval) || formInterval < 30 || formInterval > 86400) {
+      return 'Check interval must be between 30 and 86400 seconds';
+    }
+    if (formType !== 'heartbeat' && formType !== 'log_heartbeat') {
+      if (!Number.isFinite(formTimeout) || formTimeout < 1 || formTimeout > 60) {
+        return 'Timeout must be between 1 and 60 seconds';
+      }
+    }
+    if (!Number.isFinite(formThreshold) || formThreshold < 1 || formThreshold > 20) {
+      return 'Failure threshold must be between 1 and 20';
+    }
+    if (formType === 'log_heartbeat' && formGracePeriod != null) {
+      if (!Number.isFinite(formGracePeriod) || formGracePeriod < 60 || formGracePeriod > 86400) {
+        return 'Silence threshold must be between 60 and 86400 seconds';
+      }
+    }
     if (formType === 'log_heartbeat') {
       if (!formTarget || !formTarget.trim()) {
         return 'Service name is required for log-based monitors';
@@ -819,10 +846,10 @@
                   bind:value={formGracePeriod}
                   min="60"
                   max="86400"
-                  placeholder={String(Math.round(formInterval * 1.5))}
+                  placeholder={defaultGracePeriod}
                   class="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 />
-                <p class="mt-1 text-xs text-muted-foreground">Mark as down after this many seconds without logs. Default: {Math.round(formInterval * 1.5)}s (interval × 1.5)</p>
+                <p class="mt-1 text-xs text-muted-foreground">Mark as down after this many seconds without logs. Default: {defaultGracePeriod}s (interval × 1.5)</p>
               </div>
             {/if}
 

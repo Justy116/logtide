@@ -439,7 +439,7 @@ class AdminAPI {
         }
 
         if (!response.ok) {
-            const error = await response.json();
+            const error = await response.json().catch(() => ({}));
             throw new Error(error.message || 'API request failed');
         }
 
@@ -594,7 +594,7 @@ class AdminAPI {
         });
 
         if (!response.ok) {
-            const error = await response.json();
+            const error = await response.json().catch(() => ({}));
             throw new Error(error.error || 'Failed to update user role');
         }
 
@@ -691,7 +691,7 @@ class AdminAPI {
         });
 
         if (!response.ok) {
-            const error = await response.json();
+            const error = await response.json().catch(() => ({}));
             throw new Error(error.error || 'Failed to update retention policy');
         }
 
@@ -720,7 +720,7 @@ class AdminAPI {
         });
 
         if (!response.ok) {
-            const error = await response.json();
+            const error = await response.json().catch(() => ({}));
             throw new Error(error.error || 'Failed to update entitlements');
         }
 
@@ -795,7 +795,7 @@ class AdminAPI {
         });
 
         if (!response.ok) {
-            const error = await response.json();
+            const error = await response.json().catch(() => ({}));
             throw new Error(error.error || 'Failed to update settings');
         }
 

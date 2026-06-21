@@ -1,5 +1,6 @@
 import { getApiBaseUrl, getApiUrl } from '$lib/config';
 import { getAuthToken } from '$lib/utils/auth';
+import { requestStreamTicket } from './stream-tickets';
 import type { LogLevel, MetadataFilterInput } from '@logtide/shared';
 
 interface LogEntry {
@@ -165,17 +166,17 @@ export class LogsAPI {
     return response.json();
   }
 
-  createLogsWebSocket(filters: { service?: string; level?: string; hostname?: string; projectId: string }): WebSocket {
+  async createLogsWebSocket(filters: { service?: string; level?: string; hostname?: string; projectId: string }): Promise<WebSocket> {
     const params = new URLSearchParams();
     params.append('projectId', filters.projectId);
     if (filters.service) params.append('service', filters.service);
     if (filters.level) params.append('level', filters.level);
     if (filters.hostname) params.append('hostname', filters.hostname);
 
-    const token = this.getToken();
-    if (token) {
-      params.append('token', token);
-    }
+    // Pass a short-lived single-use ticket instead of the session token so the
+    // long-lived token never appears in the WebSocket URL (and thus in proxy logs).
+    const ticket = await requestStreamTicket(this.getToken());
+    params.append('ticket', ticket);
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     // getApiUrl() may be empty (same-origin reverse proxy) or a relative path, in

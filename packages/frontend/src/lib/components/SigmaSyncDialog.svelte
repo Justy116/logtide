@@ -188,10 +188,9 @@
                             </h3>
                             <p class="text-sm text-muted-foreground">
                                 Commit: <span class="font-mono text-xs"
-                                    >{syncResult.commitHash.substring(
-                                        0,
-                                        7,
-                                    )}</span
+                                    >{syncResult.commitHash
+                                        ? syncResult.commitHash.substring(0, 7)
+                                        : "-"}</span
                                 >
                             </p>
                         </div>

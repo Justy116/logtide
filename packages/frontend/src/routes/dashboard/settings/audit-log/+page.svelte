@@ -492,7 +492,7 @@
 													>
 												{/if}
 											{:else}
-												<span class="text-muted-foreground/50">\u2014</span>
+												<span class="text-muted-foreground/50">{'\u2014'}</span>
 											{/if}
 										</TableCell>
 										<TableCell class="font-mono text-xs text-muted-foreground">

@@ -19,17 +19,40 @@ export interface AuthState {
 
 const STORAGE_KEY = 'logtide_auth';
 
+function isValidStoredAuth(data: unknown): data is { user: User; token: string } {
+  if (typeof data !== 'object' || data === null) {
+    return false;
+  }
+  const candidate = data as { user?: unknown; token?: unknown };
+  if (typeof candidate.token !== 'string') {
+    return false;
+  }
+  const user = candidate.user;
+  if (typeof user !== 'object' || user === null) {
+    return false;
+  }
+  const u = user as { id?: unknown; email?: unknown; name?: unknown };
+  return (
+    typeof u.id === 'string' &&
+    typeof u.email === 'string' &&
+    typeof u.name === 'string'
+  );
+}
+
 function loadInitialState(): AuthState {
   if (browser) {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const data = JSON.parse(stored);
-        return {
-          user: data.user,
-          token: data.token,
-          loading: false,
-        };
+        if (isValidStoredAuth(data)) {
+          return {
+            user: data.user,
+            token: data.token,
+            loading: false,
+          };
+        }
+        localStorage.removeItem(STORAGE_KEY);
       }
     } catch (e) {
       console.error('Failed to load auth state:', e);

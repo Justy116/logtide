@@ -198,15 +198,6 @@
 		}
 	}
 
-	function handleDeleteKeydown(event: KeyboardEvent) {
-		if (event.key === "Enter" && showDeleteDialog && alertToDelete) {
-			event.preventDefault();
-			deleteAlert(alertToDelete);
-			showDeleteDialog = false;
-			alertToDelete = null;
-		}
-	}
-
 	async function deleteAlert(alertId: string) {
 		if (!$currentOrganization) return;
 
@@ -303,6 +294,40 @@
 			newSet.delete(historyId);
 			loadingHistoryLogs = newSet;
 		}
+	}
+
+	function buildSearchUrl(history: AlertHistory): string {
+		const params = new URLSearchParams();
+		if (history.projectId) {
+			params.set("project", history.projectId);
+		}
+		params.set(
+			"from",
+			new Date(
+				new Date(history.triggeredAt).getTime() - history.timeWindow * 60000,
+			).toISOString(),
+		);
+		params.set("to", new Date(history.triggeredAt).toISOString());
+		if (history.service) {
+			params.set("service", history.service);
+		}
+		if (history.level?.length) {
+			params.set("level", history.level.join(","));
+		}
+		return `/dashboard/search?${params.toString()}`;
+	}
+
+	function formatUtcTimestamp(value: string | Date): string {
+		const formatted = new Date(value).toLocaleString("en-US", {
+			timeZone: "UTC",
+			year: "numeric",
+			month: "2-digit",
+			day: "2-digit",
+			hour: "2-digit",
+			minute: "2-digit",
+			hour12: false,
+		});
+		return `${formatted} UTC`;
 	}
 
 	function getLevelColor(level: string): string {
@@ -557,7 +582,7 @@
 											</div>
 											{#if history.projectId}
 												<a
-													href="/dashboard/search?project={history.projectId}&from={new Date(new Date(history.triggeredAt).getTime() - history.timeWindow * 60000).toISOString()}&to={new Date(history.triggeredAt).toISOString()}{history.service ? `&service=${history.service}` : ''}{history.level?.length ? `&level=${history.level.join(',')}` : ''}"
+													href={buildSearchUrl(history)}
 													class="text-sm text-primary hover:underline flex items-center gap-1"
 												>
 													<span>View Logs</span>
@@ -622,7 +647,7 @@
 
 										<div class="flex items-center gap-1.5 text-sm text-muted-foreground">
 											<Clock class="w-4 h-4" />
-											<span>{new Date(history.triggeredAt).toISOString().slice(0, 16).replace("T", " ")}</span>
+											<span>{formatUtcTimestamp(history.triggeredAt)}</span>
 										</div>
 
 										{#if history.error}
@@ -740,7 +765,7 @@
 
 										<div class="flex items-center gap-1.5 text-sm text-muted-foreground">
 											<Clock class="w-4 h-4" />
-											<span>{new Date(detection.time).toISOString().slice(0, 16).replace("T", " ")}</span>
+											<span>{formatUtcTimestamp(detection.time)}</span>
 										</div>
 									</div>
 								</CardContent>
@@ -776,7 +801,7 @@
 
 
 	<AlertDialog bind:open={showDeleteDialog}>
-		<AlertDialogContent onkeydown={handleDeleteKeydown}>
+		<AlertDialogContent>
 			<AlertDialogHeader>
 				<AlertDialogTitle>Delete Alert Rule</AlertDialogTitle>
 				<AlertDialogDescription>

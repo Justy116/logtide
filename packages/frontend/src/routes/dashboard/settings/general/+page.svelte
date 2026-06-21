@@ -258,6 +258,7 @@
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
                 <AlertDialogAction
                   onclick={deleteOrganization}
+                  disabled={deleting}
                   class="bg-destructive hover:bg-destructive/90"
                 >
                   {deleting ? 'Deleting...' : 'Delete Organization'}

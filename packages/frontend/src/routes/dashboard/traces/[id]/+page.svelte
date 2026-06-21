@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import { tracesAPI, type TraceRecord, type SpanRecord } from "$lib/api/traces";
@@ -60,32 +59,41 @@
   let traceEndTime = $derived(trace ? new Date(trace.end_time).getTime() : 0);
   let traceDuration = $derived(traceEndTime - traceStartTime);
 
-  onMount(async () => {
+  let loadSequence = 0;
+
+  $effect(() => {
     if (!projectId) {
       goto("/dashboard/traces");
       return;
     }
 
-    await loadTraceData();
+    loadTraceData(traceId, projectId);
   });
 
-  async function loadTraceData() {
+  async function loadTraceData(currentTraceId: string, currentProjectId: string) {
+    const sequence = ++loadSequence;
     isLoading = true;
     try {
       const [traceData, spansData] = await Promise.all([
-        tracesAPI.getTrace(traceId, projectId),
-        tracesAPI.getTraceSpans(traceId, projectId),
+        tracesAPI.getTrace(currentTraceId, currentProjectId),
+        tracesAPI.getTraceSpans(currentTraceId, currentProjectId),
       ]);
+
+      if (sequence !== loadSequence) return;
 
       trace = traceData;
       spans = spansData;
       spanTree = buildSpanTree(spansData);
 
       expandedSpans = new Set(spansData.map(s => s.span_id));
+      selectedSpan = null;
     } catch (e) {
+      if (sequence !== loadSequence) return;
       console.error("Failed to load trace:", e);
     } finally {
-      isLoading = false;
+      if (sequence === loadSequence) {
+        isLoading = false;
+      }
     }
   }
 

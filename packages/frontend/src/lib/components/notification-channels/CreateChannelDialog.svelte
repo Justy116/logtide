@@ -59,6 +59,10 @@
 	let webhookAuthToken = $state('');
 	let webhookAuthUser = $state('');
 	let webhookAuthPass = $state('');
+	// Whether the channel being edited already has a stored secret. Secrets are
+	// never sent back to the client, so on edit we keep the secret fields empty
+	// and only submit a new value when the user types one.
+	let hasStoredAuthSecret = $state(false);
 
 	const isEditing = $derived(!!channel);
 
@@ -74,6 +78,7 @@
 		webhookAuthToken = '';
 		webhookAuthUser = '';
 		webhookAuthPass = '';
+		hasStoredAuthSecret = false;
 		testResult = null;
 	}
 
@@ -90,15 +95,21 @@
 			webhookUrl = config.url;
 			webhookMethod = config.method === 'PUT' ? 'PUT' : 'POST';
 			webhookHeaders = config.headers ? JSON.stringify(config.headers, null, 2) : '';
+			// Never re-hydrate stored secrets into the DOM. Track that a secret
+			// exists so we can show a placeholder, and leave the secret fields
+			// empty; a blank value on submit means "keep the existing secret".
 			if (config.auth?.type === 'bearer') {
 				webhookAuthType = 'bearer';
-				webhookAuthToken = config.auth.token;
+				webhookAuthToken = '';
+				hasStoredAuthSecret = true;
 			} else if (config.auth?.type === 'basic') {
 				webhookAuthType = 'basic';
 				webhookAuthUser = config.auth.username;
-				webhookAuthPass = config.auth.password;
+				webhookAuthPass = '';
+				hasStoredAuthSecret = true;
 			} else {
 				webhookAuthType = 'none';
+				hasStoredAuthSecret = false;
 			}
 		}
 	}
@@ -132,14 +143,24 @@
 				}
 			}
 
-			if (webhookAuthType === 'bearer' && webhookAuthToken) {
-				config.auth = { type: 'bearer', token: webhookAuthToken };
+			if (webhookAuthType === 'bearer') {
+				// Only send a token when the user typed a new one. On edit, a
+				// blank field means "keep the existing secret" (the stored secret
+				// is never sent to the client), so we omit auth and let the
+				// backend preserve it.
+				if (webhookAuthToken) {
+					config.auth = { type: 'bearer', token: webhookAuthToken };
+				}
 			} else if (webhookAuthType === 'basic' && webhookAuthUser) {
-				config.auth = {
+				const basicAuth: { type: 'basic'; username: string; password?: string } = {
 					type: 'basic',
 					username: webhookAuthUser,
-					password: webhookAuthPass,
 				};
+				// Same rule for the password: only send a new one when typed.
+				if (webhookAuthPass) {
+					basicAuth.password = webhookAuthPass;
+				}
+				config.auth = basicAuth;
 			}
 
 			return config;
@@ -412,7 +433,7 @@
 							<Input
 								id="webhook-token"
 								type="password"
-								placeholder="Enter token"
+								placeholder={hasStoredAuthSecret ? 'Leave blank to keep current token' : 'Enter token'}
 								bind:value={webhookAuthToken}
 								disabled={submitting}
 							/>
@@ -436,7 +457,7 @@
 								<Input
 									id="webhook-pass"
 									type="password"
-									placeholder="Password"
+									placeholder={hasStoredAuthSecret ? 'Leave blank to keep current password' : 'Password'}
 									bind:value={webhookAuthPass}
 									disabled={submitting}
 								/>

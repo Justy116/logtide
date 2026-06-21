@@ -1,7 +1,11 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, untrack } from "svelte";
     import { page } from "$app/state";
     import { adminAPI, type OrganizationDetails, type EntitlementMap, type EntitlementUpdate } from "$lib/api/admin";
+    import { authStore } from "$lib/stores/auth";
+    import { browser } from "$app/environment";
+    import { UsersAPI } from "$lib/api/users";
+    import { get } from "svelte/store";
     import { Switch } from "$lib/components/ui/switch";
     import { Button, buttonVariants } from "$lib/components/ui/button";
     import { Badge } from "$lib/components/ui/badge";
@@ -46,6 +50,7 @@
     import { goto } from "$app/navigation";
 
     const orgId = $derived(page.params.id);
+    const usersAPI = new UsersAPI(() => get(authStore).token);
     let org: OrganizationDetails | null = $state(null);
     let loading = $state(true);
     let error = $state("");
@@ -65,6 +70,8 @@
     let limitInputs = $state<Record<string, string>>({});
 
     async function loadEntitlements() {
+        if ($authStore.user?.is_admin !== true) return;
+
         entitlementsLoading = true;
         entitlementsError = "";
         try {
@@ -139,6 +146,8 @@
     }
 
     async function loadOrganization() {
+        if ($authStore.user?.is_admin !== true) return;
+
         loading = true;
         error = "";
         try {
@@ -197,9 +206,34 @@
         return new Date(dateString).toLocaleString();
     }
 
-    onMount(() => {
+    function loadAll() {
         loadOrganization();
         loadEntitlements();
+    }
+
+    $effect(() => {
+        if (browser && $authStore.user) {
+            if ($authStore.user.is_admin === undefined) {
+                untrack(() => {
+                    usersAPI
+                        .getCurrentUser()
+                        .then(({ user }) => {
+                            const currentUser = get(authStore).user;
+                            if (currentUser) {
+                                authStore.updateUser({ ...currentUser, ...user });
+                                if (user.is_admin) loadAll();
+                            }
+                        })
+                        .catch(() => goto("/dashboard"));
+                });
+            } else if ($authStore.user.is_admin === false) {
+                untrack(() => goto("/dashboard"));
+            }
+        }
+    });
+
+    onMount(() => {
+        if ($authStore.user?.is_admin) loadAll();
     });
 </script>
 

@@ -101,9 +101,23 @@
 
   // Custom metadata columns (persisted per project in localStorage)
   let customColumns = $state<string[]>([]);
+  // Cache stores per projectId so that any selectedProjects mutation does not
+  // recreate the store (and re-read localStorage) on every dependency change.
+  const columnStoreCache = new Map<
+    string,
+    ReturnType<typeof createColumnConfigStore>
+  >();
+  function getColumnStore(projectId: string) {
+    let store = columnStoreCache.get(projectId);
+    if (!store) {
+      store = createColumnConfigStore(projectId);
+      columnStoreCache.set(projectId, store);
+    }
+    return store;
+  }
   let columnStore = $derived(
     selectedProjects.length > 0
-      ? createColumnConfigStore(selectedProjects[0])
+      ? getColumnStore(selectedProjects[0])
       : null
   );
   $effect(() => {
@@ -457,6 +471,10 @@
   // Pagination state
   let currentPage = $state(1);
 
+  // Monotonic request counter so a slower earlier loadLogs() cannot overwrite
+  // the results of a newer one when several calls are in flight at once.
+  let loadLogsRequestId = 0;
+
   async function loadLogs() {
     if (selectedProjects.length === 0) {
       logs = [];
@@ -465,6 +483,7 @@
       return;
     }
 
+    const requestId = ++loadLogsRequestId;
     isLoading = true;
 
     try {
@@ -508,17 +527,23 @@
         metadataFilters: validMetadataFilters.length > 0 ? validMetadataFilters : undefined,
       });
 
+      // A newer load started while this one was in flight; drop the stale result.
+      if (requestId !== loadLogsRequestId) return;
+
       logs = response.logs;
       totalLogs = response.total;
       hasMoreLogs = response.hasMore ?? (response.logs.length >= pageSize);
     } catch (e) {
+      if (requestId !== loadLogsRequestId) return;
       console.error("Failed to load logs:", e);
       toastStore.error("Failed to load logs. Please try again.");
       logs = [];
       hasMoreLogs = false;
     } finally {
-      isLoading = false;
-      hasLoadedOnce = true;
+      if (requestId === loadLogsRequestId) {
+        isLoading = false;
+        hasLoadedOnce = true;
+      }
     }
   }
 
@@ -669,12 +694,14 @@
   });
 
   let ws: WebSocket | null = null;
+  let liveTailSeq = 0;
 
-  function startLiveTail() {
+  async function startLiveTail() {
     if (selectedProjects.length !== 1) return; // Live tail only works with single project
 
+    const seq = ++liveTailSeq;
     try {
-      const socket = logsAPI.createLogsWebSocket({
+      const socket = await logsAPI.createLogsWebSocket({
         projectId: selectedProjects[0],
         service:
           selectedServices.length === 1 ? selectedServices[0] : undefined,
@@ -682,6 +709,13 @@
         hostname:
           selectedHostnames.length === 1 ? selectedHostnames[0] : undefined,
       });
+
+      // A newer start/stop happened while the ticket request was in flight: drop
+      // this now-stale socket instead of leaking it.
+      if (seq !== liveTailSeq) {
+        socket.close();
+        return;
+      }
 
       socket.onmessage = (event) => {
         try {
@@ -704,6 +738,18 @@
             }
             if (sessionId) {
               newLogs = newLogs.filter((log) => log.sessionId === sessionId);
+            }
+            // The WS only carries a single level/hostname filter (startLiveTail
+            // sends one only when exactly one is selected). When the user picked
+            // multiple, filter the incoming logs client-side so live tail never
+            // shows levels/hosts that were filtered out.
+            if (selectedLevels.length > 1) {
+              newLogs = newLogs.filter((log) => selectedLevels.includes(log.level));
+            }
+            if (selectedHostnames.length > 1) {
+              newLogs = newLogs.filter((log) =>
+                selectedHostnames.includes(log.metadata?.hostname),
+              );
             }
 
             if (newLogs.length > 0) {
@@ -737,6 +783,7 @@
   }
 
   function stopLiveTail() {
+    liveTailSeq++;
     if (ws) {
       ws.close();
       ws = null;
@@ -1591,7 +1638,7 @@
           <div class="flex items-center justify-between">
             <CardTitle>
               {#if effectiveTotalLogs > 0}
-                {effectiveTotalLogs.toLocaleString()}
+                {effectiveTotalLogs.toLocaleString("en-US")}
                 {effectiveTotalLogs === 1 ? "log" : "logs"}
                 {#if liveTail}
                   <span class="text-sm font-normal text-muted-foreground"

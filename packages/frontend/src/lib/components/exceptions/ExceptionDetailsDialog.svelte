@@ -93,8 +93,15 @@
 
 	function viewErrorGroup() {
 		if (exception) {
-			// Navigate to error group page
-			goto(`/dashboard/errors?fingerprint=${exception.exception.fingerprint}&organizationId=${organizationId}`);
+			// Navigate to the error groups list filtered to this exception.
+			// The list page reads the `search` param (ILIKE on exception type/message);
+			// it does not read a `fingerprint` param, so use the exception type as the
+			// search term to land on the matching group.
+			const params = new URLSearchParams({
+				organizationId,
+				search: exception.exception.exceptionType,
+			});
+			goto(`/dashboard/errors?${params.toString()}`);
 			onClose();
 		}
 	}

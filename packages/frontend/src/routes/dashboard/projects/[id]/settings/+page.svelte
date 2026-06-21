@@ -171,7 +171,7 @@
 
 	function formatDate(date: string | null): string {
 		if (!date) return 'Never';
-		return new Date(date).toLocaleString();
+		return new Date(date).toLocaleString('en-US');
 	}
 
 	const hasChanges = $derived(
@@ -263,12 +263,12 @@
 
 				<div class="space-y-2">
 					<Label>Created</Label>
-					<Input value={new Date(project.createdAt).toLocaleString()} readonly />
+					<Input value={new Date(project.createdAt).toLocaleString('en-US')} readonly />
 				</div>
 
 				<div class="space-y-2">
 					<Label>Last Updated</Label>
-					<Input value={new Date(project.updatedAt).toLocaleString()} readonly />
+					<Input value={new Date(project.updatedAt).toLocaleString('en-US')} readonly />
 				</div>
 			</CardContent>
 		</Card>
