@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+Two correctness follow-ups from the multi-engine bug-hunt sweep (issue #255): Sigma detection now honors full SigmaHQ field-modifier chains, and the service-map p95 is a true window percentile on every storage engine. No database migrations; drop-in upgrade. The storage-layer change was validated against real ClickHouse, MongoDB and TimescaleDB.
+
+### Fixed
+- **Sigma compound field-modifier chains were silently truncated**: the matcher split a field key like `CommandLine|utf16le|base64offset|contains` on `|` but kept only the first modifier, so any rule using a transform-plus-comparator chain (or a PowerShell `-enc` style `utf16le|base64offset|contains`) matched incorrectly. The whole chain is now parsed and applied in order: transforms (`base64`, `base64offset`, `utf16le`/`utf16`/`utf16be`/`wide`, `windash`) rewrite the pattern, then the final comparator runs. Transforms follow the canonical SigmaHQ model (the pattern is encoded, e.g. the field is checked for `base64(value)`), which is what real SigmaHQ rules are authored against. Added `cidr` and numeric `gt`/`gte`/`lt`/`lte` comparators while reworking the parser
+- **Sigma `|all` modifier had the wrong semantics**: it was implemented as "all whitespace-split words present in any order" rather than the SigmaHQ list quantifier. `|all` now flips the default OR over a value list into AND (every list element must match), and composes with modifier chains (e.g. `cmd|base64|contains|all`)
+
+### Changed
+- **Service-map p95 is now a true window percentile across all engines**: the service dependency map previously reported `MAX(duration_p95_ms)` from the per-bucket spans continuous aggregate, which overestimates (a p95 is not derivable by combining per-bucket p95s) and was only ever produced on TimescaleDB. Per-service health stats now come from a new `reservoir.getServiceHealthStats` computed directly from raw spans over the requested window on every engine: `percentile_cont` on TimescaleDB, `quantile(0.95)` on ClickHouse, and `$percentile` on MongoDB (approximate t-digest, Mongo 7.0+). ClickHouse and MongoDB service maps now carry real call/error/latency/p95 figures where they previously had none. The `spans_hourly_stats` / `spans_daily_stats` aggregates are unchanged and still back the dashboards
+
 ## [1.0.2] - 2026-06-22
 
 A frontend correctness and security release from a comprehensive multi-agent frontend bug hunt (UI, logic, reactivity, leaks and security), plus a hardening of how the browser authenticates the live-streaming endpoints. The headline item is single-use stream tickets: the session token no longer travels in WebSocket/SSE URLs (where reverse proxies log it). One additive database migration (`049_stream_tickets`); otherwise a drop-in upgrade.
