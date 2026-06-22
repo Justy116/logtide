@@ -43,6 +43,7 @@ export type {
   IngestSpansResult,
   ServiceDependency,
   ServiceDependencyResult,
+  ServiceHealthStat,
   DeleteSpansByTimeRangeParams,
   MetricType,
   HistogramData,

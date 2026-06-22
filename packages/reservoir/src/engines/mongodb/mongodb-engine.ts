@@ -35,6 +35,7 @@ import type {
   TraceQueryResult,
   IngestSpansResult,
   ServiceDependencyResult,
+  ServiceHealthStat,
   ServiceDependency,
   DeleteSpansByTimeRangeParams,
   SpanKind,
@@ -797,6 +798,50 @@ export class MongoDBEngine extends StorageEngine {
     }));
 
     return { nodes, edges };
+  }
+
+  async getServiceHealthStats(
+    projectId: string,
+    from?: Date,
+    to?: Date,
+  ): Promise<ServiceHealthStat[]> {
+    const col = this.spansCol();
+
+    const match: Document = { project_id: projectId };
+    if (from || to) {
+      const timeFilter: Document = {};
+      if (from) timeFilter.$gte = from;
+      if (to) timeFilter.$lte = to;
+      match.start_time = timeFilter;
+    }
+
+    // True window p95 from raw spans via $percentile (approximate t-digest, over
+    // the whole window - not a max of per-bucket percentiles). Requires Mongo 7.0+.
+    const pipeline: Document[] = [
+      { $match: match },
+      {
+        $group: {
+          _id: '$service_name',
+          total_calls: { $sum: 1 },
+          total_errors: { $sum: { $cond: [{ $eq: ['$status_code', 'ERROR'] }, 1, 0] } },
+          avg_latency_ms: { $avg: '$duration_ms' },
+          p95_latency_ms: { $percentile: { input: '$duration_ms', p: [0.95], method: 'approximate' } },
+        },
+      },
+    ];
+
+    const rows = await col.aggregate(pipeline, { ...ctxOpts() }).toArray();
+
+    return rows.map((r) => {
+      const p95 = Array.isArray(r.p95_latency_ms) ? r.p95_latency_ms[0] : r.p95_latency_ms;
+      return {
+        serviceName: String(r._id),
+        totalCalls: Number(r.total_calls ?? 0),
+        totalErrors: Number(r.total_errors ?? 0),
+        avgLatencyMs: Number(r.avg_latency_ms ?? 0),
+        p95LatencyMs: p95 != null ? Number(p95) : null,
+      };
+    });
   }
 
   async deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult> {

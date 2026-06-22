@@ -29,6 +29,7 @@ import type {
   TraceQueryResult,
   IngestSpansResult,
   ServiceDependencyResult,
+  ServiceHealthStat,
   DeleteSpansByTimeRangeParams,
   MetricRecord,
   MetricQueryParams,
@@ -209,6 +210,15 @@ export class Reservoir implements IReservoir {
   async getTraceServices(projectId: string, from?: Date, to?: Date): Promise<string[]> {
     this.ensureInitialized();
     return this.engine.getTraceServices(projectId, from, to);
+  }
+
+  async getServiceHealthStats(
+    projectId: string,
+    from?: Date,
+    to?: Date,
+  ): Promise<ServiceHealthStat[]> {
+    this.ensureInitialized();
+    return this.engine.getServiceHealthStats(projectId, from, to);
   }
 
   async deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult> {

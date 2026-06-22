@@ -63,6 +63,7 @@ import type {
   TraceQueryResult,
   IngestSpansResult,
   ServiceDependencyResult,
+  ServiceHealthStat,
   ServiceDependency,
   DeleteSpansByTimeRangeParams,
   SpanKind,
@@ -1177,6 +1178,58 @@ export class ClickHouseEngine extends StorageEngine {
     }));
 
     return { nodes, edges };
+  }
+
+  async getServiceHealthStats(
+    projectId: string,
+    from?: Date,
+    to?: Date,
+  ): Promise<ServiceHealthStat[]> {
+    const queryParams: Record<string, unknown> = { projectId };
+    let timeFilter = '';
+
+    if (from) {
+      timeFilter += ` AND start_time >= {p_from:DateTime64(3)}`;
+      queryParams.p_from = toDateTime64(from);
+    }
+    if (to) {
+      timeFilter += ` AND start_time <= {p_to:DateTime64(3)}`;
+      queryParams.p_to = toDateTime64(to);
+    }
+
+    // True window p95 from raw spans via quantile() (approximate t-digest, over
+    // the whole window - not a max of per-bucket percentiles).
+    const resultSet = await this.runQuery({
+      query: `
+        SELECT
+          service_name,
+          count() AS total_calls,
+          countIf(status_code = 'ERROR') AS total_errors,
+          avg(duration_ms) AS avg_latency_ms,
+          quantile(0.95)(duration_ms) AS p95_latency_ms
+        FROM spans
+        WHERE project_id = {projectId:String}${timeFilter}
+        GROUP BY service_name
+      `,
+      query_params: queryParams,
+      format: 'JSONEachRow',
+    });
+
+    const rows = await resultSet.json<{
+      service_name: string;
+      total_calls: string;
+      total_errors: string;
+      avg_latency_ms: number;
+      p95_latency_ms: number | null;
+    }>();
+
+    return rows.map((r) => ({
+      serviceName: r.service_name,
+      totalCalls: Number(r.total_calls),
+      totalErrors: Number(r.total_errors),
+      avgLatencyMs: Number(r.avg_latency_ms),
+      p95LatencyMs: r.p95_latency_ms != null ? Number(r.p95_latency_ms) : null,
+    }));
   }
 
   async deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult> {

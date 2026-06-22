@@ -399,6 +399,20 @@ export interface ServiceDependencyResult {
   edges: ServiceDependency[];
 }
 
+/**
+ * Per-service health stats computed over a time window directly from raw spans.
+ * p95LatencyMs is a true window percentile (approximate on engines whose native
+ * quantile is approximate, e.g. MongoDB/ClickHouse t-digest), not a max of
+ * per-bucket percentiles.
+ */
+export interface ServiceHealthStat {
+  serviceName: string;
+  totalCalls: number;
+  totalErrors: number;
+  avgLatencyMs: number;
+  p95LatencyMs: number | null;
+}
+
 /** Parameters for deleting spans by time range */
 export interface DeleteSpansByTimeRangeParams {
   projectId: string | string[];

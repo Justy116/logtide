@@ -840,6 +840,39 @@ describe('TimescaleEngine', () => {
     });
   });
 
+  describe('getServiceHealthStats', () => {
+    it('computes per-service stats with a true window p95 from raw spans', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          { service_name: 'api', total_calls: '100', total_errors: '5', avg_latency_ms: 120.5, p95_latency_ms: 480 },
+          { service_name: 'db', total_calls: '40', total_errors: '0', avg_latency_ms: 12, p95_latency_ms: null },
+        ],
+      });
+      await engine.connect();
+
+      const result = await engine.getServiceHealthStats(
+        'proj-1',
+        new Date('2024-01-01'),
+        new Date('2024-01-02'),
+      );
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({
+        serviceName: 'api',
+        totalCalls: 100,
+        totalErrors: 5,
+        avgLatencyMs: 120.5,
+        p95LatencyMs: 480,
+      });
+      expect(result[1].p95LatencyMs).toBeNull();
+
+      const sql = mockQuery.mock.calls[0][0] as string;
+      expect(sql).toContain('percentile_cont(0.95)');
+      expect(sql).toContain('FROM public.spans');
+      expect(sql).toContain('GROUP BY service_name');
+    });
+  });
+
   describe('deleteSpansByTimeRange', () => {
     it('deletes spans and orphaned traces', async () => {
       // DELETE spans
