@@ -58,6 +58,8 @@
   import Table2 from "@lucide/svelte/icons/table-2";
   import WrapText from "@lucide/svelte/icons/wrap-text";
   import Clock from "@lucide/svelte/icons/clock";
+  import ArrowUpRight from "@lucide/svelte/icons/arrow-up-right";
+  import Filter from "@lucide/svelte/icons/filter";
 
   interface LogEntry {
     id?: string;
@@ -1864,41 +1866,55 @@
                               </div>
                             </div>
                             {#if log.traceId}
-                              <div class="flex items-center flex-wrap gap-1">
+                              <div class="flex items-center flex-wrap gap-1.5">
                                 <span class="font-semibold">Trace ID:</span>
-                                <button
-                                  class="text-xs font-mono bg-purple-100 text-purple-800 px-2 py-1 rounded hover:bg-purple-200 transition-colors cursor-pointer"
-                                  onclick={() => {
-                                    traceId = log.traceId || "";
-                                    applyFilters();
-                                  }}
-                                  title="Click to filter by this trace ID"
-                                >
-                                  {log.traceId}
-                                </button>
                                 {#if log.projectId}
                                   <a
                                     href="/dashboard/traces/{log.traceId}?projectId={log.projectId}"
-                                    class="text-xs text-purple-600 hover:text-purple-900 underline underline-offset-2"
+                                    class="group inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs text-primary transition-colors hover:bg-primary/10"
                                     title="Open trace timeline"
                                   >
-                                    View Trace →
+                                    {log.traceId}
+                                    <ArrowUpRight class="h-3 w-3 opacity-60 transition-opacity group-hover:opacity-100" />
                                   </a>
+                                  <button
+                                    class="inline-flex items-center rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                    onclick={() => {
+                                      traceId = log.traceId || "";
+                                      applyFilters();
+                                    }}
+                                    title="Filter by this trace ID"
+                                  >
+                                    <Filter class="h-3 w-3" />
+                                  </button>
+                                {:else}
+                                  <button
+                                    class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs text-primary transition-colors hover:bg-primary/10"
+                                    onclick={() => {
+                                      traceId = log.traceId || "";
+                                      applyFilters();
+                                    }}
+                                    title="Filter by this trace ID"
+                                  >
+                                    {log.traceId}
+                                    <Filter class="h-3 w-3 opacity-60" />
+                                  </button>
                                 {/if}
                               </div>
                             {/if}
                             {#if log.sessionId}
-                              <div>
+                              <div class="flex items-center flex-wrap gap-1.5">
                                 <span class="font-semibold">Session ID:</span>
                                 <button
-                                  class="ml-2 text-xs font-mono bg-teal-100 text-teal-800 px-2 py-1 rounded hover:bg-teal-200 transition-colors cursor-pointer"
+                                  class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs text-teal-600 transition-colors hover:bg-teal-500/10 dark:text-teal-400"
                                   onclick={() => {
                                     sessionId = log.sessionId || "";
                                     applyFilters();
                                   }}
-                                  title="Click to filter by this session ID"
+                                  title="Filter by this session ID"
                                 >
                                   {log.sessionId}
+                                  <Filter class="h-3 w-3 opacity-60" />
                                 </button>
                               </div>
                             {/if}
