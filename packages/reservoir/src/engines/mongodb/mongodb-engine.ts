@@ -36,6 +36,8 @@ import type {
   IngestSpansResult,
   ServiceDependencyResult,
   ServiceHealthStat,
+  SpanTimeseriesParams,
+  SpanTimeseriesBucket,
   ServiceDependency,
   DeleteSpansByTimeRangeParams,
   SpanKind,
@@ -840,6 +842,49 @@ export class MongoDBEngine extends StorageEngine {
         totalErrors: Number(r.total_errors ?? 0),
         avgLatencyMs: Number(r.avg_latency_ms ?? 0),
         p95LatencyMs: p95 != null ? Number(p95) : null,
+      };
+    });
+  }
+
+  async getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]> {
+    const { projectIds, from, to, bucket, serviceName } = params;
+    if (projectIds.length === 0) return [];
+
+    const col = this.spansCol();
+    const match: Document = {
+      project_id: { $in: projectIds },
+      start_time: { $gte: from, $lte: to },
+    };
+    if (serviceName) match.service_name = serviceName;
+
+    // $dateTrunc (Mongo 5.0+) for the bucket; $percentile (Mongo 7.0+, approximate
+    // t-digest) for the latency percentiles - same convention as getServiceHealthStats.
+    const pipeline: Document[] = [
+      { $match: match },
+      {
+        $group: {
+          _id: { $dateTrunc: { date: '$start_time', unit: bucket, binSize: 1 } },
+          span_count: { $sum: 1 },
+          error_count: { $sum: { $cond: [{ $eq: ['$status_code', 'ERROR'] }, 1, 0] } },
+          p: {
+            $percentile: { input: '$duration_ms', p: [0.5, 0.95, 0.99], method: 'approximate' },
+          },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ];
+
+    const rows = await col.aggregate(pipeline, { ...ctxOpts() }).toArray();
+
+    return rows.map((r) => {
+      const p = Array.isArray(r.p) ? r.p : [];
+      return {
+        time: r._id instanceof Date ? r._id : new Date(r._id as string),
+        spanCount: Number(r.span_count ?? 0),
+        errorCount: Number(r.error_count ?? 0),
+        p50: p[0] != null ? Number(p[0]) : null,
+        p95: p[1] != null ? Number(p[1]) : null,
+        p99: p[2] != null ? Number(p[2]) : null,
       };
     });
   }

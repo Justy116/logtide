@@ -64,6 +64,8 @@ import type {
   IngestSpansResult,
   ServiceDependencyResult,
   ServiceHealthStat,
+  SpanTimeseriesParams,
+  SpanTimeseriesBucket,
   ServiceDependency,
   DeleteSpansByTimeRangeParams,
   SpanKind,
@@ -1229,6 +1231,61 @@ export class ClickHouseEngine extends StorageEngine {
       totalErrors: Number(r.total_errors),
       avgLatencyMs: Number(r.avg_latency_ms),
       p95LatencyMs: r.p95_latency_ms != null ? Number(r.p95_latency_ms) : null,
+    }));
+  }
+
+  async getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]> {
+    const { projectIds, from, to, bucket, serviceName } = params;
+    if (projectIds.length === 0) return [];
+
+    const truncFn = bucket === 'day' ? 'toStartOfDay' : 'toStartOfHour';
+    const queryParams: Record<string, unknown> = {
+      p_pids: projectIds,
+      p_from: toDateTime64(from),
+      p_to: toDateTime64(to),
+    };
+    let svcFilter = '';
+    if (serviceName) {
+      svcFilter = ` AND service_name = {p_service:String}`;
+      queryParams.p_service = serviceName;
+    }
+
+    const resultSet = await this.runQuery({
+      query: `
+        SELECT
+          ${truncFn}(start_time) AS bucket,
+          count() AS span_count,
+          countIf(status_code = 'ERROR') AS error_count,
+          quantile(0.5)(duration_ms) AS p50,
+          quantile(0.95)(duration_ms) AS p95,
+          quantile(0.99)(duration_ms) AS p99
+        FROM spans
+        WHERE project_id IN {p_pids:Array(String)}
+          AND start_time >= {p_from:DateTime64(3)}
+          AND start_time <= {p_to:DateTime64(3)}${svcFilter}
+        GROUP BY bucket
+        ORDER BY bucket ASC
+      `,
+      query_params: queryParams,
+      format: 'JSONEachRow',
+    });
+
+    const rows = await resultSet.json<{
+      bucket: string;
+      span_count: string;
+      error_count: string;
+      p50: number | null;
+      p95: number | null;
+      p99: number | null;
+    }>();
+
+    return rows.map((r) => ({
+      time: parseClickHouseTime(r.bucket),
+      spanCount: Number(r.span_count ?? 0),
+      errorCount: Number(r.error_count ?? 0),
+      p50: r.p50 != null ? Number(r.p50) : null,
+      p95: r.p95 != null ? Number(r.p95) : null,
+      p99: r.p99 != null ? Number(r.p99) : null,
     }));
   }
 

@@ -413,6 +413,25 @@ export interface ServiceHealthStat {
   p95LatencyMs: number | null;
 }
 
+/** Parameters for a time-bucketed span aggregation (volume + latency). */
+export interface SpanTimeseriesParams {
+  projectIds: string[];
+  from: Date;
+  to: Date;
+  bucket: 'hour' | 'day';
+  serviceName?: string;
+}
+
+/** One time bucket of span volume + latency percentiles. */
+export interface SpanTimeseriesBucket {
+  time: Date;
+  spanCount: number;
+  errorCount: number;
+  p50: number | null;
+  p95: number | null;
+  p99: number | null;
+}
+
 /** Parameters for deleting spans by time range */
 export interface DeleteSpansByTimeRangeParams {
   projectId: string | string[];

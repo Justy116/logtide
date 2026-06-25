@@ -30,6 +30,8 @@ import type {
   IngestSpansResult,
   ServiceDependencyResult,
   ServiceHealthStat,
+  SpanTimeseriesParams,
+  SpanTimeseriesBucket,
   DeleteSpansByTimeRangeParams,
   MetricRecord,
   MetricQueryParams,
@@ -219,6 +221,11 @@ export class Reservoir implements IReservoir {
   ): Promise<ServiceHealthStat[]> {
     this.ensureInitialized();
     return this.engine.getServiceHealthStats(projectId, from, to);
+  }
+
+  async getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]> {
+    this.ensureInitialized();
+    return this.engine.getSpanTimeseries(params);
   }
 
   async deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult> {

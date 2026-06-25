@@ -873,6 +873,73 @@ describe('TimescaleEngine', () => {
     });
   });
 
+  describe('getSpanTimeseries', () => {
+    it('returns empty without querying when no projects are given', async () => {
+      await engine.connect();
+      const result = await engine.getSpanTimeseries({
+        projectIds: [],
+        from: new Date('2024-01-01'),
+        to: new Date('2024-01-02'),
+        bucket: 'hour',
+      });
+      expect(result).toEqual([]);
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    it('buckets span volume + latency percentiles from raw spans', async () => {
+      mockQuery.mockResolvedValueOnce({
+        rows: [
+          { bucket: '2024-01-01T00:00:00Z', span_count: 100, error_count: 5, p50: 80, p95: 480, p99: 900 },
+          { bucket: '2024-01-01T01:00:00Z', span_count: 40, error_count: 0, p50: 10, p95: null, p99: null },
+        ],
+      });
+      await engine.connect();
+
+      const result = await engine.getSpanTimeseries({
+        projectIds: ['proj-1', 'proj-2'],
+        from: new Date('2024-01-01'),
+        to: new Date('2024-01-02'),
+        bucket: 'hour',
+        serviceName: 'api',
+      });
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toEqual({
+        time: new Date('2024-01-01T00:00:00Z'),
+        spanCount: 100,
+        errorCount: 5,
+        p50: 80,
+        p95: 480,
+        p99: 900,
+      });
+      expect(result[1].p95).toBeNull();
+
+      const sql = mockQuery.mock.calls[0][0] as string;
+      expect(sql).toContain("date_trunc('hour', start_time)");
+      expect(sql).toContain('percentile_cont(0.5)');
+      expect(sql).toContain('percentile_cont(0.95)');
+      expect(sql).toContain('percentile_cont(0.99)');
+      expect(sql).toContain('FROM public.spans');
+      expect(sql).toContain('project_id = ANY($1)');
+      // serviceName adds the 4th positional filter
+      const params = mockQuery.mock.calls[0][1] as unknown[];
+      expect(params[3]).toBe('api');
+    });
+
+    it('uses a daily bucket for wide ranges', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+      await engine.connect();
+      await engine.getSpanTimeseries({
+        projectIds: ['proj-1'],
+        from: new Date('2024-01-01'),
+        to: new Date('2024-01-08'),
+        bucket: 'day',
+      });
+      const sql = mockQuery.mock.calls[0][0] as string;
+      expect(sql).toContain("date_trunc('day', start_time)");
+    });
+  });
+
   describe('deleteSpansByTimeRange', () => {
     it('deletes spans and orphaned traces', async () => {
       // DELETE spans

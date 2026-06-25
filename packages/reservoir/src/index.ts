@@ -44,6 +44,8 @@ export type {
   ServiceDependency,
   ServiceDependencyResult,
   ServiceHealthStat,
+  SpanTimeseriesParams,
+  SpanTimeseriesBucket,
   DeleteSpansByTimeRangeParams,
   MetricType,
   HistogramData,

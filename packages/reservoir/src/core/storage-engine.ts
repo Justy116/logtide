@@ -30,6 +30,8 @@ import type {
   IngestSpansResult,
   ServiceDependencyResult,
   ServiceHealthStat,
+  SpanTimeseriesParams,
+  SpanTimeseriesBucket,
   DeleteSpansByTimeRangeParams,
   MetricRecord,
   MetricQueryParams,
@@ -151,6 +153,11 @@ export abstract class StorageEngine {
     from?: Date,
     to?: Date,
   ): Promise<ServiceHealthStat[]>;
+
+  /** Time-bucketed span volume + latency percentiles from raw spans (all engines) */
+  abstract getSpanTimeseries(
+    params: SpanTimeseriesParams,
+  ): Promise<SpanTimeseriesBucket[]>;
 
   /** Delete spans by time range */
   abstract deleteSpansByTimeRange(params: DeleteSpansByTimeRangeParams): Promise<DeleteResult>;

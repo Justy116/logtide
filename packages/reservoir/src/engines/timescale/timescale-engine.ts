@@ -37,6 +37,8 @@ import type {
   IngestSpansResult,
   ServiceDependencyResult,
   ServiceHealthStat,
+  SpanTimeseriesParams,
+  SpanTimeseriesBucket,
   ServiceDependency,
   DeleteSpansByTimeRangeParams,
   SpanKind,
@@ -928,6 +930,45 @@ export class TimescaleEngine extends StorageEngine {
       totalErrors: Number(r.total_errors ?? 0),
       avgLatencyMs: Number(r.avg_latency_ms ?? 0),
       p95LatencyMs: r.p95_latency_ms != null ? Number(r.p95_latency_ms) : null,
+    }));
+  }
+
+  async getSpanTimeseries(params: SpanTimeseriesParams): Promise<SpanTimeseriesBucket[]> {
+    const { projectIds, from, to, bucket, serviceName } = params;
+    if (projectIds.length === 0) return [];
+
+    const s = this.schema;
+    // bucket is a validated union ('hour' | 'day'), safe to inline as a literal.
+    const trunc = bucket === 'day' ? 'day' : 'hour';
+    const values: unknown[] = [projectIds, from, to];
+    let svcFilter = '';
+    if (serviceName) {
+      svcFilter = ` AND service_name = $4`;
+      values.push(serviceName);
+    }
+
+    const result = await this.runQuery(
+      `SELECT
+        date_trunc('${trunc}', start_time) AS bucket,
+        COUNT(*)::int AS span_count,
+        SUM(CASE WHEN status_code = 'ERROR' THEN 1 ELSE 0 END)::int AS error_count,
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50,
+        percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95,
+        percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) AS p99
+      FROM ${s}.spans
+      WHERE project_id = ANY($1) AND start_time >= $2 AND start_time <= $3${svcFilter}
+      GROUP BY bucket
+      ORDER BY bucket ASC`,
+      values,
+    );
+
+    return result.rows.map((r) => ({
+      time: new Date(r.bucket as unknown as string),
+      spanCount: Number(r.span_count ?? 0),
+      errorCount: Number(r.error_count ?? 0),
+      p50: r.p50 != null ? Number(r.p50) : null,
+      p95: r.p95 != null ? Number(r.p95) : null,
+      p99: r.p99 != null ? Number(r.p99) : null,
     }));
   }
 
