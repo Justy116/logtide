@@ -188,7 +188,7 @@
 
 	function formatDate(dateStr: string | Date): string {
 		const date = typeof dateStr === 'string' ? new Date(dateStr) : dateStr;
-		return date.toLocaleDateString(undefined, {
+		return date.toLocaleDateString('en-US', {
 			month: 'short',
 			day: 'numeric',
 			year: 'numeric',
@@ -298,7 +298,7 @@
 			<div class="flex items-center gap-6 text-sm flex-wrap">
 				<div class="flex items-center gap-2">
 					<Hash class="w-4 h-4 text-muted-foreground" />
-					<span class="font-bold">{group.occurrenceCount.toLocaleString()}</span>
+					<span class="font-bold">{group.occurrenceCount.toLocaleString('en-US')}</span>
 					<span class="text-muted-foreground">occurrences</span>
 				</div>
 				<div class="flex items-center gap-2" title={formatDate(group.lastSeen)}>
@@ -341,7 +341,7 @@
 			<Tabs.List>
 				<Tabs.Trigger value="stacktrace">Stack Trace</Tabs.Trigger>
 				<Tabs.Trigger value="trend">Trend</Tabs.Trigger>
-				<Tabs.Trigger value="logs">Logs ({logsTotal.toLocaleString()})</Tabs.Trigger>
+				<Tabs.Trigger value="logs">Logs ({logsTotal.toLocaleString('en-US')})</Tabs.Trigger>
 			</Tabs.List>
 
 			<!-- Stack Trace Tab -->
@@ -381,14 +381,16 @@
 								{#each trend as bucket}
 									{@const maxCount = Math.max(...trend.map((t) => t.count), 1)}
 									{@const height = (bucket.count / maxCount) * 100}
-									<div class="flex-1 flex flex-col items-center gap-1">
-										<div
-											class="w-full bg-red-500 rounded-t transition-all hover:bg-red-600"
-											style="height: {height}%"
-											title="{bucket.count} occurrences on {new Date(bucket.timestamp).toLocaleDateString()}"
-										></div>
+									<div class="flex-1 h-full flex flex-col items-center gap-1">
+										<div class="flex-1 w-full flex items-end">
+											<div
+												class="w-full bg-red-500 rounded-t transition-all hover:bg-red-600 {bucket.count > 0 ? 'min-h-0.5' : ''}"
+												style="height: {height}%"
+												title="{bucket.count} occurrences on {new Date(bucket.timestamp).toLocaleDateString('en-US')}"
+											></div>
+										</div>
 										<span class="text-xs text-muted-foreground">
-											{new Date(bucket.timestamp).toLocaleDateString(undefined, { weekday: 'short' })}
+											{new Date(bucket.timestamp).toLocaleDateString('en-US', { weekday: 'short' })}
 										</span>
 									</div>
 								{/each}
@@ -467,7 +469,7 @@
 											<Spinner class="w-4 h-4 mr-2" />
 											Loading...
 										{:else}
-											Load More ({(logsTotal - logs.length).toLocaleString()} remaining)
+											Load More ({(logsTotal - logs.length).toLocaleString('en-US')} remaining)
 										{/if}
 									</Button>
 								</div>
