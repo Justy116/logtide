@@ -3,6 +3,7 @@ import { pool } from '../../database/connection.js';
 import { reservoir } from '../../database/reservoir.js';
 import { projectsService } from '../projects/service.js';
 import { recordSpanIngestion } from '../metering/index.js';
+import { piiMaskingService } from '../pii-masking/service.js';
 import type { TransformedSpan, AggregatedTrace } from '../otlp/trace-transformer.js';
 import type {
   SpanRecord as ReservoirSpanRecord,
@@ -124,7 +125,24 @@ export class TracesService {
       resourceAttributes: span.resource_attributes || undefined,
     }));
 
-    const result = await reservoir.ingestSpans(reservoirSpans);
+    // PII masking (fail-closed): mask span attributes in place and drop any
+    // span whose masking fails, so unmasked attributes (request/response bodies,
+    // tokens, IPs) never reach storage. Mirrors the log ingestion path.
+    const failedIdx = await piiMaskingService.maskSpanBatch(
+      reservoirSpans,
+      organizationId,
+      projectId
+    );
+    let spansToStore = reservoirSpans;
+    if (failedIdx.length > 0) {
+      const failedSet = new Set(failedIdx);
+      spansToStore = reservoirSpans.filter((_, i) => !failedSet.has(i));
+      console.warn(
+        `[Traces] PII masking failed for ${failedIdx.length} span(s); dropped pre-storage`
+      );
+    }
+
+    const result = await reservoir.ingestSpans(spansToStore);
 
     // Metering: record ingested span count (fire-and-forget; activates
     // the tracing.max_spans_monthly quota in the capability system).
