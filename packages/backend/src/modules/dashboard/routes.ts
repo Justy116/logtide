@@ -2,6 +2,17 @@ import type { FastifyPluginAsync } from 'fastify';
 import { dashboardService } from './service.js';
 import { db } from '../../database/index.js';
 import { requireFullAccess } from '../auth/guards.js';
+import { fetchPanelData } from '../custom-dashboards/panel-data-service.js';
+import type { ActivityOverviewConfig, ActivityOverviewSeries } from '@logtide/shared';
+
+const ACTIVITY_OVERVIEW_SERIES: ActivityOverviewSeries[] = [
+  'logs',
+  'log_errors',
+  'spans',
+  'span_errors',
+  'detections',
+  'alerts',
+];
 
 
 async function verifyOrganizationAccess(organizationId: string, userId: string): Promise<boolean> {
@@ -121,6 +132,68 @@ const dashboardRoutes: FastifyPluginAsync = async (fastify) => {
 
       const timeseries = await dashboardService.getTimeseries(organizationId, projectId);
       return { timeseries };
+    },
+  });
+
+  // GET /api/v1/dashboard/activity-overview - Multi-signal activity timeline
+  // (logs, spans, detections, alerts). Reuses the custom-dashboard panel fetcher.
+  fastify.get('/api/v1/dashboard/activity-overview', {
+    schema: {
+      description: 'Get multi-signal activity overview timeline for organization or project',
+      tags: ['dashboard'],
+      querystring: {
+        type: 'object',
+        properties: {
+          organizationId: { type: 'string', format: 'uuid' },
+          projectId: { type: 'string', format: 'uuid' },
+          timeRange: { type: 'string', enum: ['24h', '7d', '30d'] },
+        },
+        required: ['organizationId'],
+      },
+    },
+    handler: async (request: any, reply) => {
+      if (!await requireFullAccess(request, reply)) return;
+
+      const { organizationId, projectId, timeRange } = request.query as {
+        organizationId: string;
+        projectId?: string;
+        timeRange?: '24h' | '7d' | '30d';
+      };
+
+      if (!organizationId) {
+        return reply.code(400).send({ error: 'organizationId is required' });
+      }
+
+      if (request.user?.id) {
+        const hasAccess = await verifyOrganizationAccess(organizationId, request.user.id);
+        if (!hasAccess) {
+          return reply.code(403).send({
+            error: 'Access denied - you are not a member of this organization',
+          });
+        }
+      }
+
+      if (projectId) {
+        const belongsToOrg = await verifyProjectBelongsToOrg(projectId, organizationId);
+        if (!belongsToOrg) {
+          return reply.code(404).send({ error: 'Project not found in this organization' });
+        }
+      }
+
+      const config: ActivityOverviewConfig = {
+        type: 'activity_overview',
+        title: 'Activity Overview',
+        source: 'mixed',
+        projectId: projectId ?? null,
+        timeRange: timeRange ?? '24h',
+        series: ACTIVITY_OVERVIEW_SERIES,
+      };
+
+      const data = await fetchPanelData(config, {
+        organizationId,
+        userId: request.user?.id ?? '',
+      });
+      return data;
     },
   });
 
