@@ -26,6 +26,7 @@
 	import { StackTraceViewer, LanguageBadge, ErrorGroupStatusBadge } from '$lib/components/exceptions';
 	import Bug from '@lucide/svelte/icons/bug';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
+	import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right';
 	import Clock from '@lucide/svelte/icons/clock';
 	import Hash from '@lucide/svelte/icons/hash';
 	import TrendingUp from '@lucide/svelte/icons/trending-up';
@@ -432,13 +433,27 @@
 													</Badge>
 												{/if}
 											</div>
-											<Button
-												variant="ghost"
-												size="sm"
-												onclick={() => goto(`/dashboard/search?logId=${log.id}&projectId=${group.projectId}`)}
-											>
-												View Log
-											</Button>
+											<div class="flex items-center gap-1 flex-shrink-0">
+												{#if log.traceId}
+													<Button
+														variant="ghost"
+														size="sm"
+														class="gap-1 text-primary hover:text-primary"
+														onclick={() => goto(`/dashboard/traces/${log.traceId}?projectId=${group.projectId}`)}
+														title="Open trace timeline"
+													>
+														View Trace
+														<ArrowUpRight class="w-3 h-3" />
+													</Button>
+												{/if}
+												<Button
+													variant="ghost"
+													size="sm"
+													onclick={() => goto(`/dashboard/search?logId=${log.id}&projectId=${group.projectId}`)}
+												>
+													View Log
+												</Button>
+											</div>
 										</div>
 										<p class="text-sm mt-2 font-mono line-clamp-2">{log.message}</p>
 									</div>
