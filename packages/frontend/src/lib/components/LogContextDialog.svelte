@@ -115,7 +115,7 @@
 	}
 
 	function formatTime(timestamp: string): string {
-		return new Date(timestamp).toLocaleString();
+		return new Date(timestamp).toLocaleString('en-US');
 	}
 
 	function getLevelColor(level: string): string {

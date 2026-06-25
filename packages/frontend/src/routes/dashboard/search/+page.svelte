@@ -2082,7 +2082,7 @@
               <div class="flex items-center justify-between mt-6 px-2">
                 <div class="text-sm text-muted-foreground">
                   {#if totalLogs > 0}
-                    Showing {((currentPage - 1) * pageSize + 1).toLocaleString()} to {Math.min(currentPage * pageSize, totalLogs).toLocaleString()} of {totalLogs.toLocaleString()} logs
+                    Showing {((currentPage - 1) * pageSize + 1).toLocaleString('en-US')} to {Math.min(currentPage * pageSize, totalLogs).toLocaleString('en-US')} of {totalLogs.toLocaleString('en-US')} logs
                   {:else}
                     Showing {(currentPage - 1) * pageSize + 1} to {(currentPage - 1) * pageSize + logs.length} logs
                   {/if}
@@ -2191,7 +2191,7 @@
                     </div>
                   {:else}
                     <span class="text-sm text-muted-foreground px-3">
-                      Page {currentPage.toLocaleString()}
+                      Page {currentPage.toLocaleString('en-US')}
                     </span>
                   {/if}
                   <Button
