@@ -8,7 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Two correctness follow-ups from the multi-engine bug-hunt sweep (issue #255): Sigma detection now honors full SigmaHQ field-modifier chains, and the service-map p95 is a true window percentile on every storage engine. No database migrations; drop-in upgrade. The storage-layer change was validated against real ClickHouse, MongoDB and TimescaleDB.
+Two correctness follow-ups from the multi-engine bug-hunt sweep (issue #255): Sigma detection now honors full SigmaHQ field-modifier chains, and the service-map p95 is a true window percentile on every storage engine. No database migrations; drop-in upgrade. The storage-layer change was validated against real ClickHouse, MongoDB and TimescaleDB. Plus a couple of frontend touch-ups: trace/session IDs in the log detail are theme-aware, and the error detail page links each occurrence to its trace.
+
+### Added
+- **Per-occurrence trace links on the error detail page**: each log in an error group's Logs tab now shows a "View Trace" action when that log carries a trace context, opening the existing trace timeline. The error-group logs endpoint (`GET /api/v1/error-groups/:id/logs`) now surfaces the `traceId` it already loaded from storage and previously discarded; no schema change, no migration
 
 ### Fixed
 - **Sigma compound field-modifier chains were silently truncated**: the matcher split a field key like `CommandLine|utf16le|base64offset|contains` on `|` but kept only the first modifier, so any rule using a transform-plus-comparator chain (or a PowerShell `-enc` style `utf16le|base64offset|contains`) matched incorrectly. The whole chain is now parsed and applied in order: transforms (`base64`, `base64offset`, `utf16le`/`utf16`/`utf16be`/`wide`, `windash`) rewrite the pattern, then the final comparator runs. Transforms follow the canonical SigmaHQ model (the pattern is encoded, e.g. the field is checked for `base64(value)`), which is what real SigmaHQ rules are authored against. Added `cidr` and numeric `gt`/`gte`/`lt`/`lte` comparators while reworking the parser
@@ -16,6 +19,7 @@ Two correctness follow-ups from the multi-engine bug-hunt sweep (issue #255): Si
 
 ### Changed
 - **Service-map p95 is now a true window percentile across all engines**: the service dependency map previously reported `MAX(duration_p95_ms)` from the per-bucket spans continuous aggregate, which overestimates (a p95 is not derivable by combining per-bucket p95s) and was only ever produced on TimescaleDB. Per-service health stats now come from a new `reservoir.getServiceHealthStats` computed directly from raw spans over the requested window on every engine: `percentile_cont` on TimescaleDB, `quantile(0.95)` on ClickHouse, and `$percentile` on MongoDB (approximate t-digest, Mongo 7.0+). ClickHouse and MongoDB service maps now carry real call/error/latency/p95 figures where they previously had none. The `spans_hourly_stats` / `spans_daily_stats` aggregates are unchanged and still back the dashboards
+- **Trace and session IDs in the log search detail are theme-aware**: the expanded log row rendered them as hardcoded light-mode pills (`bg-purple-100` / `bg-teal-100`) that looked washed out in dark mode. The trace ID is now a link that opens the trace timeline (primary accent) with a separate filter button, and the session ID is a dark-safe filter button; both derive their colors from the design tokens
 
 ## [1.0.2] - 2026-06-22
 
