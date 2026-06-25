@@ -60,6 +60,11 @@
   import Clock from "@lucide/svelte/icons/clock";
   import ArrowUpRight from "@lucide/svelte/icons/arrow-up-right";
   import Filter from "@lucide/svelte/icons/filter";
+  import Copy from "@lucide/svelte/icons/copy";
+  import Check from "@lucide/svelte/icons/check";
+  import ListTree from "@lucide/svelte/icons/list-tree";
+  import { copyToClipboard } from "$lib/utils/clipboard";
+  import BreadcrumbTimeline from "$lib/components/BreadcrumbTimeline.svelte";
 
   interface LogEntry {
     id?: string;
@@ -802,6 +807,53 @@
     expandedRows = newSet;
   }
 
+  // Per-row breadcrumbs expand state
+  let expandedBreadcrumbs = $state(new Set<number>());
+  function toggleBreadcrumbs(index: number) {
+    const newSet = new Set(expandedBreadcrumbs);
+    if (newSet.has(index)) {
+      newSet.delete(index);
+    } else {
+      newSet.add(index);
+    }
+    expandedBreadcrumbs = newSet;
+  }
+
+  type Breadcrumb = {
+    type: string;
+    category?: string;
+    message: string;
+    level?: string;
+    timestamp: number;
+    data?: Record<string, unknown>;
+  };
+  function getBreadcrumbs(log: LogEntry): Breadcrumb[] {
+    const bc = (log.metadata as Record<string, unknown> | undefined)?.breadcrumbs;
+    return Array.isArray(bc) ? (bc as Breadcrumb[]) : [];
+  }
+
+  // Resolve a metadata column value, supporting dot-notation paths into nested
+  // objects (e.g. "sdk.name"). Exact top-level keys win first, so flat keys that
+  // literally contain dots (e.g. "debug.trace_id") still resolve correctly.
+  function resolveMetadataPath(
+    metadata: Record<string, any> | undefined,
+    path: string,
+  ): unknown {
+    if (!metadata) return undefined;
+    if (Object.prototype.hasOwnProperty.call(metadata, path)) return metadata[path];
+    let current: any = metadata;
+    for (const part of path.split(".")) {
+      if (current === null || typeof current !== "object") return undefined;
+      current = current[part];
+    }
+    return current;
+  }
+
+  function formatMetadataCell(value: unknown): string {
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  }
+
   function openContextDialog(log: LogEntry) {
     selectedLogForContext = log;
     contextDialogOpen = true;
@@ -892,6 +944,18 @@
 
   function isErrorLevel(level: string): boolean {
     return level === 'error' || level === 'critical';
+  }
+
+  // Copy-to-clipboard feedback for metadata blocks, keyed per row
+  let copiedMetaKey = $state<string | null>(null);
+  async function copyMetadata(key: string, metadata: unknown) {
+    const ok = await copyToClipboard(JSON.stringify(metadata, null, 2));
+    if (ok) {
+      copiedMetaKey = key;
+      setTimeout(() => {
+        if (copiedMetaKey === key) copiedMetaKey = null;
+      }, 2000);
+    }
   }
 
   function getLevelColor(level: LogEntry["level"]): string {
@@ -1825,9 +1889,15 @@
                         >{log.message}</TableCell
                       >
                       {#each customColumns as col (col)}
-                        <TableCell class="font-mono text-xs max-w-[120px] truncate">
-                          {#if log.metadata && log.metadata[col] !== undefined && log.metadata[col] !== null}
-                            {String(log.metadata[col])}
+                        {@const cellValue = resolveMetadataPath(log.metadata, col)}
+                        <TableCell
+                          class="font-mono text-xs max-w-[120px] truncate"
+                          title={cellValue !== undefined && cellValue !== null
+                            ? formatMetadataCell(cellValue)
+                            : undefined}
+                        >
+                          {#if cellValue !== undefined && cellValue !== null}
+                            {formatMetadataCell(cellValue)}
                           {:else}
                             <span class="text-muted-foreground">-</span>
                           {/if}
@@ -1940,14 +2010,30 @@
                               </div>
                             {/if}
                             {#if log.metadata}
+                              {@const metaKey = `meta-${log.id ?? globalIndex}`}
                               <div>
                                 <span class="font-semibold">Metadata:</span>
-                                <div class="mt-2 p-3 bg-background rounded-md max-h-64 overflow-auto">
-                                  <pre class="text-xs w-max">{JSON.stringify(
-                                    log.metadata,
-                                    null,
-                                    2,
-                                  )}</pre>
+                                <div class="relative mt-2">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    class="absolute right-1 top-1 z-10 h-6 w-6 bg-background/80 backdrop-blur hover:bg-accent"
+                                    title="Copy metadata"
+                                    onclick={() => copyMetadata(metaKey, log.metadata)}
+                                  >
+                                    {#if copiedMetaKey === metaKey}
+                                      <Check class="h-3 w-3 text-green-500" />
+                                    {:else}
+                                      <Copy class="h-3 w-3" />
+                                    {/if}
+                                  </Button>
+                                  <div class="p-3 pr-9 bg-background rounded-md max-h-64 overflow-auto">
+                                    <pre class="text-xs w-max">{JSON.stringify(
+                                      log.metadata,
+                                      null,
+                                      2,
+                                    )}</pre>
+                                  </div>
                                 </div>
                               </div>
                             {/if}
@@ -1962,6 +2048,25 @@
                                   <AlertTriangle class="w-4 h-4 text-red-500" />
                                   View Exception Details
                                 </Button>
+                              </div>
+                            {/if}
+                            {#if getBreadcrumbs(log).length > 0}
+                              {@const crumbs = getBreadcrumbs(log)}
+                              <div class="pt-2 border-t mt-3">
+                                <button
+                                  type="button"
+                                  class="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full text-left"
+                                  onclick={() => toggleBreadcrumbs(globalIndex)}
+                                >
+                                  <ListTree class="w-4 h-4" />
+                                  Breadcrumbs ({crumbs.length})
+                                  <span class="text-xs ml-auto">{expandedBreadcrumbs.has(globalIndex) ? "▾" : "▸"}</span>
+                                </button>
+                                {#if expandedBreadcrumbs.has(globalIndex)}
+                                  <div class="mt-2 max-h-64 overflow-auto">
+                                    <BreadcrumbTimeline breadcrumbs={crumbs} eventTime={log.time} />
+                                  </div>
+                                {/if}
                               </div>
                             {/if}
                           </div>
