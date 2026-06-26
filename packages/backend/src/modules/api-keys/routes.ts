@@ -39,7 +39,7 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
 
       // Check if user has access to the project
       const project = await projectsService.getProjectById(projectId, request.user.id);
-      if (!project) {
+      if (!project || project.deletedAt) {
         return reply.status(404).send({
           error: 'Project not found or access denied',
         });
@@ -66,7 +66,7 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
 
       // Check if user has access to the project
       const project = await projectsService.getProjectById(projectId, request.user.id);
-      if (!project) {
+      if (!project || project.deletedAt) {
         return reply.status(404).send({
           error: 'Project not found or access denied',
         });
@@ -121,7 +121,7 @@ export async function apiKeysRoutes(fastify: FastifyInstance) {
 
       // Check if user has access to the project
       const project = await projectsService.getProjectById(projectId, request.user.id);
-      if (!project) {
+      if (!project || project.deletedAt) {
         return reply.status(404).send({
           error: 'Project not found or access denied',
         });

@@ -254,12 +254,6 @@
   {
     "file": "packages/backend/src/modules/projects/service.ts",
     "table": "projects",
-    "snippet": ".deleteFrom('projects')",
-    "reason": "safe-by-PK: DELETE by projectId; caller verifies project ownership via getProjectById first"
-  },
-  {
-    "file": "packages/backend/src/modules/projects/service.ts",
-    "table": "projects",
     "snippet": ".selectFrom('projects')",
     "reason": "safe-by-PK: lookup by projectId for public status page password check; project id is from route param"
   },
@@ -322,5 +316,11 @@
     "table": "spans",
     "snippet": ".selectFrom('spans')",
     "reason": "dev seed script: COUNT(*) for display only, no production path"
+  },
+  {
+    "file": "packages/backend/src/worker.ts",
+    "table": "projects",
+    "snippet": ".deleteFrom('projects')",
+    "reason": "intentional cross-org worker: hard-delete purge iterates project IDs resolved from a prior deleted_at-gated query; system cron context, no per-user scope needed"
   }
 ]

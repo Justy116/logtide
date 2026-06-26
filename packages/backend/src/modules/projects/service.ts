@@ -2,6 +2,7 @@ import { db } from '../../database/connection.js';
 import type { Project, StatusPageVisibility } from '@logtide/shared';
 import bcrypt from 'bcrypt';
 import { validateSlug } from '../../utils/slug.js';
+import { CacheManager } from '../../utils/cache.js';
 
 function generateProjectSlug(name: string): string {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -170,7 +171,7 @@ export class ProjectsService {
       .selectFrom('projects')
       .select(PROJECT_COLUMNS)
       .where('organization_id', '=', organizationId)
-      .orderBy('deleted_at', 'asc') // active (null) first, then deleted
+      .orderBy('deleted_at', 'desc') // active (null) first — DESC puts NULLs first in Postgres
       .orderBy('created_at', 'desc')
       .execute();
 
@@ -306,6 +307,7 @@ export class ProjectsService {
       .updateTable('projects')
       .set(updateSet)
       .where('id', '=', projectId)
+      .where('organization_id', '=', existing.organizationId)
       .returning(PROJECT_COLUMNS)
       .executeTakeFirst();
 
@@ -421,10 +423,24 @@ export class ProjectsService {
       .updateTable('projects')
       .set({ deleted_at: new Date() })
       .where('id', '=', projectId)
+      .where('organization_id', '=', project.organizationId)
       .where('deleted_at', 'is', null)
       .executeTakeFirst();
 
-    return Number(result.numUpdatedRows || 0) > 0;
+    const updated = Number(result.numUpdatedRows || 0) > 0;
+
+    if (updated) {
+      // Invalidate cached API key verifications for this project so ingestion is
+      // rejected immediately rather than waiting for the cache TTL to expire.
+      const keyHashes = await db
+        .selectFrom('api_keys')
+        .select('key_hash')
+        .where('project_id', '=', projectId)
+        .execute();
+      await Promise.all(keyHashes.map((k) => CacheManager.invalidateApiKey(k.key_hash)));
+    }
+
+    return updated;
   }
 
   /**
@@ -440,6 +456,7 @@ export class ProjectsService {
       .updateTable('projects')
       .set({ deleted_at: null })
       .where('id', '=', projectId)
+      .where('organization_id', '=', project.organizationId)
       .where('deleted_at', 'is not', null)
       .executeTakeFirst();
 
