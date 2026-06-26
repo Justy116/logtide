@@ -37,6 +37,76 @@ async function verifyProjectBelongsToOrg(projectId: string, organizationId: stri
   return !!result;
 }
 
+/** Returned when access was denied and a response has already been sent. */
+const SCOPE_DENIED = Symbol('dashboard-scope-denied');
+
+/**
+ * Resolve and authorize the tenant scope for a dashboard request.
+ *
+ * Session auth (request.user set): the user must be a member of the requested
+ * organization; a provided projectId must belong to that organization.
+ *
+ * API-key auth (no user; request.organizationId/projectId bound by the auth
+ * plugin): the requested organizationId MUST match the key's bound organization
+ * and a provided projectId MUST match the key's bound project. When projectId is
+ * omitted it defaults to the key's bound project, so a project-scoped key can
+ * never read org-wide or cross-org data. This mirrors resolveQueryProjectId,
+ * which already protects the query and traces routes.
+ *
+ * Returns the effective projectId to scope on (string | undefined), or
+ * SCOPE_DENIED if a 403/404 was already sent.
+ */
+async function resolveDashboardScope(
+  request: any,
+  reply: any,
+  organizationId: string,
+  projectId?: string,
+): Promise<string | undefined | typeof SCOPE_DENIED> {
+  // Session-based auth: org-wide membership check.
+  if (request.user?.id) {
+    const hasAccess = await verifyOrganizationAccess(organizationId, request.user.id);
+    if (!hasAccess) {
+      reply.code(403).send({
+        error: 'Access denied - you are not a member of this organization',
+      });
+      return SCOPE_DENIED;
+    }
+
+    if (projectId) {
+      const belongsToOrg = await verifyProjectBelongsToOrg(projectId, organizationId);
+      if (!belongsToOrg) {
+        reply.code(404).send({ error: 'Project not found in this organization' });
+        return SCOPE_DENIED;
+      }
+    }
+
+    return projectId;
+  }
+
+  // API-key auth: the key is bound to a single org/project by the auth plugin.
+  // Enforce that the requested org/project match the key's bound values.
+  const boundOrg = request.organizationId;
+  const boundProject = request.projectId;
+
+  if (boundOrg && organizationId !== boundOrg) {
+    reply.code(403).send({
+      error: 'Access denied - API key is not bound to this organization',
+    });
+    return SCOPE_DENIED;
+  }
+
+  if (boundProject && projectId && projectId !== boundProject) {
+    reply.code(403).send({
+      error: 'Access denied - API key is not bound to this project',
+    });
+    return SCOPE_DENIED;
+  }
+
+  // Default to the key's bound project so a project-scoped key cannot read
+  // org-wide data (mirrors resolveQueryProjectId).
+  return projectId ?? boundProject;
+}
+
 const dashboardRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /api/v1/dashboard/stats - Get dashboard statistics
   fastify.get('/api/v1/dashboard/stats', {
@@ -63,26 +133,10 @@ const dashboardRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // SECURITY: Verify user is member of this organization (if using session auth)
-      if (request.user?.id) {
-        const hasAccess = await verifyOrganizationAccess(organizationId, request.user.id);
+      const scope = await resolveDashboardScope(request, reply, organizationId, projectId);
+      if (scope === SCOPE_DENIED) return;
 
-        if (!hasAccess) {
-          return reply.code(403).send({
-            error: 'Access denied - you are not a member of this organization',
-          });
-        }
-      }
-
-      // Verify project belongs to org if specified
-      if (projectId) {
-        const belongsToOrg = await verifyProjectBelongsToOrg(projectId, organizationId);
-        if (!belongsToOrg) {
-          return reply.code(404).send({ error: 'Project not found in this organization' });
-        }
-      }
-
-      const stats = await dashboardService.getStats(organizationId, projectId);
+      const stats = await dashboardService.getStats(organizationId, scope);
       return stats;
     },
   });
@@ -112,25 +166,10 @@ const dashboardRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // SECURITY: Verify user is member of this organization (if using session auth)
-      if (request.user?.id) {
-        const hasAccess = await verifyOrganizationAccess(organizationId, request.user.id);
+      const scope = await resolveDashboardScope(request, reply, organizationId, projectId);
+      if (scope === SCOPE_DENIED) return;
 
-        if (!hasAccess) {
-          return reply.code(403).send({
-            error: 'Access denied - you are not a member of this organization',
-          });
-        }
-      }
-
-      if (projectId) {
-        const belongsToOrg = await verifyProjectBelongsToOrg(projectId, organizationId);
-        if (!belongsToOrg) {
-          return reply.code(404).send({ error: 'Project not found in this organization' });
-        }
-      }
-
-      const timeseries = await dashboardService.getTimeseries(organizationId, projectId);
+      const timeseries = await dashboardService.getTimeseries(organizationId, scope);
       return { timeseries };
     },
   });
@@ -164,27 +203,14 @@ const dashboardRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'organizationId is required' });
       }
 
-      if (request.user?.id) {
-        const hasAccess = await verifyOrganizationAccess(organizationId, request.user.id);
-        if (!hasAccess) {
-          return reply.code(403).send({
-            error: 'Access denied - you are not a member of this organization',
-          });
-        }
-      }
-
-      if (projectId) {
-        const belongsToOrg = await verifyProjectBelongsToOrg(projectId, organizationId);
-        if (!belongsToOrg) {
-          return reply.code(404).send({ error: 'Project not found in this organization' });
-        }
-      }
+      const scope = await resolveDashboardScope(request, reply, organizationId, projectId);
+      if (scope === SCOPE_DENIED) return;
 
       const config: ActivityOverviewConfig = {
         type: 'activity_overview',
         title: 'Activity Overview',
         source: 'mixed',
-        projectId: projectId ?? null,
+        projectId: scope ?? null,
         timeRange: timeRange ?? '24h',
         series: ACTIVITY_OVERVIEW_SERIES,
       };
@@ -223,25 +249,10 @@ const dashboardRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // SECURITY: Verify user is member of this organization (if using session auth)
-      if (request.user?.id) {
-        const hasAccess = await verifyOrganizationAccess(organizationId, request.user.id);
+      const scope = await resolveDashboardScope(request, reply, organizationId, projectId);
+      if (scope === SCOPE_DENIED) return;
 
-        if (!hasAccess) {
-          return reply.code(403).send({
-            error: 'Access denied - you are not a member of this organization',
-          });
-        }
-      }
-
-      if (projectId) {
-        const belongsToOrg = await verifyProjectBelongsToOrg(projectId, organizationId);
-        if (!belongsToOrg) {
-          return reply.code(404).send({ error: 'Project not found in this organization' });
-        }
-      }
-
-      const services = await dashboardService.getTopServices(organizationId, limit || 5, projectId);
+      const services = await dashboardService.getTopServices(organizationId, limit || 5, scope);
       return { services };
     },
   });
@@ -271,24 +282,10 @@ const dashboardRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      if (request.user?.id) {
-        const hasAccess = await verifyOrganizationAccess(organizationId, request.user.id);
+      const scope = await resolveDashboardScope(request, reply, organizationId, projectId);
+      if (scope === SCOPE_DENIED) return;
 
-        if (!hasAccess) {
-          return reply.code(403).send({
-            error: 'Access denied - you are not a member of this organization',
-          });
-        }
-      }
-
-      if (projectId) {
-        const belongsToOrg = await verifyProjectBelongsToOrg(projectId, organizationId);
-        if (!belongsToOrg) {
-          return reply.code(404).send({ error: 'Project not found in this organization' });
-        }
-      }
-
-      const events = await dashboardService.getTimelineEvents(organizationId, projectId);
+      const events = await dashboardService.getTimelineEvents(organizationId, scope);
       return { events };
     },
   });
@@ -318,25 +315,10 @@ const dashboardRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // SECURITY: Verify user is member of this organization (if using session auth)
-      if (request.user?.id) {
-        const hasAccess = await verifyOrganizationAccess(organizationId, request.user.id);
+      const scope = await resolveDashboardScope(request, reply, organizationId, projectId);
+      if (scope === SCOPE_DENIED) return;
 
-        if (!hasAccess) {
-          return reply.code(403).send({
-            error: 'Access denied - you are not a member of this organization',
-          });
-        }
-      }
-
-      if (projectId) {
-        const belongsToOrg = await verifyProjectBelongsToOrg(projectId, organizationId);
-        if (!belongsToOrg) {
-          return reply.code(404).send({ error: 'Project not found in this organization' });
-        }
-      }
-
-      const errors = await dashboardService.getRecentErrors(organizationId, projectId);
+      const errors = await dashboardService.getRecentErrors(organizationId, scope);
       return { errors };
     },
   });
