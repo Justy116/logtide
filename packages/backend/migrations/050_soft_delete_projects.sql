@@ -20,10 +20,11 @@ CREATE INDEX IF NOT EXISTS idx_projects_deleted_at
   WHERE deleted_at IS NOT NULL;
 
 -- 3. Replace the global slug unique index (added in migration 036) with a
---    partial one. Soft-deleted projects no longer occupy their slug.
+--    per-org partial one. Slugs need only be unique within an organization,
+--    and soft-deleted projects no longer occupy their slug.
 DROP INDEX IF EXISTS idx_projects_slug_unique;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug_unique
-  ON projects (slug)
+  ON projects (organization_id, slug)
   WHERE deleted_at IS NULL;
 
 -- 4. Replace the (organization_id, name) unique constraint from the original
