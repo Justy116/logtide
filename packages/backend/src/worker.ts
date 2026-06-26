@@ -744,6 +744,7 @@ async function runProjectHardDeletePurge() {
 
           // Hard-delete the projects row; ON DELETE CASCADE handles remaining
           // relational tables (api_keys, alert_rules, etc.)
+          // tenant-scope-ok: purge worker iterates pre-resolved project IDs from the deleted_at query above; system cron, no per-user scope needed
           await db.deleteFrom('projects').where('id', '=', project.id).execute();
 
           await auditLogService.record({

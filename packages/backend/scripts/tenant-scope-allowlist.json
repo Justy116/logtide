@@ -294,12 +294,6 @@
     "reason": "scoped-indirect: SELECT by id IN eventIds where eventIds came from prior org-scoped query"
   },
   {
-    "file": "packages/backend/src/queue/jobs/log-pipeline.ts",
-    "table": "logs",
-    "snippet": ".updateTable('logs')",
-    "reason": "safe-by-PK: UPDATE by log id from job payload; log IDs were just ingested in the same project/org context"
-  },
-  {
     "file": "packages/backend/src/scripts/seed-massive-data.ts",
     "table": "detection_events",
     "snippet": ".selectFrom('detection_events')",
@@ -316,11 +310,5 @@
     "table": "spans",
     "snippet": ".selectFrom('spans')",
     "reason": "dev seed script: COUNT(*) for display only, no production path"
-  },
-  {
-    "file": "packages/backend/src/worker.ts",
-    "table": "projects",
-    "snippet": ".deleteFrom('projects')",
-    "reason": "intentional cross-org worker: hard-delete purge iterates project IDs resolved from a prior deleted_at-gated query; system cron context, no per-user scope needed"
   }
 ]
