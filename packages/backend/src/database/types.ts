@@ -159,6 +159,7 @@ export interface ProjectsTable {
   has_logs_at: Timestamp | null;
   has_traces_at: Timestamp | null;
   has_metrics_at: Timestamp | null;
+  deleted_at: Generated<Timestamp | null>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
