@@ -188,6 +188,16 @@ export async function projectsRoutes(fastify: FastifyInstance) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Invalid project ID format' });
       }
+      if (error instanceof Error && error.message.includes('already exists')) {
+        return reply.status(409).send({ error: error.message });
+      }
+      // Safety net for a concurrent name/slug reuse that slips past the
+      // pre-check and trips the partial unique index (Postgres 23505).
+      if ((error as { code?: string })?.code === '23505') {
+        return reply.status(409).send({
+          error: 'A project with this name or slug already exists in this organization',
+        });
+      }
       throw error;
     }
   });
