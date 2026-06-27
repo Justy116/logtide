@@ -199,7 +199,7 @@ export async function projectsRoutes(fastify: FastifyInstance) {
 
       const project = await projectsService.getProjectById(id, request.user.id);
 
-      if (!project) {
+      if (!project || project.deletedAt) {
         return reply.status(404).send({
           error: 'Project not found',
         });
