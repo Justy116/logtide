@@ -452,6 +452,22 @@ export class ProjectsService {
       return false;
     }
 
+    // Name and slug are only unique among ACTIVE projects (partial unique
+    // indexes), so while this project sat soft-deleted another active project
+    // may have taken its name or slug. Restoring would then violate those
+    // indexes; reject with a clear error instead of surfacing a raw DB failure.
+    const conflict = await db
+      .selectFrom('projects')
+      .select('id')
+      .where('organization_id', '=', project.organizationId)
+      .where('deleted_at', 'is', null)
+      .where((eb) => eb.or([eb('name', '=', project.name), eb('slug', '=', project.slug)]))
+      .executeTakeFirst();
+
+    if (conflict) {
+      throw new Error('A project with this name or slug already exists in this organization');
+    }
+
     const result = await db
       .updateTable('projects')
       .set({ deleted_at: null })

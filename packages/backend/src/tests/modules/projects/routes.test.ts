@@ -412,6 +412,34 @@ describe('Projects Routes', () => {
             expect(body.error).toContain('not deleted');
         });
 
+        it('should return 409 when an active project has reused the name', async () => {
+            // Soft-delete the test project, freeing its name and slug.
+            await db.updateTable('projects')
+                .set({ deleted_at: new Date() })
+                .where('id', '=', testProject.id)
+                .execute();
+
+            // A new active project takes the freed name.
+            await db.insertInto('projects')
+                .values({
+                    organization_id: testOrganization.id,
+                    user_id: testUser.id,
+                    name: testProject.name,
+                    slug: `${testProject.slug}-new`,
+                })
+                .execute();
+
+            const response = await app.inject({
+                method: 'POST',
+                url: `/api/v1/projects/${testProject.id}/restore`,
+                headers: { Authorization: `Bearer ${authToken}` },
+            });
+
+            expect(response.statusCode).toBe(409);
+            const body = JSON.parse(response.payload);
+            expect(body.error).toContain('already exists');
+        });
+
         it('should return 404 for non-existent project', async () => {
             const response = await app.inject({
                 method: 'POST',
