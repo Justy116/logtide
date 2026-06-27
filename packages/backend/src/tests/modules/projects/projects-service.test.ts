@@ -451,6 +451,27 @@ describe('ProjectsService', () => {
             const restored = await projectsService.restoreProject(project.id, outsider.id);
             expect(restored).toBe(false);
         });
+
+        it('should throw when an active project has reused the name or slug', async () => {
+            const { project, user, organization } = await createTestContext();
+
+            await projectsService.deleteProject(project.id, user.id);
+
+            // A new active project takes the freed name (and slug).
+            await projectsService.createProject({
+                organizationId: organization.id,
+                userId: user.id,
+                name: project.name,
+            });
+
+            await expect(
+                projectsService.restoreProject(project.id, user.id)
+            ).rejects.toThrow('already exists');
+
+            // The conflicting project stays soft-deleted.
+            const stillDeleted = await projectsService.getProjectById(project.id, user.id);
+            expect(stillDeleted?.deletedAt).not.toBeNull();
+        });
     });
 
     describe('getOrganizationProjectsIncludingDeleted', () => {
