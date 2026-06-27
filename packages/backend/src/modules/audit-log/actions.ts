@@ -17,6 +17,9 @@ export const AUDIT_ACTIONS = {
   'project.created': 'config_change',
   'project.updated': 'config_change',
   'project.deleted': 'data_modification',
+  'project.soft_delete': 'data_modification',
+  'project.restored': 'data_modification',
+  'project.hard_delete': 'data_modification',
   // api keys
   'apikey.created': 'config_change',
   'apikey.revoked': 'config_change',
